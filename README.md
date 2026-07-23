@@ -69,6 +69,10 @@ git repo-worktree add --continue <name-or-path>
 ```
 
 The original `snapshot.xml` remains authoritative for the lifetime of the tree.
+If `repo manifest -r` omits a checkout listed in `.repo/project.list`—as happens
+with active `notdefault` groups—the tool pins that checkout from its on-disk `HEAD`,
+recovers its copy/link directives from the active source manifests, and persists the
+supplement into `snapshot.xml` before creation begins.
 Only actual parent/child project paths constrain scheduling, so unrelated projects
 can run immediately even when their paths have different depths. Completion records
 are coalesced into small batches and `fsync`ed before progress is reported or

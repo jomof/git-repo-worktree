@@ -262,11 +262,16 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                     eprintln!("warning: {skipped} snapshot projects were skipped");
                 }
             }
-            if !parsed.orphan_checkouts.is_empty() {
+            if !parsed.supplemented_checkouts.is_empty() {
                 eprintln!(
-                    "warning: {} checkout(s) are absent from the snapshot manifest",
-                    parsed.orphan_checkouts.len()
+                    "warning: included {} synced checkout(s) absent from repo manifest output; pinned from source HEAD",
+                    parsed.supplemented_checkouts.len()
                 );
+                if verbose > 0 {
+                    for path in &parsed.supplemented_checkouts {
+                        eprintln!("supplemented {path}");
+                    }
+                }
             }
         }
         run_add_phases(

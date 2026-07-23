@@ -29,6 +29,20 @@ fn git(cwd: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+fn init_project(client: &Path, path: &str, files: &[(&str, &str)]) -> String {
+    let project = client.join(path);
+    fs::create_dir_all(&project).unwrap();
+    git(&project, &["init"]);
+    git(&project, &["config", "user.email", "test@example.com"]);
+    git(&project, &["config", "user.name", "Test"]);
+    for (name, contents) in files {
+        fs::write(project.join(name), contents).unwrap();
+    }
+    git(&project, &["add", "."]);
+    git(&project, &["commit", "-m", "initial"]);
+    git(&project, &["rev-parse", "HEAD"])
+}
+
 fn fixture() -> Fixture {
     let temp = TempDir::new().unwrap();
     let client = temp.path().join("client");
@@ -367,4 +381,121 @@ fn verbose_add_reports_live_project_progress_and_phase_timings() {
     assert!(stderr.contains("project 1/1: added p"));
     assert!(stderr.contains("phase projects:"));
     assert!(stderr.contains("phase total:"));
+}
+
+#[test]
+fn projects_missing_from_repo_snapshot_are_pinned_from_disk_with_directives() {
+    let temp = TempDir::new().unwrap();
+    let client = temp.path().join("client");
+    fs::create_dir_all(client.join(".repo/manifests")).unwrap();
+    let default_sha = init_project(&client, "p", &[("source.txt", "default\n")]);
+    let supplemental_sha = init_project(
+        &client,
+        "prebuilts/ndk",
+        &[("version.txt", "r99\n"), ("tool", "binary\n")],
+    );
+    fs::write(client.join(".repo/project.list"), "p\nprebuilts/ndk\n").unwrap();
+    fs::write(
+        client.join(".repo/manifest.xml"),
+        r#"<manifest><project name="platform/p" path="p"/><include name="nondefault.xml"/></manifest>"#,
+    )
+    .unwrap();
+    fs::write(
+        client.join(".repo/manifests/nondefault.xml"),
+        r#"<manifest><project name="toolchain/ndk" path="prebuilts/ndk" groups="notdefault,platform-linux"><copyfile src="version.txt" dest="ndk-version.txt"/><linkfile src="tool" dest="ndk-tool"/></project></manifest>"#,
+    )
+    .unwrap();
+
+    let snapshot = temp.path().join("snapshot.xml");
+    fs::write(
+        &snapshot,
+        format!(
+            r#"<manifest><project name="platform/p" path="p" revision="{default_sha}"/></manifest>"#
+        ),
+    )
+    .unwrap();
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    let repo = bin.join("repo");
+    fs::write(
+        &repo,
+        "#!/bin/sh\nif [ \"$1\" = manifest ] && [ \"$2\" = -r ] && [ \"$3\" = -o ]; then\n  cp \"$GRW_TEST_SNAPSHOT\" \"$4\"\n  exit $?\nfi\nexit 64\n",
+    )
+    .unwrap();
+    fs::set_permissions(&repo, fs::Permissions::from_mode(0o755)).unwrap();
+    let fixture = Fixture {
+        destination: temp.path().join("tree"),
+        path_env: format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+        snapshot,
+        client,
+        temp,
+    };
+
+    let added = output_json(
+        command(&fixture)
+            .args(["-v", "add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success()
+            .stderr(predicates::str::contains("supplemented prebuilts/ndk")),
+    );
+    let projects = added["result"]["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 2);
+    let supplemental = projects
+        .iter()
+        .find(|project| project["path"] == "prebuilts/ndk")
+        .unwrap();
+    assert_eq!(supplemental["sha"], supplemental_sha);
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("ndk-version.txt")).unwrap(),
+        "r99\n"
+    );
+    assert_eq!(
+        fs::read_link(fixture.destination.join("ndk-tool")).unwrap(),
+        PathBuf::from("prebuilts/ndk/tool")
+    );
+    let pinned = fs::read_to_string(
+        fixture
+            .client
+            .join(".repo/repo-worktrees/tree/snapshot.xml"),
+    )
+    .unwrap();
+    assert!(pinned.contains(r#"path="prebuilts/ndk""#));
+    assert!(pinned.contains(&supplemental_sha));
+
+    let supplemental_source = fixture.client.join("prebuilts/ndk");
+    fs::write(supplemental_source.join("version.txt"), "r100\n").unwrap();
+    git(&supplemental_source, &["add", "version.txt"]);
+    git(
+        &supplemental_source,
+        &["commit", "-m", "later source state"],
+    );
+    let later_sha = git(&supplemental_source, &["rev-parse", "HEAD"]);
+    assert_ne!(later_sha, supplemental_sha);
+
+    let meta_path = fixture.client.join(".repo/repo-worktrees/tree/meta.json");
+    let mut meta: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+    meta["state"] = Value::from("incomplete");
+    meta["projects"] = Value::Array(Vec::new());
+    meta["copyfiles"] = Value::Array(Vec::new());
+    meta["linkfiles"] = Value::Array(Vec::new());
+    fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+
+    let resumed = output_json(
+        command(&fixture)
+            .args(["add", "--continue", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    let resumed_supplemental = resumed["result"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["path"] == "prebuilts/ndk")
+        .unwrap();
+    assert_eq!(resumed_supplemental["sha"], supplemental_sha);
 }

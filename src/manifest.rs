@@ -1,10 +1,10 @@
 use crate::error::{AppError, AppResult};
 use crate::model::{DirectiveMeta, ProjectMeta};
-use crate::util::{normalize, path_is_safe_relative, truncated_stderr};
+use crate::util::{normalize, path_is_safe_relative, truncated_stderr, write_atomic};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use roxmltree::Document;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,7 +14,21 @@ pub struct ParsedManifest {
     pub projects: Vec<ProjectMeta>,
     pub copyfiles: Vec<DirectiveMeta>,
     pub linkfiles: Vec<DirectiveMeta>,
-    pub orphan_checkouts: Vec<String>,
+    pub supplemented_checkouts: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct DirectiveDeclaration {
+    src: Option<String>,
+    dest: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct ProjectDeclaration {
+    name: String,
+    path: String,
+    copyfiles: Vec<DirectiveDeclaration>,
+    linkfiles: Vec<DirectiveDeclaration>,
 }
 
 pub fn parse_snapshot(
@@ -98,21 +112,52 @@ pub fn parse_snapshot(
         projects.push(project);
     }
 
+    let mut supplemented_checkouts = project_list
+        .difference(&in_snapshot)
+        .cloned()
+        .collect::<Vec<_>>();
+    supplemented_checkouts.sort();
+    if !supplemented_checkouts.is_empty() {
+        let declarations = load_active_manifest_declarations(source_root)?;
+        for path in &supplemented_checkouts {
+            let declaration = declarations.get(path);
+            let name = declaration
+                .map(|declaration| declaration.name.clone())
+                .unwrap_or_else(|| path.clone());
+            let path_safe = path_is_safe_relative(Path::new(path));
+            projects.push(ProjectMeta {
+                path: path.clone(),
+                name,
+                sha: String::new(),
+                git_common_dir: String::new(),
+                state: if path_safe { "pending" } else { "skipped" }.into(),
+                reason: (!path_safe).then(|| "unsafe-project-path".into()),
+            });
+            if path_safe {
+                let Some(declaration) = declaration else {
+                    continue;
+                };
+                append_declared_directives(&mut copyfiles, path, &declaration.copyfiles);
+                append_declared_directives(&mut linkfiles, path, &declaration.linkfiles);
+            }
+        }
+    }
+
     projects.sort_by(|left, right| {
         depth(&left.path)
             .cmp(&depth(&right.path))
             .then_with(|| left.path.cmp(&right.path))
     });
-    resolve_git_common_dirs(&mut projects, source_root, jobs)?;
-    let orphan_checkouts = project_list
-        .difference(&in_snapshot)
+    let supplemental_paths = supplemented_checkouts
+        .iter()
         .cloned()
-        .collect::<Vec<_>>();
+        .collect::<HashSet<_>>();
+    resolve_git_common_dirs(&mut projects, source_root, &supplemental_paths, jobs)?;
     Ok(ParsedManifest {
         projects,
         copyfiles,
         linkfiles,
-        orphan_checkouts,
+        supplemented_checkouts,
     })
 }
 
@@ -130,19 +175,259 @@ pub fn parse_snapshot_file(
             format!("read {}: {error}", project_list_path.display()),
         )
     })?;
-    parse_snapshot(&xml, source_root, &project_list, jobs)
+    let parsed = parse_snapshot(&xml, source_root, &project_list, jobs)?;
+    if !parsed.supplemented_checkouts.is_empty() {
+        let augmented = augment_snapshot(&xml, &parsed)?;
+        write_atomic(snapshot, augmented.as_bytes(), 0o644)?;
+    }
+    Ok(parsed)
+}
+
+fn append_declared_directives(
+    output: &mut Vec<DirectiveMeta>,
+    project: &str,
+    declarations: &[DirectiveDeclaration],
+) {
+    output.extend(declarations.iter().map(|declaration| {
+        let malformed = declaration.src.is_none() || declaration.dest.is_none();
+        DirectiveMeta {
+            project: project.to_string(),
+            src: declaration.src.clone().unwrap_or_default(),
+            dest: declaration.dest.clone().unwrap_or_default(),
+            state: if malformed { "failed" } else { "pending" }.into(),
+            reason: malformed.then(|| "malformed".into()),
+        }
+    }));
+}
+
+fn load_active_manifest_declarations(
+    source_root: &Path,
+) -> AppResult<HashMap<String, ProjectDeclaration>> {
+    let repo_dir = source_root.join(".repo");
+    let manifests_root = repo_dir.join("manifests");
+    let mut declarations = HashMap::new();
+    let mut visited = HashSet::new();
+    let manifest = repo_dir.join("manifest.xml");
+    let default_manifest = manifests_root.join("default.xml");
+    if manifest.exists() {
+        parse_manifest_source(&manifest, &manifests_root, &mut declarations, &mut visited)?;
+    } else if default_manifest.exists() {
+        parse_manifest_source(
+            &default_manifest,
+            &manifests_root,
+            &mut declarations,
+            &mut visited,
+        )?;
+    }
+
+    let local_root = repo_dir.join("local_manifests");
+    let mut local_manifests = match fs::read_dir(&local_root) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "xml"))
+            .collect::<Vec<_>>(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            return Err(AppError::io(
+                format!("read {}", local_root.display()),
+                error,
+            ));
+        }
+    };
+    local_manifests.sort();
+    for local_manifest in local_manifests {
+        parse_manifest_source(
+            &local_manifest,
+            &manifests_root,
+            &mut declarations,
+            &mut visited,
+        )?;
+    }
+    Ok(declarations)
+}
+
+fn parse_manifest_source(
+    path: &Path,
+    manifests_root: &Path,
+    declarations: &mut HashMap<String, ProjectDeclaration>,
+    visited: &mut HashSet<PathBuf>,
+) -> AppResult<()> {
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| normalize(path));
+    if !visited.insert(canonical.clone()) {
+        return Ok(());
+    }
+    let xml = fs::read_to_string(&canonical)
+        .map_err(|error| AppError::io(format!("read {}", canonical.display()), error))?;
+    let document = Document::parse(&xml).map_err(|error| {
+        AppError::operational(
+            "E_MANIFEST_PARSE",
+            format!("invalid source manifest {}: {error}", canonical.display()),
+        )
+    })?;
+    for node in document
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+    {
+        match node.tag_name().name() {
+            "include" => {
+                let name = node.attribute("name").ok_or_else(|| {
+                    AppError::operational(
+                        "E_MANIFEST_PARSE",
+                        format!("include in {} has no name", canonical.display()),
+                    )
+                })?;
+                let relative = Path::new(name);
+                if !path_is_safe_relative(relative) {
+                    return Err(AppError::operational(
+                        "E_MANIFEST_PARSE",
+                        format!("unsafe manifest include {name}"),
+                    ));
+                }
+                let sibling = canonical.parent().unwrap_or(manifests_root).join(relative);
+                let include = if sibling.exists() {
+                    sibling
+                } else {
+                    manifests_root.join(relative)
+                };
+                parse_manifest_source(&include, manifests_root, declarations, visited)?;
+            }
+            "project" => {
+                let name = node.attribute("name").ok_or_else(|| {
+                    AppError::operational(
+                        "E_MANIFEST_PARSE",
+                        format!("project in {} has no name", canonical.display()),
+                    )
+                })?;
+                let path = node.attribute("path").unwrap_or(name);
+                let mut declaration = ProjectDeclaration {
+                    name: name.to_string(),
+                    path: path.to_string(),
+                    copyfiles: Vec::new(),
+                    linkfiles: Vec::new(),
+                };
+                for child in node.children().filter(|child| child.is_element()) {
+                    let directive = DirectiveDeclaration {
+                        src: child.attribute("src").map(str::to_owned),
+                        dest: child.attribute("dest").map(str::to_owned),
+                    };
+                    match child.tag_name().name() {
+                        "copyfile" => declaration.copyfiles.push(directive),
+                        "linkfile" => declaration.linkfiles.push(directive),
+                        _ => {}
+                    }
+                }
+                declarations.insert(declaration.path.clone(), declaration);
+            }
+            "remove-project" => {
+                let path = node.attribute("path");
+                let name = node.attribute("name");
+                declarations.retain(|project_path, declaration| {
+                    path != Some(project_path.as_str()) && name != Some(declaration.name.as_str())
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn augment_snapshot(xml: &str, parsed: &ParsedManifest) -> AppResult<String> {
+    let insert_at = xml.rfind("</manifest>").ok_or_else(|| {
+        AppError::operational(
+            "E_MANIFEST_PARSE",
+            "snapshot manifest has no closing </manifest>",
+        )
+    })?;
+    let supplemented = parsed
+        .supplemented_checkouts
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let mut additions = String::new();
+    for project in parsed
+        .projects
+        .iter()
+        .filter(|project| supplemented.contains(&project.path) && project.sha.len() == 40)
+    {
+        let copyfiles = parsed
+            .copyfiles
+            .iter()
+            .filter(|directive| directive.project == project.path)
+            .collect::<Vec<_>>();
+        let linkfiles = parsed
+            .linkfiles
+            .iter()
+            .filter(|directive| directive.project == project.path)
+            .collect::<Vec<_>>();
+        additions.push_str("\n  <project name=\"");
+        additions.push_str(&escape_xml(&project.name));
+        additions.push_str("\" path=\"");
+        additions.push_str(&escape_xml(&project.path));
+        additions.push_str("\" revision=\"");
+        additions.push_str(&project.sha);
+        if copyfiles.is_empty() && linkfiles.is_empty() {
+            additions.push_str("\" />");
+            continue;
+        }
+        additions.push_str("\">");
+        for directive in copyfiles {
+            additions.push_str("\n    <copyfile src=\"");
+            additions.push_str(&escape_xml(&directive.src));
+            additions.push_str("\" dest=\"");
+            additions.push_str(&escape_xml(&directive.dest));
+            additions.push_str("\" />");
+        }
+        for directive in linkfiles {
+            additions.push_str("\n    <linkfile src=\"");
+            additions.push_str(&escape_xml(&directive.src));
+            additions.push_str("\" dest=\"");
+            additions.push_str(&escape_xml(&directive.dest));
+            additions.push_str("\" />");
+        }
+        additions.push_str("\n  </project>");
+    }
+    additions.push('\n');
+    let mut augmented = String::with_capacity(xml.len() + additions.len());
+    augmented.push_str(&xml[..insert_at]);
+    augmented.push_str(&additions);
+    augmented.push_str(&xml[insert_at..]);
+    Ok(augmented)
+}
+
+fn escape_xml(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn resolve_git_common_dirs(
     projects: &mut [ProjectMeta],
     source_root: &Path,
+    supplemental_paths: &HashSet<String>,
     jobs: usize,
 ) -> AppResult<()> {
     let candidates = projects
         .iter()
         .enumerate()
         .filter(|(_, project)| project.state == "pending")
-        .map(|(index, project)| (index, project.path.clone()))
+        .map(|(index, project)| {
+            (
+                index,
+                project.path.clone(),
+                supplemental_paths.contains(&project.path),
+            )
+        })
         .collect::<Vec<_>>();
     let pool = ThreadPoolBuilder::new()
         .num_threads(jobs)
@@ -151,15 +436,33 @@ fn resolve_git_common_dirs(
     let resolutions = pool.install(|| {
         candidates
             .par_iter()
-            .map(|(index, path)| (*index, resolve_git_common_dir(source_root, path)))
+            .map(|(index, path, needs_head)| {
+                (
+                    *index,
+                    *needs_head,
+                    resolve_git_state(source_root, path, *needs_head),
+                )
+            })
             .collect::<Vec<_>>()
     });
-    for (index, resolution) in resolutions {
+    for (index, needs_head, resolution) in resolutions {
         match resolution {
-            Some(gitdir) => {
+            Ok((head, gitdir)) => {
+                if let Some(head) = head {
+                    projects[index].sha = head;
+                }
                 projects[index].git_common_dir = gitdir.to_string_lossy().into_owned();
             }
-            None => {
+            Err(reason) if needs_head => {
+                return Err(AppError::operational(
+                    "E_HEAD_RESOLVE",
+                    format!(
+                        "resolve pinned HEAD for active project {}: {reason}",
+                        projects[index].path
+                    ),
+                ));
+            }
+            Err(_) => {
                 projects[index].state = "skipped".into();
                 projects[index].reason = Some("no-gitdir".into());
             }
@@ -168,32 +471,81 @@ fn resolve_git_common_dirs(
     Ok(())
 }
 
-fn resolve_git_common_dir(source_root: &Path, project_path: &str) -> Option<PathBuf> {
+fn resolve_git_state(
+    source_root: &Path,
+    project_path: &str,
+    needs_head: bool,
+) -> Result<(Option<String>, PathBuf), String> {
     let checkout = source_root.join(project_path);
     if checkout.exists() {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&checkout)
-            .args(["rev-parse", "--git-common-dir"])
+        let mut command = Command::new("git");
+        command.arg("-C").arg(&checkout).arg("rev-parse");
+        if needs_head {
+            command.arg("HEAD");
+        }
+        let output = command
+            .arg("--git-common-dir")
             .output()
-            .ok()?;
+            .map_err(|error| format!("run git rev-parse: {error}"))?;
         if output.status.success() {
-            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let path = PathBuf::from(raw);
+            let values = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let (head, raw_gitdir) = if needs_head {
+                let head = values
+                    .first()
+                    .ok_or_else(|| "missing HEAD output".to_string())?;
+                if head.len() != 40 || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(format!("HEAD is not a 40-hex object ID: {head}"));
+                }
+                (
+                    Some(head.clone()),
+                    values
+                        .get(1)
+                        .ok_or_else(|| "missing git common directory output".to_string())?,
+                )
+            } else {
+                (
+                    None,
+                    values
+                        .first()
+                        .ok_or_else(|| "missing git common directory output".to_string())?,
+                )
+            };
+            let path = PathBuf::from(raw_gitdir);
             let absolute = if path.is_absolute() {
                 path
             } else {
                 checkout.join(path)
             };
-            return Some(fs::canonicalize(&absolute).unwrap_or_else(|_| normalize(&absolute)));
+            return Ok((
+                head,
+                fs::canonicalize(&absolute).unwrap_or_else(|_| normalize(&absolute)),
+            ));
         }
+        if needs_head {
+            return Err(format!(
+                "git rev-parse failed: {}",
+                truncated_stderr(&output)
+            ));
+        }
+    } else if needs_head {
+        return Err(format!("source checkout {} is missing", checkout.display()));
     }
     let fallback = source_root
         .join(".repo/projects")
         .join(format!("{project_path}.git"));
-    fallback
-        .is_dir()
-        .then(|| fs::canonicalize(&fallback).unwrap_or_else(|_| normalize(&fallback)))
+    if fallback.is_dir() {
+        Ok((
+            None,
+            fs::canonicalize(&fallback).unwrap_or_else(|_| normalize(&fallback)),
+        ))
+    } else {
+        Err("no git common directory".into())
+    }
 }
 
 fn depth(path: &str) -> usize {

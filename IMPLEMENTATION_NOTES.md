@@ -20,6 +20,12 @@ machine interface deterministic:
 - Snapshot `git_common_dir` discovery uses the same bounded job count as project
   creation. Project creation uses prefix dependencies rather than global path-depth
   barriers, allowing unrelated deep paths to start immediately.
+- `.repo/project.list` entries omitted by `repo manifest -r` are pinned from the
+  corresponding checkout `HEAD`. Copy/link declarations are reconstructed by
+  following the active `.repo/manifest.xml` include graph and applying sorted local
+  manifests. The resulting pinned projects and directives are atomically appended
+  to `snapshot.xml` before `pin done` is journaled, so crash recovery never re-pins
+  them from a later source state.
 - Project completions that arrive within a short coalescing window share one journal
   write and `fsync`. State changes, progress output, and dependent scheduling happen
   only after that durability boundary. If a process or machine fails before it,
