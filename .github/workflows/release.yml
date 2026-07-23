@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+      - name: Generate documentation assets
+        shell: bash
+        run: |
+          cargo run --quiet -- completions bash > git-repo-worktree.bash
+          cargo run --quiet -- completions zsh > _git-repo-worktree
+          cargo run --quiet -- completions fish > git-repo-worktree.fish
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          package="git-repo-worktree-${{ matrix.target }}"
+          mkdir "$package"
+          cp "target/${{ matrix.target }}/release/git-repo-worktree" "$package/"
+          cp skill/SKILL.md "$package/"
+          cp git-repo-worktree.bash _git-repo-worktree git-repo-worktree.fish "$package/"
+          manpage="$(find target -path '*/out/man/git-repo-worktree.1' -print -quit)"
+          cp "$manpage" "$package/"
+          tar -czf "$package.tar.gz" "$package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: git-repo-worktree-${{ matrix.target }}
+          path: git-repo-worktree-${{ matrix.target }}.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: git-repo-worktree-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.tar.gz"
