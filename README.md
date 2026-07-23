@@ -56,6 +56,11 @@ Use `-b topic/name` to create the same branch independently in every project. Us
 `--submodules` to populate submodules; without it, projects containing
 `.gitmodules` are reported but left unpopulated.
 
+Use `-v` to see phase start/completion timings and each project completion as soon
+as its journal batch is durable. Project checkouts and snapshot Git-directory
+discovery use `-j/--jobs` workers (default: logical CPUs, capped at 32). On
+storage-bound clients, a smaller value such as `-j 4` or `-j 8` can be faster.
+
 Creation is journaled. If it is interrupted or partially fails, resolve the reported
 problem and resume without re-pinning:
 
@@ -64,6 +69,11 @@ git repo-worktree add --continue <name-or-path>
 ```
 
 The original `snapshot.xml` remains authoritative for the lifetime of the tree.
+Only actual parent/child project paths constrain scheduling, so unrelated projects
+can run immediately even when their paths have different depths. Completion records
+are coalesced into small batches and `fsync`ed before progress is reported or
+dependent projects are released; an interrupted batch is safely replayed by
+`add --continue`.
 
 ## Manage trees
 

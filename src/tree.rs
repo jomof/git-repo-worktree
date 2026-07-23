@@ -3,28 +3,59 @@ use crate::cli::{
 };
 use crate::discovery::{check_git_version, check_repo_version, discover_client};
 use crate::error::{AppError, AppResult};
-use crate::manifest::{group_project_indices_by_depth, parse_snapshot_file, project_depth};
+use crate::manifest::{parse_snapshot_file, project_depth};
 use crate::model::{DirectiveMeta, LockMeta, MovingMeta, ProjectMeta, TreeMeta, FORMAT_VERSION};
 use crate::registry::{load_all, select_tree, with_registry_lock, LockMode};
 use crate::util::{
-    absolutize, append_journal, canonicalize_missing, copy_permissions, dedupe_paths, default_jobs,
-    ensure_safe_destination, exit_reason, is_path_prefix, journal_has_done, now,
-    path_is_safe_relative, relative_path, sanitize_name, truncated_stderr, write_breadcrumb,
-    write_meta,
+    absolutize, append_journal, append_journal_batch, canonicalize_missing, copy_permissions,
+    dedupe_paths, default_jobs, ensure_safe_destination, exit_reason, is_path_prefix,
+    journal_has_done, journal_record, now, path_is_safe_relative, relative_path, sanitize_name,
+    truncated_stderr, write_breadcrumb, write_meta,
 };
 use crate::INTERRUPTED;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+const JOURNAL_BATCH_WINDOW: Duration = Duration::from_millis(10);
+
+fn phase_start(quiet: bool, verbose: u8, phase: &str) {
+    if !quiet && verbose > 0 {
+        eprintln!("phase {phase}: starting");
+    }
+}
+
+fn phase_done(quiet: bool, verbose: u8, phase: &str, started: Instant, detail: Option<&str>) {
+    if quiet || verbose == 0 {
+        return;
+    }
+    let elapsed = format_elapsed(started.elapsed());
+    match detail {
+        Some(detail) => eprintln!("phase {phase}: {elapsed} ({detail})"),
+        None => eprintln!("phase {phase}: {elapsed}"),
+    }
+}
+
+fn format_elapsed(elapsed: Duration) -> String {
+    if elapsed.as_secs() == 0 {
+        format!("{}ms", elapsed.as_millis())
+    } else {
+        format!("{:.3}s", elapsed.as_secs_f64())
+    }
+}
 
 pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Value> {
+    let operation_started = Instant::now();
+    let jobs = args.jobs.unwrap_or_else(default_jobs);
     if args.resume
         && (args.name.is_some()
             || args.branch.is_some()
@@ -47,6 +78,8 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
     let client = discover_client(cwd, false)?;
     if args.resume {
         return with_registry_lock(&client.root, LockMode::Exclusive, false, |registry| {
+            let resume_started = Instant::now();
+            phase_start(quiet, verbose, "resume");
             let mut meta = select_tree(registry, selector, cwd)?;
             if meta.state != "creating" && meta.state != "incomplete" {
                 return Err(AppError::operational(
@@ -65,7 +98,8 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 ));
             }
             if meta.projects.is_empty() && meta.copyfiles.is_empty() && meta.linkfiles.is_empty() {
-                let parsed = parse_snapshot_file(&meta.source(), &entry.join("snapshot.xml"))?;
+                let parsed =
+                    parse_snapshot_file(&meta.source(), &entry.join("snapshot.xml"), jobs)?;
                 meta.projects = parsed.projects;
                 meta.copyfiles = parsed.copyfiles;
                 meta.linkfiles = parsed.linkfiles;
@@ -86,12 +120,14 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             if !journal_has_done(&entry, "mkdir-root")? {
                 append_journal(&entry, "mkdir-root", "done", None, None, None)?;
             }
+            phase_done(quiet, verbose, "resume", resume_started, None);
             run_add_phases(
                 &mut meta,
-                args.jobs.unwrap_or_else(default_jobs),
+                jobs,
                 args.fail_fast,
                 quiet,
                 verbose,
+                operation_started,
             )
         });
     }
@@ -152,6 +188,8 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         };
         write_meta(&meta)?;
 
+        let snapshot_started = Instant::now();
+        phase_start(quiet, verbose, "snapshot");
         let snapshot = entry.join("snapshot.xml");
         let output = match Command::new("repo")
             .current_dir(&client.root)
@@ -173,7 +211,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             let _ = fs::remove_dir_all(&entry);
             return Err(error);
         }
-        let parsed = match parse_snapshot_file(&client.root, &snapshot) {
+        let parsed = match parse_snapshot_file(&client.root, &snapshot, jobs) {
             Ok(parsed) => parsed,
             Err(error) => {
                 let _ = fs::remove_dir_all(&entry);
@@ -185,6 +223,13 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         meta.linkfiles = parsed.linkfiles;
         append_journal(&entry, "pin", "done", None, None, None)?;
         write_meta(&meta)?;
+        phase_done(
+            quiet,
+            verbose,
+            "snapshot",
+            snapshot_started,
+            Some(&format!("{} projects", meta.projects.len())),
+        );
 
         fs::create_dir_all(&destination).map_err(|error| {
             AppError::io(
@@ -226,10 +271,11 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         }
         run_add_phases(
             &mut meta,
-            args.jobs.unwrap_or_else(default_jobs),
+            jobs,
             args.fail_fast,
             quiet,
             verbose,
+            operation_started,
         )
     })
 }
@@ -240,6 +286,7 @@ fn run_add_phases(
     fail_fast: bool,
     quiet: bool,
     verbose: u8,
+    operation_started: Instant,
 ) -> AppResult<Value> {
     let entry = meta.registry_entry();
     let source = meta.source();
@@ -249,71 +296,33 @@ fn run_add_phases(
         .num_threads(jobs)
         .build()
         .map_err(|error| AppError::io("create worker pool", error))?;
-    let waves = group_project_indices_by_depth(&meta.projects);
-    let mut stop = false;
-    let mut completed_for_hook = 0usize;
-    for indices in waves {
-        if stop || INTERRUPTED.load(Ordering::SeqCst) {
-            break;
-        }
-        let work = indices
-            .iter()
-            .copied()
-            .filter(|index| meta.projects[*index].state != "skipped")
-            .map(|index| (index, meta.projects[index].clone()))
-            .collect::<Vec<_>>();
-        let results = pool.install(|| {
-            work.par_iter()
-                .map(|(index, project)| {
-                    (
-                        *index,
-                        process_project(project, &source, &destination, branch.as_deref()),
-                    )
-                })
-                .collect::<Vec<_>>()
-        });
-        for (index, result) in results {
-            let project_path = meta.projects[index].path.clone();
-            match result {
-                Ok(()) => {
-                    meta.projects[index].state = "done".into();
-                    meta.projects[index].reason = None;
-                    append_journal(
-                        &entry,
-                        "project-add",
-                        "done",
-                        Some(&project_path),
-                        None,
-                        None,
-                    )?;
-                    completed_for_hook += 1;
-                    maybe_crash_after(completed_for_hook);
-                    if verbose > 0 && !quiet {
-                        eprintln!("added {project_path}");
-                    }
-                }
-                Err(reason) => {
-                    meta.projects[index].state = "failed".into();
-                    meta.projects[index].reason = Some(reason.clone());
-                    append_journal(
-                        &entry,
-                        "project-add",
-                        "failed",
-                        Some(&project_path),
-                        None,
-                        Some(&reason),
-                    )?;
-                    if !quiet {
-                        eprintln!("warning: failed {project_path}: {reason}");
-                    }
-                    if fail_fast {
-                        stop = true;
-                    }
-                }
-            }
-        }
-        write_meta(meta)?;
+    let project_started = Instant::now();
+    let project_count = meta
+        .projects
+        .iter()
+        .filter(|project| project.state != "done" && project.state != "skipped")
+        .count();
+    if !quiet && verbose > 0 {
+        eprintln!("phase projects: starting {project_count} project(s) with {jobs} job(s)");
     }
+    run_project_phase(
+        meta,
+        &pool,
+        &source,
+        &destination,
+        branch.as_deref(),
+        jobs,
+        fail_fast,
+        quiet,
+        verbose,
+    )?;
+    phase_done(
+        quiet,
+        verbose,
+        "projects",
+        project_started,
+        Some(&format!("{project_count} candidates")),
+    );
     if INTERRUPTED.load(Ordering::SeqCst) {
         meta.state = "incomplete".into();
         write_meta(meta)?;
@@ -322,14 +331,34 @@ fn run_add_phases(
         ));
     }
 
+    let directive_started = Instant::now();
+    phase_start(quiet, verbose, "directives");
     process_directives(meta, &pool, quiet)?;
+    phase_done(
+        quiet,
+        verbose,
+        "directives",
+        directive_started,
+        Some(&format!(
+            "{} copy/link directives",
+            meta.copyfiles.len() + meta.linkfiles.len()
+        )),
+    );
+    let submodule_started = Instant::now();
+    phase_start(quiet, verbose, "submodules");
     process_submodules(meta, &pool, quiet)?;
+    phase_done(quiet, verbose, "submodules", submodule_started, None);
     if meta.locked.is_some() {
+        let lock_started = Instant::now();
+        phase_start(quiet, verbose, "lock");
         let warnings = lock_existing_projects(meta, jobs)?;
         if warnings > 0 && !quiet {
             eprintln!("warning: {warnings} project worktree lock(s) could not be applied");
         }
+        phase_done(quiet, verbose, "lock", lock_started, None);
     }
+    let finalize_started = Instant::now();
+    phase_start(quiet, verbose, "finalize");
     meta.state = if meta.is_complete() {
         "complete".into()
     } else {
@@ -337,6 +366,7 @@ fn run_add_phases(
     };
     append_journal(&entry, "finalize", "done", None, None, None)?;
     write_meta(meta)?;
+    phase_done(quiet, verbose, "finalize", finalize_started, None);
     if !quiet {
         let failed = meta
             .projects
@@ -358,12 +388,188 @@ fn run_add_phases(
             failed
         );
     }
+    phase_done(quiet, verbose, "total", operation_started, None);
     let result = serde_json::to_value(&*meta).expect("tree metadata serializes");
     if meta.state == "incomplete" {
         Err(AppError::partial(result))
     } else {
         Ok(result)
     }
+}
+
+#[derive(Debug)]
+struct ProjectSchedule {
+    ready: VecDeque<usize>,
+    children: Vec<Vec<usize>>,
+    work_count: usize,
+}
+
+fn build_project_schedule(projects: &[ProjectMeta]) -> ProjectSchedule {
+    let unfinished = projects
+        .iter()
+        .enumerate()
+        .filter(|(_, project)| project.state != "done" && project.state != "skipped")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let unfinished_by_path = unfinished
+        .iter()
+        .map(|index| (PathBuf::from(&projects[*index].path), *index))
+        .collect::<HashMap<_, _>>();
+    let mut children = vec![Vec::new(); projects.len()];
+    let mut ready = VecDeque::new();
+    for &child_index in &unfinished {
+        let child_path = Path::new(&projects[child_index].path);
+        let mut ancestor = child_path.parent();
+        let mut parent = None;
+        while let Some(path) = ancestor {
+            if path.as_os_str().is_empty() {
+                break;
+            }
+            if let Some(parent_index) = unfinished_by_path.get(path) {
+                parent = Some(*parent_index);
+                break;
+            }
+            ancestor = path.parent();
+        }
+        if let Some(parent_index) = parent {
+            children[parent_index].push(child_index);
+        } else {
+            ready.push_back(child_index);
+        }
+    }
+    ProjectSchedule {
+        ready,
+        children,
+        work_count: unfinished.len(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_project_phase(
+    meta: &mut TreeMeta,
+    pool: &rayon::ThreadPool,
+    source: &Path,
+    destination: &Path,
+    branch: Option<&str>,
+    jobs: usize,
+    fail_fast: bool,
+    quiet: bool,
+    verbose: u8,
+) -> AppResult<()> {
+    let ProjectSchedule {
+        mut ready,
+        children,
+        work_count,
+    } = build_project_schedule(&meta.projects);
+    let total = meta.total_non_skipped();
+    let mut settled = total.saturating_sub(work_count);
+    let mut processed = 0usize;
+    let mut running = 0usize;
+    let mut stop = false;
+    let mut completed_for_hook = 0usize;
+    let (sender, receiver) = mpsc::channel::<(usize, Result<(), String>)>();
+
+    while processed < work_count {
+        if INTERRUPTED.load(Ordering::SeqCst) {
+            stop = true;
+        }
+        while !stop && running < jobs {
+            let Some(index) = ready.pop_front() else {
+                break;
+            };
+            let project = meta.projects[index].clone();
+            let source = source.to_path_buf();
+            let destination = destination.to_path_buf();
+            let branch = branch.map(str::to_owned);
+            let sender = sender.clone();
+            pool.spawn(move || {
+                let result = process_project(&project, &source, &destination, branch.as_deref());
+                let _ = sender.send((index, result));
+            });
+            running += 1;
+        }
+        if running == 0 {
+            break;
+        }
+
+        let first = receiver
+            .recv()
+            .map_err(|error| AppError::io("receive project completion from worker pool", error))?;
+        let mut batch = vec![first];
+        let deadline = Instant::now() + JOURNAL_BATCH_WINDOW;
+        while batch.len() < running {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match receiver.recv_timeout(remaining) {
+                Ok(completion) => batch.push(completion),
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(error) => {
+                    return Err(AppError::io(
+                        "receive project completion from worker pool",
+                        error,
+                    ));
+                }
+            }
+        }
+        running -= batch.len();
+
+        let records = batch
+            .iter()
+            .map(|(index, result)| {
+                let path = &meta.projects[*index].path;
+                match result {
+                    Ok(()) => journal_record("project-add", "done", Some(path), None, None),
+                    Err(reason) => {
+                        journal_record("project-add", "failed", Some(path), None, Some(reason))
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        append_journal_batch(&meta.registry_entry(), &records)?;
+
+        for (index, result) in batch {
+            processed += 1;
+            settled += 1;
+            let project_path = meta.projects[index].path.clone();
+            match result {
+                Ok(()) => {
+                    meta.projects[index].state = "done".into();
+                    meta.projects[index].reason = None;
+                    completed_for_hook += 1;
+                    maybe_crash_after(completed_for_hook);
+                    if verbose > 0 && !quiet {
+                        eprintln!("project {settled}/{total}: added {project_path}");
+                    }
+                }
+                Err(reason) => {
+                    meta.projects[index].state = "failed".into();
+                    meta.projects[index].reason = Some(reason.clone());
+                    if !quiet {
+                        eprintln!(
+                            "warning: project {settled}/{total} failed {project_path}: {reason}"
+                        );
+                    }
+                    if fail_fast {
+                        stop = true;
+                    }
+                }
+            }
+            for &child in &children[index] {
+                ready.push_back(child);
+            }
+        }
+        write_meta(meta)?;
+    }
+
+    if !stop && processed != work_count {
+        return Err(AppError::operational(
+            "E_SCHEDULE",
+            "project dependency scheduler could not make progress",
+        ));
+    }
+    Ok(())
 }
 
 fn process_project(
@@ -449,14 +655,15 @@ fn process_directives(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
             .map(|(index, directive)| (*index, apply_copy(&root, directive, false)))
             .collect::<Vec<_>>()
     });
+    let copy_records = copy_results
+        .iter()
+        .map(|(index, result)| {
+            directive_journal_record("copyfile", &meta.copyfiles[*index], result)
+        })
+        .collect::<Vec<_>>();
+    append_journal_batch(&entry, &copy_records)?;
     for (index, result) in copy_results {
-        update_directive(
-            &mut meta.copyfiles[index],
-            result,
-            &entry,
-            "copyfile",
-            quiet,
-        )?;
+        apply_directive_result(&mut meta.copyfiles[index], result, "copyfile", quiet);
     }
 
     let link_work = meta
@@ -486,37 +693,52 @@ fn process_directives(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
             .map(|(index, directive)| (*index, apply_link(&root, directive, false)))
             .collect::<Vec<_>>()
     });
+    let link_records = link_results
+        .iter()
+        .map(|(index, result)| {
+            directive_journal_record("linkfile", &meta.linkfiles[*index], result)
+        })
+        .collect::<Vec<_>>();
+    append_journal_batch(&entry, &link_records)?;
     for (index, result) in link_results {
-        update_directive(
-            &mut meta.linkfiles[index],
-            result,
-            &entry,
-            "linkfile",
-            quiet,
-        )?;
+        apply_directive_result(&mut meta.linkfiles[index], result, "linkfile", quiet);
     }
     write_meta(meta)
 }
 
-fn update_directive(
+fn directive_journal_record(
+    step: &str,
+    directive: &DirectiveMeta,
+    result: &Result<(), String>,
+) -> crate::model::JournalRecord {
+    match result {
+        Ok(()) => journal_record(
+            step,
+            "done",
+            Some(&directive.project),
+            Some(&directive.dest),
+            None,
+        ),
+        Err(reason) => journal_record(
+            step,
+            "failed",
+            Some(&directive.project),
+            Some(&directive.dest),
+            Some(reason),
+        ),
+    }
+}
+
+fn apply_directive_result(
     directive: &mut DirectiveMeta,
     result: Result<(), String>,
-    entry: &Path,
     step: &str,
     quiet: bool,
-) -> AppResult<()> {
+) {
     match result {
         Ok(()) => {
             directive.state = "done".into();
             directive.reason = None;
-            append_journal(
-                entry,
-                step,
-                "done",
-                Some(&directive.project),
-                Some(&directive.dest),
-                None,
-            )
         }
         Err(reason) => {
             directive.state = "failed".into();
@@ -524,14 +746,6 @@ fn update_directive(
             if !quiet {
                 eprintln!("warning: {step} {} failed: {reason}", directive.dest);
             }
-            append_journal(
-                entry,
-                step,
-                "failed",
-                Some(&directive.project),
-                Some(&directive.dest),
-                Some(&reason),
-            )
         }
     }
 }
@@ -648,27 +862,23 @@ fn process_submodules(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
             })
             .collect::<Vec<_>>()
     });
+    let records = results
+        .iter()
+        .map(|(_, path, result)| match result {
+            Ok(()) => journal_record("submodule", "done", Some(path), None, None),
+            Err(reason) => journal_record("submodule", "failed", Some(path), None, Some(reason)),
+        })
+        .collect::<Vec<_>>();
+    append_journal_batch(&meta.registry_entry(), &records)?;
     for (index, path, result) in results {
         match result {
-            Ok(()) => append_journal(
-                &meta.registry_entry(),
-                "submodule",
-                "done",
-                Some(&path),
-                None,
-                None,
-            )?,
+            Ok(()) => {}
             Err(reason) => {
                 meta.projects[index].state = "failed".into();
                 meta.projects[index].reason = Some(format!("submodule: {reason}"));
-                append_journal(
-                    &meta.registry_entry(),
-                    "submodule",
-                    "failed",
-                    Some(&path),
-                    None,
-                    Some(&reason),
-                )?;
+                if !quiet {
+                    eprintln!("warning: submodule {path} failed: {reason}");
+                }
             }
         }
     }
@@ -1416,6 +1626,38 @@ fn repair_directives(meta: &mut TreeMeta, jobs: usize, quiet: bool) -> AppResult
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn project(path: &str, state: &str) -> ProjectMeta {
+        ProjectMeta {
+            path: path.into(),
+            name: path.into(),
+            sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            git_common_dir: format!("/git/{path}"),
+            state: state.into(),
+            reason: None,
+        }
+    }
+
+    #[test]
+    fn scheduler_waits_only_for_actual_project_ancestors() {
+        let projects = vec![
+            project("a", "pending"),
+            project("unrelated/deep", "pending"),
+            project("a/b", "pending"),
+            project("a/b/c", "pending"),
+        ];
+        let schedule = build_project_schedule(&projects);
+        assert_eq!(schedule.ready.into_iter().collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(schedule.children[0], vec![2]);
+        assert_eq!(schedule.children[2], vec![3]);
+    }
+
+    #[test]
+    fn scheduler_treats_completed_ancestors_as_already_released() {
+        let projects = vec![project("a", "done"), project("a/b", "pending")];
+        let schedule = build_project_schedule(&projects);
+        assert_eq!(schedule.ready.into_iter().collect::<Vec<_>>(), vec![1]);
+    }
 
     #[test]
     fn porcelain_has_stable_fields() {

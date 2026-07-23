@@ -111,7 +111,8 @@ client.
 * All timestamps written anywhere are UTC RFC 3339 with seconds precision,
   e.g. `2026-07-23T18:04:05Z`.
 * Logging: human diagnostics go to **stderr**. Verbosity flags `-q` (errors
-  only) and `-v` (per-project detail). Default: summary + warnings.
+  only) and `-v` (live durable per-project completion plus phase start/completion
+  timings). Default: summary + warnings.
 
 ### 3.3 Global CLI conventions
 
@@ -231,8 +232,13 @@ Rules:
 
 ### 5.3 `journal.jsonl` schema
 
-Append-only, one JSON object per line, flushed (`fsync` the file) after each
-line. Used to make `add` resumable and to explain partial failures.
+Append-only, one JSON object per line. Records completed within a short bounded
+coalescing window may be written together and covered by one `fsync`. State,
+progress output, and dependent scheduling must not advance until that batch is
+durable. A crash before durability may replay any item in the batch; every operation
+is idempotent, so this does not weaken resume guarantees. Recovery truncates only a
+malformed, unterminated final line and fails on malformed durable lines. The journal
+is used to make `add` resumable and to explain partial failures.
 
 ```json
 {"ts":"...","step":"pin","status":"done"}
@@ -326,7 +332,8 @@ for. No other subcommand performs this check.
    * In snapshot, not in project.list → `skipped`, reason `not-synced`, warn
      once per project at `-v`, summarized count otherwise.
    * In project.list, not in snapshot → warn (`orphan-checkout`), ignore.
-4. For each candidate, resolve and record `git_common_dir`:
+4. For each candidate, resolve and record `git_common_dir` in the bounded parallel
+   job pool:
    `git -C <root>/<path> rev-parse --git-common-dir`, absolutized. If the
    checkout directory is missing or the command fails, attempt the legacy
    fallback path `<root>/.repo/projects/<path>.git`; if that directory exists,
@@ -366,18 +373,19 @@ directive where:
 Default: `min(logical CPUs, 32)`. Project-granular tasks run on a rayon pool of
 that size. Per-project git operations touch distinct gitdirs and distinct
 destination subtrees, so no additional synchronization is required beyond:
-journal writes and `meta.json` rewrites are serialized behind a mutex; the
-parent-before-child ordering constraint in §6.7.
+journal batches and `meta.json` rewrites are serialized; the parent-before-child
+ordering constraint in §6.7. Snapshot `git_common_dir` discovery uses this pool too.
 
 ### 6.7 Nested-project ordering
 
 Sort candidate projects by ascending path depth (number of components), stable
 by path. A project whose path is a prefix-directory of another's must complete
-(`done`, `failed`, or `skipped`) before the nested one starts. Implement by
-grouping into depth waves or a dependency graph; either is acceptable as long
-as the constraint holds. If a parent project **failed**, still attempt the
-child (its directory can be created independently); the parent's failure is
-already journaled.
+(`done`, `failed`, or `skipped`) before the nested one starts. Implement this as
+a prefix-dependency graph: unrelated projects are eligible immediately regardless
+of path depth; global depth waves are not acceptable. Release a child only after
+its parent's completion record is durable. If a parent project **failed**, still
+attempt the child (its directory can be created independently); the parent's
+failure is already journaled.
 
 ---
 

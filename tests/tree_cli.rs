@@ -351,3 +351,20 @@ fn explicit_names_are_validated_without_silent_rewriting() {
     );
     assert_eq!(output["error"]["code"], "E_BAD_NAME");
 }
+
+#[test]
+fn verbose_add_reports_live_project_progress_and_phase_timings() {
+    let fixture = fixture();
+    let assert = command(&fixture)
+        .args(["-v", "add"])
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("phase snapshot: starting"));
+    assert!(stderr.contains("phase snapshot:"));
+    assert!(stderr.contains("phase projects: starting 1 project(s)"));
+    assert!(stderr.contains("project 1/1: added p"));
+    assert!(stderr.contains("phase projects:"));
+    assert!(stderr.contains("phase total:"));
+}

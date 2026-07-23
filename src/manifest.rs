@@ -1,8 +1,10 @@
 use crate::error::{AppError, AppResult};
 use crate::model::{DirectiveMeta, ProjectMeta};
 use crate::util::{normalize, path_is_safe_relative, truncated_stderr};
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use roxmltree::Document;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,6 +21,7 @@ pub fn parse_snapshot(
     xml: &str,
     source_root: &Path,
     project_list_text: &str,
+    jobs: usize,
 ) -> AppResult<ParsedManifest> {
     let document = Document::parse(xml).map_err(|error| {
         AppError::operational("E_MANIFEST_PARSE", format!("invalid snapshot XML: {error}"))
@@ -67,14 +70,6 @@ pub fn parse_snapshot(
         } else if !project_list.contains(path) {
             project.state = "skipped".into();
             project.reason = Some("not-synced".into());
-        } else {
-            match resolve_git_common_dir(source_root, path) {
-                Some(gitdir) => project.git_common_dir = gitdir.to_string_lossy().into_owned(),
-                None => {
-                    project.state = "skipped".into();
-                    project.reason = Some("no-gitdir".into());
-                }
-            }
         }
 
         if project.state == "pending" {
@@ -108,6 +103,7 @@ pub fn parse_snapshot(
             .cmp(&depth(&right.path))
             .then_with(|| left.path.cmp(&right.path))
     });
+    resolve_git_common_dirs(&mut projects, source_root, jobs)?;
     let orphan_checkouts = project_list
         .difference(&in_snapshot)
         .cloned()
@@ -120,7 +116,11 @@ pub fn parse_snapshot(
     })
 }
 
-pub fn parse_snapshot_file(source_root: &Path, snapshot: &Path) -> AppResult<ParsedManifest> {
+pub fn parse_snapshot_file(
+    source_root: &Path,
+    snapshot: &Path,
+    jobs: usize,
+) -> AppResult<ParsedManifest> {
     let xml = fs::read_to_string(snapshot)
         .map_err(|error| AppError::io(format!("read {}", snapshot.display()), error))?;
     let project_list_path = source_root.join(".repo/project.list");
@@ -130,7 +130,42 @@ pub fn parse_snapshot_file(source_root: &Path, snapshot: &Path) -> AppResult<Par
             format!("read {}: {error}", project_list_path.display()),
         )
     })?;
-    parse_snapshot(&xml, source_root, &project_list)
+    parse_snapshot(&xml, source_root, &project_list, jobs)
+}
+
+fn resolve_git_common_dirs(
+    projects: &mut [ProjectMeta],
+    source_root: &Path,
+    jobs: usize,
+) -> AppResult<()> {
+    let candidates = projects
+        .iter()
+        .enumerate()
+        .filter(|(_, project)| project.state == "pending")
+        .map(|(index, project)| (index, project.path.clone()))
+        .collect::<Vec<_>>();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .map_err(|error| AppError::io("create manifest worker pool", error))?;
+    let resolutions = pool.install(|| {
+        candidates
+            .par_iter()
+            .map(|(index, path)| (*index, resolve_git_common_dir(source_root, path)))
+            .collect::<Vec<_>>()
+    });
+    for (index, resolution) in resolutions {
+        match resolution {
+            Some(gitdir) => {
+                projects[index].git_common_dir = gitdir.to_string_lossy().into_owned();
+            }
+            None => {
+                projects[index].state = "skipped".into();
+                projects[index].reason = Some("no-gitdir".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn resolve_git_common_dir(source_root: &Path, project_path: &str) -> Option<PathBuf> {
@@ -161,24 +196,12 @@ fn resolve_git_common_dir(source_root: &Path, project_path: &str) -> Option<Path
         .then(|| fs::canonicalize(&fallback).unwrap_or_else(|_| normalize(&fallback)))
 }
 
-pub fn project_depth(path: &str) -> usize {
-    depth(path)
-}
-
 fn depth(path: &str) -> usize {
     Path::new(path).components().count()
 }
 
-pub fn group_project_indices_by_depth(projects: &[ProjectMeta]) -> Vec<Vec<usize>> {
-    let mut waves: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (index, project) in projects.iter().enumerate() {
-        if project.state != "skipped" {
-            waves.entry(depth(&project.path)).or_default().push(index);
-        }
-    }
-    let mut waves = waves.into_iter().collect::<Vec<_>>();
-    waves.sort_by_key(|(depth, _)| *depth);
-    waves.into_iter().map(|(_, indices)| indices).collect()
+pub fn project_depth(path: &str) -> usize {
+    depth(path)
 }
 
 pub fn snapshot_command_failure(output: &std::process::Output) -> AppError {
@@ -204,7 +227,7 @@ mod tests {
             sha()
         );
         fs::create_dir_all(temp.path().join(".repo/projects/a.git")).unwrap();
-        let parsed = parse_snapshot(&xml, temp.path(), "a\n").unwrap();
+        let parsed = parse_snapshot(&xml, temp.path(), "a\n", 2).unwrap();
         assert_eq!(parsed.projects.len(), 1);
         assert_eq!(parsed.copyfiles[0].dest, "y");
         assert_eq!(parsed.linkfiles[0].dest, "l");
@@ -213,7 +236,7 @@ mod tests {
     #[test]
     fn marks_non_hex_revision_skipped() {
         let xml = r#"<manifest><project name="p" revision="main"/></manifest>"#;
-        let parsed = parse_snapshot(xml, Path::new("/missing"), "p\n").unwrap();
+        let parsed = parse_snapshot(xml, Path::new("/missing"), "p\n", 2).unwrap();
         assert_eq!(
             parsed.projects[0].reason.as_deref(),
             Some("unpinned-revision")
@@ -228,7 +251,7 @@ mod tests {
             r#"<manifest><project name="p" revision="{}"><copyfile src="x"/></project></manifest>"#,
             sha()
         );
-        let parsed = parse_snapshot(&xml, temp.path(), "p\n").unwrap();
+        let parsed = parse_snapshot(&xml, temp.path(), "p\n", 2).unwrap();
         assert_eq!(parsed.copyfiles[0].reason.as_deref(), Some("malformed"));
     }
 }

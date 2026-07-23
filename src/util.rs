@@ -118,17 +118,37 @@ pub fn append_journal(
     dest: Option<&str>,
     reason: Option<&str>,
 ) -> AppResult<()> {
-    let record = JournalRecord {
+    let record = journal_record(step, status, project, dest, reason);
+    append_journal_batch(entry, &[record])
+}
+
+pub fn journal_record(
+    step: &str,
+    status: &str,
+    project: Option<&str>,
+    dest: Option<&str>,
+    reason: Option<&str>,
+) -> JournalRecord {
+    JournalRecord {
         ts: now(),
         step: step.to_string(),
         status: status.to_string(),
         project: project.map(str::to_owned),
         dest: dest.map(str::to_owned),
         reason: reason.map(str::to_owned),
-    };
-    let mut bytes = serde_json::to_vec(&record)
-        .map_err(|error| AppError::io("serialize journal record", error))?;
-    bytes.push(b'\n');
+    }
+}
+
+pub fn append_journal_batch(entry: &Path, records: &[JournalRecord]) -> AppResult<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let mut bytes = Vec::new();
+    for record in records {
+        serde_json::to_writer(&mut bytes, record)
+            .map_err(|error| AppError::io("serialize journal record", error))?;
+        bytes.push(b'\n');
+    }
     let path = entry.join("journal.jsonl");
     let mut file = OpenOptions::new()
         .create(true)
@@ -138,16 +158,32 @@ pub fn append_journal(
         .map_err(|error| AppError::io(format!("open {}", path.display()), error))?;
     file.write_all(&bytes)
         .and_then(|_| file.sync_all())
-        .map_err(|error| AppError::io(format!("append {}", path.display()), error))
+        .map_err(|error| AppError::io(format!("append journal batch to {}", path.display()), error))
 }
 
 pub fn journal_has_done(entry: &Path, step: &str) -> AppResult<bool> {
     let path = entry.join("journal.jsonl");
-    let contents = match fs::read_to_string(&path) {
+    let mut contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(AppError::io(format!("read {}", path.display()), error)),
     };
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        let valid_len = contents.rfind('\n').map_or(0, |index| index + 1);
+        let file = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|error| AppError::io(format!("open {}", path.display()), error))?;
+        file.set_len(valid_len as u64)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| {
+                AppError::io(
+                    format!("truncate incomplete journal record in {}", path.display()),
+                    error,
+                )
+            })?;
+        contents.truncate(valid_len);
+    }
     for line in contents.lines() {
         let value: serde_json::Value = serde_json::from_str(line)
             .map_err(|error| AppError::io(format!("parse {}", path.display()), error))?;
@@ -366,5 +402,40 @@ mod tests {
         let error = ensure_safe_destination(tree.path(), Path::new("escape/file")).unwrap_err();
         assert_eq!(error.code, "E_UNSAFE_PATH");
         assert!(!outside.path().join("file").exists());
+    }
+
+    #[test]
+    fn appends_and_fsyncs_journal_records_as_one_batch() {
+        let entry = tempfile::tempdir().unwrap();
+        let records = vec![
+            journal_record("project-add", "done", Some("a"), None, None),
+            journal_record(
+                "project-add",
+                "failed",
+                Some("b"),
+                None,
+                Some("checkout failed"),
+            ),
+        ];
+        append_journal_batch(entry.path(), &records).unwrap();
+        let contents = fs::read_to_string(entry.path().join("journal.jsonl")).unwrap();
+        assert_eq!(contents.lines().count(), 2);
+        assert!(contents.ends_with('\n'));
+    }
+
+    #[test]
+    fn ignores_only_an_incomplete_trailing_journal_record() {
+        let entry = tempfile::tempdir().unwrap();
+        append_journal(entry.path(), "pin", "done", None, None, None).unwrap();
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(entry.path().join("journal.jsonl"))
+            .unwrap();
+        file.write_all(br#"{"step":"project-add""#).unwrap();
+        assert!(journal_has_done(entry.path(), "pin").unwrap());
+        let path = entry.path().join("journal.jsonl");
+        assert!(fs::read(&path).unwrap().ends_with(b"\n"));
+        append_journal(entry.path(), "project-add", "done", Some("a"), None, None).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap().lines().count(), 2);
     }
 }
