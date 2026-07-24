@@ -42,12 +42,18 @@ git repo-worktree list --json
 ```
 
 Treat a nonzero `version` exit as a missing or broken installation. Ask before
-installing; installation uses `cargo install git-repo-worktree`, needs a Rust
-toolchain and network access, and requires `~/.cargo/bin` on PATH. Use the
-structured `list` error to distinguish `E_NO_REPO_CLIENT` from retryable lock
-contention. If there is no `.repo` directory anywhere above the working
-directory, this skill does not apply — for a single Git repository use plain
-`git worktree` instead.
+installing; the default installation needs Git, curl, and network access:
+
+```bash
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsSf https://github.com/jomof/git-repo-worktree/releases/latest/download/install.sh | sh
+```
+
+The installer verifies the release checksum and ensures `git repo-worktree`
+works, configuring a narrow global Git alias when `~/.local/bin` is off PATH.
+Use the structured `list` error to distinguish `E_NO_REPO_CLIENT` from
+retryable lock contention. If there is no `.repo` directory anywhere above the
+working directory, this skill does not apply — for a single Git repository use
+plain `git worktree` instead.
 
 ## Core workflows
 

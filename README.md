@@ -16,19 +16,46 @@ The runtime requires Git 2.31 or newer and, for `add` only, repo 2.30 or newer.
 Linux and macOS are supported.
 
 ```sh
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsSf \
+  https://github.com/jomof/git-repo-worktree/releases/latest/download/install.sh |
+  sh
+```
+
+The installer selects the macOS or Linux archive for the current x86-64 or
+ARM64 machine, verifies its SHA-256 checksum, and atomically installs it in
+`~/.local/bin`. If that directory is not the `git-repo-worktree` Git would
+find, it configures a global `repo-worktree` Git alias pointing at the
+installed binary. It never replaces a conflicting existing alias.
+
+Rerun the same command to upgrade. To pin a release or choose another
+directory, pass installer arguments after `sh -s --`:
+
+```sh
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsSf \
+  https://github.com/jomof/git-repo-worktree/releases/download/v1.0.0/install.sh |
+  sh -s -- --version v1.0.0 --install-dir "$HOME/bin"
+```
+
+Use `--no-git-alias` if the chosen directory is already managed on `PATH`.
+The traditional Rust installers remain supported:
+
+```sh
+cargo binstall git-repo-worktree
+# or
 cargo install git-repo-worktree
 ```
 
-Git automatically dispatches `git repo-worktree` to the installed
-`git-repo-worktree` binary. An optional shorter alias is:
+Git dispatches `git repo-worktree` to the installed `git-repo-worktree`
+binary. An optional shorter alias is:
 
 ```sh
 git config --global alias.rwt '!git-repo-worktree'
 ```
 
-Prebuilt release archives contain the binary, `SKILL.md`, generated man page, and
-bash, zsh, and fish completions. The release archive layout is compatible with
-`cargo-binstall`.
+Prebuilt release archives contain the binary, license, README, `SKILL.md`,
+generated man page, and bash, zsh, and fish completions. GNU Linux archives
+retain the layout expected by `cargo-binstall`; the curl installer selects
+static musl Linux archives.
 
 ## Start with an inventory
 
@@ -204,4 +231,5 @@ cargo test --all-features
 
 The build script generates `git-repo-worktree.1` with `clap_mangen`. Completion
 scripts are generated from the same CLI definition using the `completions`
-subcommand.
+subcommand. See [RELEASING.md](RELEASING.md) for the GitHub-hosted release
+process.
