@@ -1,91 +1,148 @@
 ---
 name: git-repo-worktree
-description: Create, inspect, resume, repair, move, lock, prune, and remove isolated whole-tree Git worktrees for Google repo-managed clients. Use when an agent needs a clean pinned checkout of every synced project without disturbing the source client, needs to inventory or recover existing whole-tree worktrees, or must safely clean up an agent worktree.
+description: >-
+  Create and manage isolated whole-tree Git worktrees for Google repo-managed
+  clients (AOSP-style multi-project checkouts with a .repo directory). Use when
+  Codex needs a disposable second checkout of an entire repo client for parallel
+  work, hotfixes, review, experiments, or clean builds; when users mention
+  repo-wide worktrees, AOSP or manifest-checkout isolation, working without
+  disturbing an active client, or managing an existing git-repo-worktree. Also
+  use before modifying a repo client concurrently used by another session, even
+  if the user does not explicitly request a worktree. Prefer this over copying a
+  repo client, syncing a disposable second client, or creating worktrees project
+  by project.
 ---
 
-# Manage repo-wide worktrees
+# git-repo-worktree
 
-Use `git repo-worktree` from inside a Google `repo` client to create and manage a tree containing one linked Git worktree per synced manifest project. Treat created trees as Git-only: plain `git` works inside each project, but `repo` does not.
+Create parallel directory trees in which **every active project** of a `repo`
+client is checked out as a linked `git worktree` at pinned SHAs, with manifest
+`<copyfile>`/`<linkfile>` directives replayed. Think `git worktree`, but for
+the entire multi-project tree at once. Trees are cheap (objects are shared),
+isolate working files and indexes, and are disposable.
 
-## Inspect before acting
+Key properties to keep in mind:
 
-Run:
+- Created trees are **git-only**: every project is a real git checkout, but
+  `repo` commands do NOT work inside them. Use plain git there.
+- All projects start on **detached HEAD** at the SHAs the source client had at
+  creation time. Uncommitted changes in the source are never copied.
+- Operations are **journaled and resumable** — a failed or interrupted `add`
+  is resumed with `add --continue`, never by deleting and starting over.
 
-```sh
+## Before you start: verify the environment
+
+Run these checks; do not assume.
+
+```bash
+git repo-worktree version --json
 git repo-worktree list --json
 ```
 
-Read `result.trees` before creating another tree. Reuse a suitable `complete` tree, resume a `creating` or `incomplete` tree, or choose a unique name and destination.
+Treat a nonzero `version` exit as a missing or broken installation. Ask before
+installing; installation uses `cargo install git-repo-worktree`, needs a Rust
+toolchain and network access, and requires `~/.cargo/bin` on PATH. Use the
+structured `list` error to distinguish `E_NO_REPO_CLIENT` from retryable lock
+contention. If there is no `.repo` directory anywhere above the working
+directory, this skill does not apply — for a single Git repository use plain
+`git worktree` instead.
 
-Treat exit code 4 (`E_LOCKED` or `E_SYNC_ACTIVE`) as retryable with backoff. Diagnose other nonzero exits. Exit code 3 (`E_PARTIAL`) leaves useful metadata in `result`; inspect failed projects and reasons.
+## Core workflows
 
-## Create an isolated tree
+Always pass `--json` when you are an agent: stdout becomes exactly one JSON
+document with `ok`, `exit_code`, `error.code`, and a full `result` object;
+human progress goes to stderr. Parse JSON — do not scrape the human output.
+Before creating anything, inspect `result.trees`: reuse a suitable `complete`
+tree, resume a `creating` or `incomplete` tree, or choose a unique name and
+destination.
 
-Create a detached, manifest-pinned tree:
+### Create an isolated tree
 
-```sh
-git repo-worktree add --json --name agent-task ../work/agent-task
+```bash
+git repo-worktree add --json --name mywork /absolute/path/outside-client/mywork
 ```
 
-The source client's dirty state is neither copied nor modified. Work only in the returned `result.path`. Each project starts detached at the SHA captured by `repo manifest -r`.
+- Run from anywhere inside the source client (or use `-C <client-dir>`).
+- The destination must be a new or empty directory **outside** the client.
+- Read `.result.state`: `"complete"` means every project succeeded.
+- Need a topic branch in every project from the start? Add `-b <branch>`.
+- Projects containing `.gitmodules` are left unpopulated by default; pass
+  `--submodules` if the task needs them.
 
-Use `-b <branch>` only when the same topic branch should be created in every project. A branch collision produces a partial tree; resolve the conflicting branch and resume.
+### Work inside the tree
 
-Use `--submodules` only when submodules must be populated. They are intentionally omitted by default.
+Use ordinary Git commands per project directory. Create branches with
+`git switch -c` and commit as the task requires; push only when the user asks.
+Working files and indexes are isolated, but each linked worktree shares its
+project's object database and refs with the source checkout. Branches and
+commits are therefore visible from both trees even though edits do not change
+the source working files.
 
-## Resume safely
+### Handle partial failure (exit code 3)
 
-Resume without taking a new snapshot:
+Exit 3 means the tree exists but is `incomplete`. Do not delete it. Inspect
+and resume:
 
-```sh
-git repo-worktree add --continue --json <name-or-path>
+```bash
+git repo-worktree list --json          # find the tree; read projects[] with state=="failed" and their reason
+git repo-worktree add --continue --json mywork
 ```
 
-Never delete or replace `snapshot.xml` to force a new pin. The original snapshot is authoritative for the tree's lifetime. Failed partial-clone fetches can be retried with the same command after connectivity or credentials are restored.
+Resume skips finished projects and retries failures. A reason mentioning
+partial clone / network means the source lazily fetches objects — retry when
+network/auth is available. A `branch-exists` reason (from `-b`) means that
+branch already exists in the named project; resolve it there, then continue.
 
-## Protect and relocate
+### Clean up
 
-Lock a long-lived tree:
-
-```sh
-git repo-worktree lock --reason "reference tree" <tree>
+```bash
+git repo-worktree remove mywork             # refuses if any project is dirty
+git repo-worktree remove --force mywork     # discard uncommitted work knowingly
 ```
 
-Unlock it before normal removal. A locked tree requires two `--force` flags for removal.
+Use `--force` only after explicit confirmation that dirty work may be
+discarded. Locked trees need `--force --force` and the same explicit
+confirmation. If a tree was deleted with `rm -rf` instead, run
+`git repo-worktree prune` to reap the stale registration.
 
-Move only within one filesystem:
+### Other operations
 
-```sh
-git repo-worktree move <tree> <new-path>
+```bash
+git repo-worktree list --json
+git repo-worktree lock --reason "keep for release diffing" <tree>
+git repo-worktree move <tree> <new-path>        # same filesystem only
+git repo-worktree repair [<tree>...]            # repair registrations/directives
 ```
 
-Use the command instead of `mv`; it repairs every project's Git worktree registration. If a supported move was interrupted, run `git repo-worktree repair`.
+## Exit codes (uniform across subcommands)
 
-## Repair and prune
+| Code | Meaning | Agent action |
+|------|---------|--------------|
+| 0 | success | proceed |
+| 1 | operational failure | read `error.code`/`error.message`, diagnose |
+| 2 | CLI usage error | fix the command line |
+| 3 | partial success, tree `incomplete` | `add --continue` (or `repair`) |
+| 4 | lock contention or active `repo sync` detected | retry with backoff; use `--force` only after confirming sync detection is stale or a false positive |
 
-Repair registered paths and manifest directives:
+## Rules that prevent damage
 
-```sh
-git repo-worktree repair --json [<tree>...]
-```
+- Prefer letting `add` create the destination; an existing directory must be
+  empty. Never place a tree inside the source client or inside another tree.
+- Never write into `.repo/` or edit `.repo/repo-worktrees/` files by hand;
+  the registry is the tool's. Use `list`/`repair`/`prune` instead.
+- Never re-create a failed tree from scratch when `add --continue` applies —
+  recreation wastes the journal and repeats completed work.
+- Never run `repo sync`, `repo start`, or any `repo` command inside a created
+  tree; they will fail or act on the wrong client. Use git.
+- Do not `mv` a tree by hand; use `move`. If someone already did, `mv` it back
+  and then use `move`.
 
-Repair does not adopt a tree moved manually. Move it back to its registered path first, then use the supported `move` command.
+## When NOT to use this tool
 
-Preview and remove registry records for trees deleted outside the tool:
+- Single git repository (no `.repo`): use `git worktree` directly.
+- You need `repo upload`/`repo sync` **inside** the new tree: not supported;
+  create a second full client with `repo init --reference` instead.
+- Windows: unsupported.
 
-```sh
-git repo-worktree prune --dry-run
-git repo-worktree prune
-```
-
-## Remove deliberately
-
-Check for work worth keeping, then remove:
-
-```sh
-git repo-worktree remove <tree>
-```
-
-The command refuses dirty projects. Use one `--force` only when discarding dirty work is intentional. Use `--force --force` only to discard a locked tree as well.
-
-Created trees contain no `.repo` directory and cannot run repo commands. The tool does not transport dirty state, does not support Windows or cross-filesystem moves, and populates submodules only with `--submodules`.
+For full flag reference on any subcommand, run
+`git repo-worktree <subcommand> --help`.
