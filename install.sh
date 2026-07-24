@@ -278,8 +278,9 @@ fi
 tar -xzf "$archive" -C "$temporary_dir/extract" ||
     fail "could not extract $asset"
 source_binary="$temporary_dir/extract/git-repo-worktree-$target/git-repo-worktree"
-[ -f "$source_binary" ] && [ ! -L "$source_binary" ] ||
+if [ ! -f "$source_binary" ] || [ -L "$source_binary" ]; then
     fail "release archive does not contain a regular git-repo-worktree binary"
+fi
 chmod +x "$source_binary"
 "$source_binary" version >/dev/null ||
     fail "downloaded git-repo-worktree failed its version check"
