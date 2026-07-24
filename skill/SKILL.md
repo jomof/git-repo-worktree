@@ -6,11 +6,11 @@ description: >-
   Codex needs a disposable second checkout of an entire repo client for parallel
   work, hotfixes, review, experiments, or clean builds; when users mention
   repo-wide worktrees, AOSP or manifest-checkout isolation, working without
-  disturbing an active client, or managing an existing git-repo-worktree. Also
-  use before modifying a repo client concurrently used by another session, even
-  if the user does not explicitly request a worktree. Prefer this over copying a
-  repo client, syncing a disposable second client, or creating worktrees project
-  by project.
+  disturbing an active client, configuring per-project symlink/worktree
+  defaults, or managing an existing git-repo-worktree. Also use before modifying
+  a repo client concurrently used by another session, even if the user does not
+  explicitly request a worktree. Prefer this over copying a repo client, syncing
+  a disposable second client, or creating worktrees project by project.
 ---
 
 # git-repo-worktree
@@ -18,8 +18,9 @@ description: >-
 Create parallel directory trees for every active project of a `repo` client,
 with manifest `<copyfile>`/`<linkfile>` directives replayed. Most projects are
 linked `git worktree`s at pinned SHAs. Explicit fixed-depth projects may be
-shared from the source checkout until they need editing. Think `git worktree`,
-but for the entire multi-project tree at once.
+shared from the source checkout until they need editing; local defaults may
+select additional projects. Think `git worktree`, but for the entire
+multi-project tree at once.
 
 Key properties to keep in mind:
 
@@ -76,6 +77,9 @@ git repo-worktree add --json --name mywork /absolute/path/outside-client/mywork
   pinned source checkouts may use verified filesystem reflinks.
 - Use `--full` only when the whole tree must be independently writable, or
   repeat `--full-project <path>` for selected projects.
+- Persistent source-client defaults may select `symlink` or `worktree` for
+  future trees. Do not change this shared local policy unless the user asks.
+  Inspect it with `git repo-worktree defaults list --json`.
 - On storage-constrained machines, lower heavy concurrency with
   `--heavy-jobs <n>`. Use `--no-reflink` only to diagnose filesystem or
   performance problems; it forces Git checkout for every materialized project.
@@ -136,8 +140,23 @@ git repo-worktree list --json
 git repo-worktree lock --reason "keep for release diffing" <tree>
 git repo-worktree move <tree> <new-path>        # same filesystem only
 git repo-worktree materialize <tree> <project-path>...
+git repo-worktree defaults list --json
 git repo-worktree repair [<tree>...]            # repair registrations/directives
 ```
+
+When the user asks to change future population behavior, use the symmetric
+defaults commands:
+
+```bash
+git repo-worktree defaults symlink <project-path>...
+git repo-worktree defaults worktree <project-path>...
+git repo-worktree defaults auto <project-path>...
+```
+
+`symlink` is still subject to clean/pinned source, nesting, directive,
+submodule, and branch safety checks. `worktree` overrides manifest
+`clone-depth`; `auto` removes the local override. These commands do not alter
+existing trees.
 
 ## Exit codes (uniform across subcommands)
 
@@ -154,7 +173,7 @@ git repo-worktree repair [<tree>...]            # repair registrations/directive
 - Prefer letting `add` create the destination; an existing directory must be
   empty. Never place a tree inside the source client or inside another tree.
 - Never write into `.repo/` or edit `.repo/repo-worktrees/` files by hand;
-  the registry is the tool's. Use `list`/`repair`/`prune` instead.
+  the registry is the tool's. Use `list`/`defaults`/`repair`/`prune` instead.
 - Never re-create a failed tree from scratch when `add --continue` applies —
   recreation wastes the journal and repeats completed work.
 - Treat `"mode": "symlink-shared"` projects as read-only because their files

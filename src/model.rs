@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -68,6 +69,8 @@ pub struct TreeMeta {
     pub full: bool,
     #[serde(default)]
     pub full_projects: Vec<String>,
+    #[serde(default)]
+    pub default_modes: BTreeMap<String, String>,
     #[serde(default)]
     pub no_reflink: bool,
     #[serde(default = "default_heavy_jobs")]

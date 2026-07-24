@@ -4,11 +4,13 @@
 
 This addendum makes the common `add` path fast on clients dominated by large,
 fixed-depth prebuilts. A project explicitly carrying a positive
-`clone-depth` may be represented by an absolute symlink to the source
-checkout. All other projects remain real linked Git worktrees.
+`clone-depth`, or locally marked with a symlink default, may be represented by
+an absolute symlink to the source checkout. All other projects remain real
+linked Git worktrees.
 
-The tool selects the mode automatically and conservatively. The user does not
-need to opt in, inspect sizes, or label projects beyond the existing manifest.
+The tool selects the mode automatically and conservatively. Persistent local
+defaults can override the manifest's candidate selection without weakening
+the safety checks.
 
 ## 1. Population modes and strategies
 
@@ -25,7 +27,7 @@ writes to the source checkout. `add` must therefore print one calm warning
 when it creates any shared projects:
 
 ```text
-warning: sharing N clone-depth projects with the source checkout; materialize one before editing it
+warning: sharing N projects with the source checkout; materialize one before editing it
 ```
 
 With `-v`, list each shared project path. `--quiet` suppresses the warning.
@@ -33,9 +35,12 @@ With `-v`, list each shared project path. `--quiet` suppresses the warning.
 ## 2. Mode selection
 
 At pin time, parse each snapshot `<project>` element's `clone-depth`
-attribute. A positive decimal integer makes the project a sharing candidate.
-Missing, zero, negative, or malformed values do not; malformed values produce
-a warning, with project details only at `-v`.
+attribute and load the source client's persistent project defaults (§4).
+A positive decimal integer makes the project a sharing candidate unless its
+default is `worktree`. A `symlink` default makes a project a sharing candidate
+even without `clone-depth`. Missing, zero, negative, or malformed values do
+not otherwise make a candidate; malformed values produce a warning, with
+project details only at `-v`.
 
 A candidate becomes `symlink-shared` only if every condition below holds:
 
@@ -54,10 +59,11 @@ A candidate becomes `symlink-shared` only if every condition below holds:
 Failure of any condition selects `worktree`; it does not fail `add`. `-v`
 may report the demotion reason.
 
-If every non-skipped project is a sharing candidate, disable sharing for the
-whole run. This treats client-wide shallow initialization as a storage policy,
-not an instruction to alias the entire client. Report the guardrail only at
-`-v`.
+If every non-skipped project carries positive `clone-depth`, disable
+clone-depth-inferred sharing for the whole run. This treats client-wide
+shallow initialization as a storage policy, not an instruction to alias the
+entire client. Explicit `symlink` defaults remain candidates because they
+record local intent. Report the guardrail only at `-v`.
 
 Supplemented projects inherit `clone-depth` from their active manifest
 declaration, and the augmented snapshot preserves the attribute.
@@ -86,7 +92,48 @@ Otherwise fail with `E_NOT_SHARED` and exit 1. Materialization is allowed on a
 locked tree; the resulting Git worktree must immediately receive the tree's
 recorded lock.
 
-## 4. Shared-project population and durability
+## 4. Persistent project defaults
+
+The source client stores project defaults in the tool-owned registry at:
+
+```text
+.repo/repo-worktrees/defaults.json
+```
+
+The file has its own format version and a deterministic map from project path
+to `symlink` or `worktree`. Updates use the exclusive registry lock and an
+atomic, synced replacement.
+
+The CLI is symmetric:
+
+```text
+git repo-worktree defaults list
+git repo-worktree defaults symlink <ppath>...
+git repo-worktree defaults worktree <ppath>...
+git repo-worktree defaults auto <ppath>...
+```
+
+`symlink` and `worktree` require safe paths present in the source client's
+`.repo/project.list`; unknown paths fail with `E_UNKNOWN_PROJECT` before any
+change. `auto` removes an override and accepts a safe stale path so obsolete
+configuration can always be cleaned up. Repeated paths are idempotent.
+`list` is sorted by project path. All commands support the normal JSON
+envelope; the result includes the full defaults map.
+
+Defaults affect only future `add` operations. At tree creation, copy the
+active entries for its projects into `meta.json` as `default_modes`; the
+recorded map and selected project modes govern every resume. Later `defaults`
+changes never mutate an existing tree.
+
+Precedence is:
+
+1. `--full` and `--full-project` force a worktree for that invocation.
+2. A persistent `worktree` default suppresses clone-depth inference.
+3. A persistent `symlink` default or positive `clone-depth` creates a
+   candidate.
+4. Every safety demotion in §2 remains authoritative.
+
+## 5. Shared-project population and durability
 
 For each shared project, journal step `project-share`:
 
@@ -104,7 +151,7 @@ the batch containing its completion is durable. A crash before that point
 replays the idempotent operation. This batching rule also applies to
 worktree-project and directive completion records.
 
-## 5. Lifecycle safety
+## 6. Lifecycle safety
 
 Commands must distinguish shared projects from worktrees:
 
@@ -128,7 +175,7 @@ tree lock when present, and retries directives. If interrupted after unlink,
 retry treats the absent destination or a partial `.git` worktree as resumable.
 It never replaces an unexpected real path.
 
-## 6. Metadata and compatibility
+## 7. Metadata and compatibility
 
 Registry `format_version` becomes 2. Older binaries must reject v2 entries
 because their lifecycle operations do not understand shared paths. A v2
@@ -145,6 +192,7 @@ reader accepts v1 metadata with these defaults:
   "tree": {
     "full": false,
     "full_projects": [],
+    "default_modes": {},
     "no_reflink": false,
     "heavy_jobs": 3
   }
@@ -163,11 +211,11 @@ Newly created v2 project records use:
 Human `list` appends `(<n> shared)` when nonzero. Porcelain output includes
 `shared <n>` immediately after `skipped`. JSON exposes the metadata directly.
 
-## 7. Worktree performance
+## 8. Worktree performance
 
 Worktree-mode projects retain the safe optimizations below.
 
-### 7.1 Tracked-size scheduling
+### 8.1 Tracked-size scheduling
 
 Compute `est_bytes` from the pinned tree with
 `git --git-dir=<common> ls-tree -rlz <sha>`. Failures produce null and do not
@@ -175,7 +223,7 @@ fail `add`. Preserve parent-before-child dependencies; among ready projects
 dispatch largest first. Limit projects over 500 MiB to `heavy_jobs`, while
 allowing ready light work to fill remaining `-j` slots.
 
-### 7.2 Parallel checkout
+### 8.2 Parallel checkout
 
 All checkout and resume-reset commands receive, without changing repository
 configuration:
@@ -184,7 +232,7 @@ configuration:
 -c checkout.workers=8 -c checkout.thresholdForParallelism=100
 ```
 
-### 7.3 Conservative reflink
+### 8.3 Conservative reflink
 
 Reflink may run only when the source checkout exists at the exact pinned
 HEAD, is non-sparse, and has an empty full porcelain status. It populates from
@@ -197,7 +245,7 @@ the run.
 An unfinished destination already containing `.git` is always reset hard to
 the pinned SHA; HEAD equality alone never proves completion.
 
-## 8. User and agent guidance
+## 9. User and agent guidance
 
 README and the embedded skill must explain both modes without alarm:
 
@@ -207,8 +255,10 @@ README and the embedded skill must explain both modes without alarm:
 * Before editing a project, agents inspect `list --json`; when its mode is
   `symlink-shared`, they run `materialize <tree> <project-path>`.
 * `--full` creates an entirely materialized tree when needed.
+* Persistent defaults are local source-client policy. Agents may inspect them,
+  but must not change them unless the user asks.
 
-## 9. Required tests
+## 10. Required tests
 
 1. Positive, absent, and malformed `clone-depth` parsing, including
    supplemented snapshot preservation.
@@ -226,5 +276,9 @@ README and the embedded skill must explain both modes without alarm:
    reflink, source-race, and resume tests continue to pass.
 8. v1 metadata loads with worktree defaults; v2 metadata is rejected by
    readers whose supported format is 1.
+9. Persistent `symlink`, `worktree`, and `auto` updates are atomic,
+   deterministic, validated, and idempotent; worktree overrides clone-depth,
+   symlink overrides the all-clone guardrail, and existing/resumed trees retain
+   their captured defaults after global configuration changes.
 
 — end of addendum —

@@ -2,6 +2,7 @@ use crate::cli::{
     AddArgs, ListArgs, LockArgs, MaterializeArgs, MoveArgs, PruneArgs, RemoveArgs, RepairArgs,
     UnlockArgs,
 };
+use crate::defaults;
 use crate::discovery::{check_git_version, check_repo_version, discover_client};
 use crate::error::{AppError, AppResult};
 use crate::manifest::{parse_snapshot_file, project_depth};
@@ -183,6 +184,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 format!("a tree named {name} already exists; pass --name or use add --continue"),
             ));
         }
+        let source_defaults = defaults::load(registry)?;
         fs::create_dir(&entry)
             .map_err(|error| AppError::io(format!("create {}", entry.display()), error))?;
         fs::set_permissions(&entry, fs::Permissions::from_mode(0o755))
@@ -200,6 +202,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             submodules: args.submodules,
             full: args.full,
             full_projects: args.full_projects.clone(),
+            default_modes: std::collections::BTreeMap::new(),
             no_reflink: args.no_reflink,
             heavy_jobs: args.heavy_jobs.unwrap_or_else(default_heavy_jobs),
             locked: args.lock.then(|| LockMeta {
@@ -246,6 +249,16 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         meta.projects = parsed.projects;
         meta.copyfiles = parsed.copyfiles;
         meta.linkfiles = parsed.linkfiles;
+        meta.default_modes = meta
+            .projects
+            .iter()
+            .filter_map(|project| {
+                source_defaults
+                    .projects
+                    .get(&project.path)
+                    .map(|mode| (project.path.clone(), mode.clone()))
+            })
+            .collect();
         if let Err(error) = configure_population_modes(
             &mut meta,
             &parsed.malformed_clone_depth,
@@ -371,20 +384,28 @@ fn configure_population_modes(
         .filter(|(_, project)| project.state == "pending")
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
+    let all_clone_depth = !pending.is_empty()
+        && pending
+            .iter()
+            .all(|index| meta.projects[*index].clone_depth.is_some());
     let candidates = pending
         .iter()
         .copied()
-        .filter(|index| meta.projects[*index].clone_depth.is_some())
+        .filter(|index| {
+            let project = &meta.projects[*index];
+            match meta.default_modes.get(&project.path).map(String::as_str) {
+                Some("worktree") => false,
+                Some("symlink") => true,
+                _ => project.clone_depth.is_some() && !all_clone_depth,
+            }
+        })
         .collect::<Vec<_>>();
-    if candidates.is_empty() {
-        return Ok(());
+    if all_clone_depth && !quiet && verbose > 0 {
+        eprintln!(
+            "clone-depth sharing disabled: every active project has clone-depth (explicit symlink defaults still apply)"
+        );
     }
-    if candidates.len() == pending.len() {
-        if !quiet && verbose > 0 {
-            eprintln!(
-                "sharing disabled: every active project has clone-depth (client-wide shallow guardrail)"
-            );
-        }
+    if candidates.is_empty() {
         return Ok(());
     }
 
@@ -513,7 +534,7 @@ fn run_add_phases(
         .count();
     if shared > 0 && !quiet {
         eprintln!(
-            "warning: sharing {shared} clone-depth project(s) with the source checkout; materialize one before editing it"
+            "warning: sharing {shared} project(s) with the source checkout; materialize one before editing it"
         );
         if verbose > 0 {
             for project in meta
@@ -2769,6 +2790,7 @@ mod tests {
             submodules: false,
             full: false,
             full_projects: vec![],
+            default_modes: std::collections::BTreeMap::new(),
             no_reflink: false,
             heavy_jobs: 3,
             locked: None,
@@ -2817,5 +2839,6 @@ mod tests {
         assert_eq!(meta.projects[0].clone_depth, None);
         assert!(!meta.full);
         assert!(meta.full_projects.is_empty());
+        assert!(meta.default_modes.is_empty());
     }
 }

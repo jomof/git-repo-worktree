@@ -79,6 +79,22 @@ automatically disabled for branch creation, nested parents, directive
 destinations, dirty/wrong-HEAD/sparse sources, relevant submodule population,
 and clients where every active project has `clone-depth`.
 
+Source-client-local defaults can opt individual active projects in or out for
+future trees:
+
+```sh
+git repo-worktree defaults symlink prebuilts/example
+git repo-worktree defaults worktree platform/app
+git repo-worktree defaults auto platform/app
+git repo-worktree defaults list
+```
+
+A `symlink` default makes the project a sharing candidate even without
+`clone-depth`; it does not bypass any safety fallback. A `worktree` default
+suppresses clone-depth sharing. `auto` returns to manifest-driven behavior.
+Defaults are stored under `.repo/repo-worktrees`, and each `add` captures its
+active defaults so later changes affect only future trees.
+
 For worktree projects, Git's native parallel checkout is enabled and ready
 projects are started largest-first using pinned tracked-file sizes. Projects
 over 500 MiB are limited to three concurrent checkouts by default; use
@@ -115,6 +131,7 @@ git repo-worktree lock --reason "release reference" ref-tree
 git repo-worktree unlock ref-tree
 git repo-worktree move ref-tree ../new-location
 git repo-worktree materialize ref-tree prebuilts/example
+git repo-worktree defaults list
 git repo-worktree repair [<tree>...]
 git repo-worktree prune --dry-run
 git repo-worktree prune

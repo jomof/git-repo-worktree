@@ -383,7 +383,7 @@ fn default_add_shares_clean_fixed_depth_projects_and_remove_preserves_source() {
         .success();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains(
-        "sharing 1 clone-depth project(s) with the source checkout; materialize one before editing it"
+        "sharing 1 project(s) with the source checkout; materialize one before editing it"
     ));
     let added = output_json(assert);
     let projects = added["result"]["projects"].as_array().unwrap();
@@ -417,6 +417,209 @@ fn default_add_shares_clean_fixed_depth_projects_and_remove_preserves_source() {
         fs::read_to_string(fixture.client.join("p/source.txt")).unwrap(),
         "snapshot\n"
     );
+}
+
+#[test]
+fn persistent_defaults_are_symmetric_and_affect_only_future_trees() {
+    let fixture = fixture();
+    let configured = output_json(
+        command(&fixture)
+            .args(["defaults", "symlink", "p", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(configured["result"]["projects"]["p"], "symlink");
+
+    let shared_tree = fixture.temp.path().join("shared-default");
+    let shared = output_json(
+        command(&fixture)
+            .args(["add", "--name", "shared-default", "--json"])
+            .arg(&shared_tree)
+            .assert()
+            .success(),
+    );
+    assert_eq!(shared["result"]["projects"][0]["mode"], "symlink-shared");
+    assert_eq!(shared["result"]["default_modes"]["p"], "symlink");
+
+    command(&fixture)
+        .args(["defaults", "worktree", "p"])
+        .assert()
+        .success();
+    let materialized_tree = fixture.temp.path().join("worktree-default");
+    let materialized = output_json(
+        command(&fixture)
+            .args(["add", "--name", "worktree-default", "--json"])
+            .arg(&materialized_tree)
+            .assert()
+            .success(),
+    );
+    assert_eq!(materialized["result"]["projects"][0]["mode"], "worktree");
+    assert_eq!(materialized["result"]["default_modes"]["p"], "worktree");
+
+    let listed = output_json(
+        command(&fixture)
+            .args(["list", "--json"])
+            .assert()
+            .success(),
+    );
+    let original = listed["result"]["trees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tree| tree["name"] == "shared-default")
+        .unwrap();
+    assert_eq!(original["projects"][0]["mode"], "symlink-shared");
+    assert_eq!(original["default_modes"]["p"], "symlink");
+
+    let automatic = output_json(
+        command(&fixture)
+            .args(["defaults", "auto", "p", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(automatic["result"]["projects"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+    let automatic_tree = fixture.temp.path().join("automatic-default");
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--name", "automatic-default", "--json"])
+            .arg(&automatic_tree)
+            .assert()
+            .success(),
+    );
+    assert_eq!(added["result"]["projects"][0]["mode"], "worktree");
+    assert!(added["result"]["default_modes"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn persistent_defaults_override_clone_depth_candidate_inference() {
+    for preference in ["worktree", "symlink-all-clone"] {
+        let fixture = fixture();
+        enable_clone_depth_sharing(&fixture, preference == "symlink-all-clone");
+        let mode = if preference == "worktree" {
+            "worktree"
+        } else {
+            "symlink"
+        };
+        command(&fixture)
+            .args(["defaults", mode, "p"])
+            .assert()
+            .success();
+        let added = output_json(
+            command(&fixture)
+                .args(["add", "--json"])
+                .arg(&fixture.destination)
+                .assert()
+                .success(),
+        );
+        let projects = added["result"]["projects"].as_array().unwrap();
+        let p = projects
+            .iter()
+            .find(|project| project["path"] == "p")
+            .unwrap();
+        if preference == "worktree" {
+            assert_eq!(p["mode"], "worktree");
+        } else {
+            assert_eq!(p["mode"], "symlink-shared");
+            let q = projects
+                .iter()
+                .find(|project| project["path"] == "q")
+                .unwrap();
+            assert_eq!(q["mode"], "worktree");
+        }
+    }
+}
+
+#[test]
+fn persistent_symlink_default_does_not_bypass_source_safety() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "symlink", "p"])
+        .assert()
+        .success();
+    fs::write(fixture.client.join("p/source.txt"), "dirty source\n").unwrap();
+    fs::write(fixture.client.join("p/untracked.txt"), "source only\n").unwrap();
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    assert_eq!(added["result"]["projects"][0]["mode"], "worktree");
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+        "snapshot\n"
+    );
+    assert!(!fixture.destination.join("p/untracked.txt").exists());
+}
+
+#[test]
+fn defaults_validate_new_preferences_but_auto_can_remove_stale_paths() {
+    let fixture = fixture();
+    let unknown = output_json(
+        command(&fixture)
+            .args(["defaults", "symlink", "missing", "--json"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(unknown["error"]["code"], "E_UNKNOWN_PROJECT");
+    let unsafe_path = output_json(
+        command(&fixture)
+            .args(["defaults", "worktree", "../p", "--json"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(unsafe_path["error"]["code"], "E_BAD_PROJECT_PATH");
+
+    command(&fixture)
+        .args(["defaults", "symlink", "p"])
+        .assert()
+        .success();
+    fs::write(fixture.client.join(".repo/project.list"), "").unwrap();
+    let cleared = output_json(
+        command(&fixture)
+            .args(["defaults", "auto", "p", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(cleared["result"]["projects"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn interrupted_add_retains_its_captured_defaults() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "symlink", "p"])
+        .assert()
+        .success();
+    command(&fixture)
+        .env("GRW_TEST_CRASH_AFTER", "1")
+        .args(["add", "--name", "captured-default"])
+        .arg(&fixture.destination)
+        .assert()
+        .failure();
+    command(&fixture)
+        .args(["defaults", "worktree", "p"])
+        .assert()
+        .success();
+
+    let resumed = output_json(
+        command(&fixture)
+            .args(["add", "--continue", "captured-default", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(resumed["result"]["default_modes"]["p"], "symlink");
+    assert_eq!(resumed["result"]["projects"][0]["mode"], "symlink-shared");
 }
 
 #[test]

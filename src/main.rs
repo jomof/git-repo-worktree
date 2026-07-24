@@ -4,6 +4,7 @@
 compile_error!("git-repo-worktree supports Linux and macOS only");
 
 mod cli;
+mod defaults;
 mod discovery;
 mod error;
 mod manifest;
@@ -14,7 +15,7 @@ mod tree;
 mod util;
 
 use clap::{error::ErrorKind, CommandFactory, Parser};
-use cli::{Cli, Command, CompletionShell, SkillCommand};
+use cli::{Cli, Command, CompletionShell, DefaultsCommand, SkillCommand};
 use error::{AppError, AppResult, Envelope};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -45,6 +46,12 @@ fn command_name(command: &Command) -> &'static str {
         Command::Prune(_) => "prune",
         Command::Repair(_) => "repair",
         Command::Materialize(_) => "materialize",
+        Command::Defaults(args) => match &args.command {
+            DefaultsCommand::List => "defaults list",
+            DefaultsCommand::Symlink(_) => "defaults symlink",
+            DefaultsCommand::Worktree(_) => "defaults worktree",
+            DefaultsCommand::Auto(_) => "defaults auto",
+        },
         Command::Version => "version",
         Command::Completions(_) => "completions",
         Command::Skill(args) => match &args.command {
@@ -78,6 +85,7 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
         Command::Prune(args) => tree::prune(args, cwd, cli.quiet),
         Command::Repair(args) => tree::repair(args, cwd, cli.quiet),
         Command::Materialize(args) => tree::materialize(args, cwd, cli.quiet, cli.verbose),
+        Command::Defaults(args) => defaults::run(&args.command, cwd, cli.json, cli.quiet),
         Command::Version => version(cli.verbose, cli.json),
         Command::Completions(args) => completions(args.shell, cli.json),
         Command::Skill(args) => skill::run(&args.command, cwd, cli.json, cli.quiet),
@@ -222,6 +230,12 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
         }
         return "skill".into();
     }
+    if let Some(index) = values.iter().position(|value| *value == "defaults") {
+        if let Some(subcommand) = values.get(index + 1) {
+            return format!("defaults {subcommand}");
+        }
+        return "defaults".into();
+    }
     for name in [
         "add",
         "list",
@@ -232,6 +246,7 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
         "prune",
         "repair",
         "materialize",
+        "defaults",
         "version",
         "completions",
     ] {

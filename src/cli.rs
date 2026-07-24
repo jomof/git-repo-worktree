@@ -50,6 +50,8 @@ pub enum Command {
     Repair(RepairArgs),
     /// Convert shared projects into isolated Git worktrees.
     Materialize(MaterializeArgs),
+    /// Manage persistent per-project population defaults.
+    Defaults(DefaultsArgs),
     /// Show tool and runtime dependency versions.
     Version,
     /// Generate shell completions.
@@ -162,6 +164,30 @@ pub struct MaterializeArgs {
     pub projects: Vec<String>,
     #[arg(short = 'j', long, value_parser = parse_jobs)]
     pub jobs: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+pub struct DefaultsArgs {
+    #[command(subcommand)]
+    pub command: DefaultsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DefaultsCommand {
+    /// List persistent project defaults.
+    List,
+    /// Prefer source-sharing for future trees.
+    Symlink(DefaultProjectsArgs),
+    /// Prefer isolated worktrees for future trees.
+    Worktree(DefaultProjectsArgs),
+    /// Remove persistent defaults and return to automatic selection.
+    Auto(DefaultProjectsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DefaultProjectsArgs {
+    #[arg(required = true)]
+    pub projects: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
