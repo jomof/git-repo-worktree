@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
@@ -111,6 +112,24 @@ fn write_fixture_snapshot(fixture: &Fixture, sha: &str) {
         &fixture.snapshot,
         format!(
             r#"<manifest><project name="platform/p" path="p" revision="{sha}"><copyfile src="source.txt" dest="copied.txt"/><linkfile src="missing.txt" dest="linked.txt"/></project></manifest>"#
+        ),
+    )
+    .unwrap();
+}
+
+fn enable_clone_depth_sharing(fixture: &Fixture, all_fixed_depth: bool) {
+    let p_sha = git(&fixture.client.join("p"), &["rev-parse", "HEAD"]);
+    let q_sha = init_project(&fixture.client, "q", &[("q.txt", "ordinary\n")]);
+    fs::write(fixture.client.join(".repo/project.list"), "p\nq\n").unwrap();
+    let q_depth = if all_fixed_depth {
+        r#" clone-depth="1""#
+    } else {
+        ""
+    };
+    fs::write(
+        &fixture.snapshot,
+        format!(
+            r#"<manifest><project name="platform/p" path="p" revision="{p_sha}" clone-depth="1"><copyfile src="source.txt" dest="copied.txt"/><linkfile src="missing.txt" dest="linked.txt"/></project><project name="platform/q" path="q" revision="{q_sha}"{q_depth}/></manifest>"#
         ),
     )
     .unwrap();
@@ -347,10 +366,397 @@ fn newer_registry_format_is_rejected() {
         .success();
     let path = fixture.client.join(".repo/repo-worktrees/tree/meta.json");
     let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    value["format_version"] = Value::from(2);
+    value["format_version"] = Value::from(3);
     fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
     let output = output_json(command(&fixture).args(["list", "--json"]).assert().code(1));
     assert_eq!(output["error"]["code"], "E_FORMAT_TOO_NEW");
+}
+
+#[test]
+fn default_add_shares_clean_fixed_depth_projects_and_remove_preserves_source() {
+    let fixture = fixture();
+    enable_clone_depth_sharing(&fixture, false);
+    let assert = command(&fixture)
+        .args(["add", "--json"])
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains(
+        "sharing 1 clone-depth project(s) with the source checkout; materialize one before editing it"
+    ));
+    let added = output_json(assert);
+    let projects = added["result"]["projects"].as_array().unwrap();
+    let shared = projects
+        .iter()
+        .find(|project| project["path"] == "p")
+        .unwrap();
+    assert_eq!(shared["mode"], "symlink-shared");
+    assert_eq!(shared["clone_depth"], 1);
+    assert_eq!(shared["strategy"], Value::Null);
+    assert_eq!(
+        fs::read_link(fixture.destination.join("p")).unwrap(),
+        fs::canonicalize(fixture.client.join("p")).unwrap()
+    );
+    assert!(!fs::symlink_metadata(fixture.destination.join("q"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+
+    command(&fixture)
+        .args(["list", "--porcelain"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("shared 1"));
+    command(&fixture)
+        .arg("remove")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(fixture.client.join("p/source.txt")).unwrap(),
+        "snapshot\n"
+    );
+}
+
+#[test]
+fn interrupted_shared_add_replays_idempotently() {
+    let fixture = fixture();
+    enable_clone_depth_sharing(&fixture, false);
+    command(&fixture)
+        .env("GRW_TEST_CRASH_AFTER", "1")
+        .args(["add", "--name", "shared-crash"])
+        .arg(&fixture.destination)
+        .assert()
+        .failure();
+    let resumed = output_json(
+        command(&fixture)
+            .args(["add", "--continue", "shared-crash", "--json"])
+            .assert()
+            .success(),
+    );
+    let shared = resumed["result"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["path"] == "p")
+        .unwrap();
+    assert_eq!(shared["mode"], "symlink-shared");
+    assert_eq!(
+        fs::read_link(fixture.destination.join("p")).unwrap(),
+        fs::canonicalize(fixture.client.join("p")).unwrap()
+    );
+}
+
+#[test]
+fn full_controls_and_client_wide_guardrail_materialize_instead() {
+    for control in ["full", "full-project", "branch", "all-fixed-depth"] {
+        let fixture = fixture();
+        enable_clone_depth_sharing(&fixture, control == "all-fixed-depth");
+        let mut add = command(&fixture);
+        add.arg("add").arg("--json");
+        match control {
+            "full" => {
+                add.arg("--full");
+            }
+            "full-project" => {
+                add.args(["--full-project", "p"]);
+            }
+            "branch" => {
+                add.args(["-b", "topic/share-test"]);
+            }
+            "all-fixed-depth" => {}
+            _ => unreachable!(),
+        }
+        let added = output_json(add.arg(&fixture.destination).assert().success());
+        assert_eq!(
+            added["result"]["projects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|project| project["mode"] == "symlink-shared")
+                .count(),
+            0,
+            "{control}"
+        );
+        command(&fixture)
+            .args(["remove", "--force"])
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn materialize_converts_shared_project_and_preserves_tree_lock() {
+    let fixture = fixture();
+    enable_clone_depth_sharing(&fixture, false);
+    command(&fixture)
+        .args(["add", "--lock", "--reason", "reference"])
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let converted = output_json(
+        command(&fixture)
+            .args(["materialize", "tree", "p", "--json"])
+            .assert()
+            .success(),
+    );
+    let project = converted["result"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["path"] == "p")
+        .unwrap();
+    assert_eq!(project["mode"], "worktree");
+    assert!(matches!(
+        project["strategy"].as_str(),
+        Some("reflink" | "checkout")
+    ));
+    assert!(!fs::symlink_metadata(fixture.destination.join("p"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        git(&fixture.destination.join("p"), &["status", "--porcelain"]),
+        ""
+    );
+    let worktrees = git(
+        &fixture.client.join("p"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert!(worktrees.contains(&fixture.destination.join("p").display().to_string()));
+    assert!(worktrees.contains("locked"));
+    let not_shared = output_json(
+        command(&fixture)
+            .args(["materialize", "tree", "q", "--json"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(not_shared["error"]["code"], "E_NOT_SHARED");
+
+    fs::write(fixture.destination.join("p/tree-only.txt"), "isolated\n").unwrap();
+    assert!(!fixture.client.join("p/tree-only.txt").exists());
+    command(&fixture)
+        .args(["remove", "--force", "--force", "tree"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn materialize_resumes_after_the_shared_link_was_durably_unlinked() {
+    let fixture = fixture();
+    enable_clone_depth_sharing(&fixture, false);
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let entry = fixture.client.join(".repo/repo-worktrees/tree");
+    let mut journal = fs::OpenOptions::new()
+        .append(true)
+        .open(entry.join("journal.jsonl"))
+        .unwrap();
+    writeln!(
+        journal,
+        r#"{{"ts":"2026-07-23T00:00:00Z","step":"project-materialize","status":"started","project":"p"}}"#
+    )
+    .unwrap();
+    journal.sync_all().unwrap();
+    fs::remove_file(fixture.destination.join("p")).unwrap();
+
+    let converted = output_json(
+        command(&fixture)
+            .args(["materialize", "tree", "p", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        converted["result"]["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|project| project["path"] == "p")
+            .unwrap()["mode"],
+        "worktree"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+        "snapshot\n"
+    );
+}
+
+#[test]
+fn sharing_demotes_for_dirty_wrong_head_and_sparse_sources() {
+    for condition in ["dirty", "wrong-head", "sparse"] {
+        let fixture = fixture();
+        enable_clone_depth_sharing(&fixture, false);
+        match condition {
+            "dirty" => {
+                fs::write(fixture.client.join("p/source.txt"), "dirty source\n").unwrap();
+                fs::write(fixture.client.join("p/source-only.txt"), "untracked\n").unwrap();
+            }
+            "wrong-head" => {
+                fs::write(fixture.client.join("p/source.txt"), "later\n").unwrap();
+                git(&fixture.client.join("p"), &["add", "source.txt"]);
+                git(&fixture.client.join("p"), &["commit", "-m", "later"]);
+            }
+            "sparse" => {
+                git(
+                    &fixture.client.join("p"),
+                    &["config", "core.sparseCheckout", "true"],
+                );
+            }
+            _ => unreachable!(),
+        }
+        let added = output_json(
+            command(&fixture)
+                .args(["add", "--json"])
+                .arg(&fixture.destination)
+                .assert()
+                .success(),
+        );
+        let project = added["result"]["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|project| project["path"] == "p")
+            .unwrap();
+        assert_eq!(project["mode"], "worktree", "{condition}");
+        assert_eq!(
+            fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+            "snapshot\n",
+            "{condition}"
+        );
+        assert!(
+            !fixture.destination.join("p/source-only.txt").exists(),
+            "{condition}"
+        );
+    }
+}
+
+#[test]
+fn directive_destinations_and_requested_submodules_demote_sharing() {
+    for condition in ["directive-destination", "submodules"] {
+        let fixture = fixture();
+        enable_clone_depth_sharing(&fixture, false);
+        if condition == "submodules" {
+            fs::write(fixture.client.join("p/.gitmodules"), "").unwrap();
+            git(&fixture.client.join("p"), &["add", ".gitmodules"]);
+            git(
+                &fixture.client.join("p"),
+                &["commit", "-m", "submodule marker"],
+            );
+        }
+        let p_sha = git(&fixture.client.join("p"), &["rev-parse", "HEAD"]);
+        let q_sha = git(&fixture.client.join("q"), &["rev-parse", "HEAD"]);
+        let directive = if condition == "directive-destination" {
+            r#"<copyfile src="source.txt" dest="p/from-directive.txt"/>"#
+        } else {
+            ""
+        };
+        fs::write(
+            &fixture.snapshot,
+            format!(
+                r#"<manifest><project name="platform/p" path="p" revision="{p_sha}" clone-depth="1">{directive}</project><project name="platform/q" path="q" revision="{q_sha}"/></manifest>"#
+            ),
+        )
+        .unwrap();
+        let mut add = command(&fixture);
+        add.args(["add", "--json"]);
+        if condition == "submodules" {
+            add.arg("--submodules");
+        }
+        let added = output_json(add.arg(&fixture.destination).assert().success());
+        let project = added["result"]["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|project| project["path"] == "p")
+            .unwrap();
+        assert_eq!(project["mode"], "worktree", "{condition}");
+        if condition == "directive-destination" {
+            assert_eq!(
+                fs::read_to_string(fixture.destination.join("p/from-directive.txt")).unwrap(),
+                "snapshot\n"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_fixed_depth_parent_of_another_project_is_materialized() {
+    let fixture = fixture();
+    enable_clone_depth_sharing(&fixture, false);
+    fs::write(fixture.client.join("p/.gitignore"), "child/\n").unwrap();
+    git(&fixture.client.join("p"), &["add", ".gitignore"]);
+    git(
+        &fixture.client.join("p"),
+        &["commit", "-m", "ignore nested project"],
+    );
+    let child_sha = init_project(
+        &fixture.client,
+        "p/child",
+        &[("child.txt", "nested project\n")],
+    );
+    fs::write(fixture.client.join(".repo/project.list"), "p\np/child\nq\n").unwrap();
+    let p_sha = git(&fixture.client.join("p"), &["rev-parse", "HEAD"]);
+    let q_sha = git(&fixture.client.join("q"), &["rev-parse", "HEAD"]);
+    fs::write(
+        &fixture.snapshot,
+        format!(
+            r#"<manifest><project name="platform/p" path="p" revision="{p_sha}" clone-depth="1"/><project name="platform/child" path="p/child" revision="{child_sha}"/><project name="platform/q" path="q" revision="{q_sha}"/></manifest>"#
+        ),
+    )
+    .unwrap();
+
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    let parent = added["result"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["path"] == "p")
+        .unwrap();
+    assert_eq!(parent["mode"], "worktree");
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/child/child.txt")).unwrap(),
+        "nested project\n"
+    );
+}
+
+#[test]
+fn repair_restores_shared_links_but_preserves_unexpected_real_data() {
+    let fixture = fixture();
+    enable_clone_depth_sharing(&fixture, false);
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    fs::remove_file(fixture.destination.join("p")).unwrap();
+    command(&fixture)
+        .args(["repair", "tree"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_link(fixture.destination.join("p")).unwrap(),
+        fs::canonicalize(fixture.client.join("p")).unwrap()
+    );
+
+    fs::remove_file(fixture.destination.join("p")).unwrap();
+    fs::create_dir(fixture.destination.join("p")).unwrap();
+    fs::write(fixture.destination.join("p/keep"), "user data\n").unwrap();
+    command(&fixture).args(["repair", "tree"]).assert().code(3);
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/keep")).unwrap(),
+        "user data\n"
+    );
 }
 
 #[test]

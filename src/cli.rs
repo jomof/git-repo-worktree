@@ -48,6 +48,8 @@ pub enum Command {
     Prune(PruneArgs),
     /// Repair worktree registrations and manifest directives.
     Repair(RepairArgs),
+    /// Convert shared projects into isolated Git worktrees.
+    Materialize(MaterializeArgs),
     /// Show tool and runtime dependency versions.
     Version,
     /// Generate shell completions.
@@ -79,6 +81,12 @@ pub struct AddArgs {
     pub force: bool,
     #[arg(short = 'j', long, value_parser = parse_jobs)]
     pub jobs: Option<usize>,
+    /// Materialize every project instead of sharing fixed-depth projects.
+    #[arg(long)]
+    pub full: bool,
+    /// Materialize this project instead of sharing it (repeatable).
+    #[arg(long = "full-project", action = ArgAction::Append, value_name = "PROJECT")]
+    pub full_projects: Vec<String>,
     /// Disable copy-on-write population and always use Git checkout.
     #[arg(long)]
     pub no_reflink: bool,
@@ -143,6 +151,15 @@ pub struct PruneArgs {
 #[derive(Debug, Args)]
 pub struct RepairArgs {
     pub trees: Vec<String>,
+    #[arg(short = 'j', long, value_parser = parse_jobs)]
+    pub jobs: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+pub struct MaterializeArgs {
+    pub tree: String,
+    #[arg(required = true)]
+    pub projects: Vec<String>,
     #[arg(short = 'j', long, value_parser = parse_jobs)]
     pub jobs: Option<usize>,
 }

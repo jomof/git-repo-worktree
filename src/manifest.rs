@@ -15,6 +15,7 @@ pub struct ParsedManifest {
     pub copyfiles: Vec<DirectiveMeta>,
     pub linkfiles: Vec<DirectiveMeta>,
     pub supplemented_checkouts: Vec<String>,
+    pub malformed_clone_depth: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +28,8 @@ struct DirectiveDeclaration {
 struct ProjectDeclaration {
     name: String,
     path: String,
+    clone_depth: Option<u32>,
+    malformed_clone_depth: bool,
     copyfiles: Vec<DirectiveDeclaration>,
     linkfiles: Vec<DirectiveDeclaration>,
 }
@@ -50,6 +53,7 @@ pub fn parse_snapshot(
     let mut projects = Vec::new();
     let mut copyfiles = Vec::new();
     let mut linkfiles = Vec::new();
+    let mut malformed_clone_depth = Vec::new();
 
     for node in document
         .descendants()
@@ -66,6 +70,10 @@ pub fn parse_snapshot(
             )
         })?;
         in_snapshot.insert(path.to_string());
+        let (clone_depth, malformed) = parse_clone_depth(node.attribute("clone-depth"));
+        if malformed {
+            malformed_clone_depth.push(path.to_string());
+        }
         let mut project = ProjectMeta {
             path: path.to_string(),
             name: name.to_string(),
@@ -73,6 +81,8 @@ pub fn parse_snapshot(
             git_common_dir: String::new(),
             state: "pending".into(),
             reason: None,
+            mode: "worktree".into(),
+            clone_depth,
             strategy: None,
             est_bytes: None,
         };
@@ -126,6 +136,10 @@ pub fn parse_snapshot(
             let name = declaration
                 .map(|declaration| declaration.name.clone())
                 .unwrap_or_else(|| path.clone());
+            let clone_depth = declaration.and_then(|declaration| declaration.clone_depth);
+            if declaration.is_some_and(|declaration| declaration.malformed_clone_depth) {
+                malformed_clone_depth.push(path.clone());
+            }
             let path_safe = path_is_safe_relative(Path::new(path));
             projects.push(ProjectMeta {
                 path: path.clone(),
@@ -134,6 +148,8 @@ pub fn parse_snapshot(
                 git_common_dir: String::new(),
                 state: if path_safe { "pending" } else { "skipped" }.into(),
                 reason: (!path_safe).then(|| "unsafe-project-path".into()),
+                mode: "worktree".into(),
+                clone_depth,
                 strategy: None,
                 est_bytes: None,
             });
@@ -162,7 +178,18 @@ pub fn parse_snapshot(
         copyfiles,
         linkfiles,
         supplemented_checkouts,
+        malformed_clone_depth,
     })
+}
+
+fn parse_clone_depth(value: Option<&str>) -> (Option<u32>, bool) {
+    let Some(value) = value else {
+        return (None, false);
+    };
+    match value.parse::<u32>() {
+        Ok(value) if value > 0 => (Some(value), false),
+        _ => (None, true),
+    }
 }
 
 pub fn parse_snapshot_file(
@@ -308,6 +335,8 @@ fn parse_manifest_source(
                 let mut declaration = ProjectDeclaration {
                     name: name.to_string(),
                     path: path.to_string(),
+                    clone_depth: parse_clone_depth(node.attribute("clone-depth")).0,
+                    malformed_clone_depth: parse_clone_depth(node.attribute("clone-depth")).1,
                     copyfiles: Vec::new(),
                     linkfiles: Vec::new(),
                 };
@@ -371,6 +400,10 @@ fn augment_snapshot(xml: &str, parsed: &ParsedManifest) -> AppResult<String> {
         additions.push_str(&escape_xml(&project.path));
         additions.push_str("\" revision=\"");
         additions.push_str(&project.sha);
+        if let Some(clone_depth) = project.clone_depth {
+            additions.push_str("\" clone-depth=\"");
+            additions.push_str(&clone_depth.to_string());
+        }
         if copyfiles.is_empty() && linkfiles.is_empty() {
             additions.push_str("\" />");
             continue;
@@ -654,6 +687,67 @@ mod tests {
         );
         let parsed = parse_snapshot(&xml, temp.path(), "p\n", 2).unwrap();
         assert_eq!(parsed.copyfiles[0].reason.as_deref(), Some("malformed"));
+    }
+
+    #[test]
+    fn parses_positive_clone_depth_and_reports_malformed_values() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".repo/projects/a.git")).unwrap();
+        fs::create_dir_all(temp.path().join(".repo/projects/b.git")).unwrap();
+        let xml = format!(
+            r#"<manifest><project name="a" revision="{}" clone-depth="2"/><project name="b" revision="{}" clone-depth="zero"/></manifest>"#,
+            sha(),
+            sha()
+        );
+        let parsed = parse_snapshot(&xml, temp.path(), "a\nb\n", 2).unwrap();
+        assert_eq!(parsed.projects[0].clone_depth, Some(2));
+        assert_eq!(parsed.projects[1].clone_depth, None);
+        assert_eq!(parsed.malformed_clone_depth, vec!["b"]);
+    }
+
+    #[test]
+    fn supplemented_project_preserves_clone_depth_in_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".repo/manifests")).unwrap();
+        let project = temp.path().join("prebuilt");
+        fs::create_dir(&project).unwrap();
+        for args in [
+            &["init"][..],
+            &["config", "user.email", "test@example.com"][..],
+            &["config", "user.name", "Test"][..],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&project)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        fs::write(project.join("payload"), "fixed\n").unwrap();
+        for args in [&["add", "payload"][..], &["commit", "-m", "initial"][..]] {
+            assert!(Command::new("git")
+                .current_dir(&project)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        fs::write(temp.path().join(".repo/project.list"), "prebuilt\n").unwrap();
+        fs::write(
+            temp.path().join(".repo/manifest.xml"),
+            r#"<manifest><project name="tools/prebuilt" path="prebuilt" clone-depth="7"/></manifest>"#,
+        )
+        .unwrap();
+        let snapshot = temp.path().join("snapshot.xml");
+        fs::write(&snapshot, "<manifest></manifest>").unwrap();
+
+        let parsed = parse_snapshot_file(temp.path(), &snapshot, 2).unwrap();
+        assert_eq!(parsed.projects[0].clone_depth, Some(7));
+        assert!(fs::read_to_string(snapshot)
+            .unwrap()
+            .contains(r#"clone-depth="7""#));
     }
 
     #[test]

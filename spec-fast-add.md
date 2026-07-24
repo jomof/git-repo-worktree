@@ -1,212 +1,230 @@
-# git-repo-worktree — Safe Fast `add` (Spec Addendum)
+# git-repo-worktree — Fast default `add` (Spec Addendum)
 
 **Status:** Normative addendum to `spec.md` v1.0-draft.
 
-This addendum speeds up project population without changing the main spec's
-isolation model. Every successful project remains a real linked Git worktree
-at its pinned SHA. Source working-tree changes are never transported, and no
-created path aliases or writes through to the source client.
+This addendum makes the common `add` path fast on clients dominated by large,
+fixed-depth prebuilts. A project explicitly carrying a positive
+`clone-depth` may be represented by an absolute symlink to the source
+checkout. All other projects remain real linked Git worktrees.
 
-The sharing and `materialize` ideas in `advise-only-spec-fast-add.md` are
-explicitly out of scope.
+The tool selects the mode automatically and conservatively. The user does not
+need to opt in, inspect sizes, or label projects beyond the existing manifest.
 
-## 1. CLI
+## 1. Population modes and strategies
+
+Every non-skipped project has one population mode:
+
+* `worktree`: an isolated linked Git worktree at the pinned SHA.
+* `symlink-shared`: an absolute symlink to the corresponding source checkout.
+
+A worktree-mode project records a population strategy, `reflink` or
+`checkout`. A shared project has no worktree strategy.
+
+Sharing is live, not copy-on-write: a write below a shared directory also
+writes to the source checkout. `add` must therefore print one calm warning
+when it creates any shared projects:
+
+```text
+warning: sharing N clone-depth projects with the source checkout; materialize one before editing it
+```
+
+With `-v`, list each shared project path. `--quiet` suppresses the warning.
+
+## 2. Mode selection
+
+At pin time, parse each snapshot `<project>` element's `clone-depth`
+attribute. A positive decimal integer makes the project a sharing candidate.
+Missing, zero, negative, or malformed values do not; malformed values produce
+a warning, with project details only at `-v`.
+
+A candidate becomes `symlink-shared` only if every condition below holds:
+
+1. Neither `--full` nor a matching `--full-project <ppath>` forces a
+   worktree.
+2. `-b/--branch` was not used.
+3. The project path is not a prefix-directory parent of another non-skipped
+   project.
+4. No copyfile or linkfile destination is equal to or below the project path.
+5. The source checkout exists, its `HEAD` exactly equals the pinned SHA, its
+   complete status including untracked files is clean, and sparse checkout is
+   disabled.
+6. If `--submodules` is active, the pinned project does not contain
+   `.gitmodules`.
+
+Failure of any condition selects `worktree`; it does not fail `add`. `-v`
+may report the demotion reason.
+
+If every non-skipped project is a sharing candidate, disable sharing for the
+whole run. This treats client-wide shallow initialization as a storage policy,
+not an instruction to alias the entire client. Report the guardrail only at
+`-v`.
+
+Supplemented projects inherit `clone-depth` from their active manifest
+declaration, and the augmented snapshot preserves the attribute.
+
+## 3. CLI
 
 `add` gains:
 
-* `--no-reflink`: disable reflink attempts and always use Git checkout.
-* `--heavy-jobs <n>`: allow at most `n` heavy projects to populate
-  concurrently. `n` must be positive and defaults to 3.
+* `--full`: force every project to use mode `worktree`.
+* `--full-project <ppath>`: force one project to use mode `worktree`;
+  repeatable. An unknown path is a usage error (exit 2).
+* `--no-reflink`: disable reflink attempts for worktree projects.
+* `--heavy-jobs <n>`: allow at most `n` projects larger than 500 MiB to
+  populate concurrently; positive, default 3.
 
-Both flags are rejected with `--continue` (exit 2). Their original values are
-recorded in `meta.json` and govern resume. `-j/--jobs` continues to control
-project-level concurrency.
+All are rejected with `--continue`; their recorded values govern resume.
 
-## 2. Metadata compatibility
+A new command converts shared projects in place:
 
-The registry format remains version 1 because every project remains a normal
-worktree and older binaries can safely list, repair, move, lock, unlock, and
-remove these trees.
+```text
+git repo-worktree materialize [-j N] <tree> <ppath>...
+```
 
-Each project record gains:
+Every named path must be a recorded `symlink-shared` project before mutation.
+Otherwise fail with `E_NOT_SHARED` and exit 1. Materialization is allowed on a
+locked tree; the resulting Git worktree must immediately receive the tree's
+recorded lock.
+
+## 4. Shared-project population and durability
+
+For each shared project, journal step `project-share`:
+
+1. Create parent directories below the tree root.
+2. Create `<tree>/<ppath>` as an absolute symlink to
+   `<source-root>/<ppath>`.
+3. An existing symlink with the exact target succeeds. Replace a different
+   symlink. Never replace a non-symlink; fail that project with
+   `dest-occupied`.
+4. Durably append the completion record before updating `meta.json`.
+
+Completion records may be journaled in batches. Each batch is one
+append/write followed by sync; metadata may mark a project done only after
+the batch containing its completion is durable. A crash before that point
+replays the idempotent operation. This batching rule also applies to
+worktree-project and directive completion records.
+
+## 5. Lifecycle safety
+
+Commands must distinguish shared projects from worktrees:
+
+* `dirty`, `remove`, `lock`, `unlock`, Git worktree repair, and Git worktree
+  prune skip shared projects.
+* Recursive tree removal must delete shared symlink inodes and must never
+  traverse them.
+* `move` leaves absolute shared targets unchanged.
+* `repair` verifies every shared path. It recreates a missing link and
+  replaces a wrong symlink, but never deletes or replaces a real file or
+  directory.
+* Submodule population never runs through a shared project.
+* A directive destination inside a shared project is forbidden and fails
+  with `dest-in-shared`. Mode selection normally prevents this by demoting
+  that project. A directive source inside a shared project is permitted.
+
+`materialize` unlinks only the exact expected shared symlink, creates the
+recorded pinned worktree through the normal worktree strategy, durably
+journals `project-materialize`, changes the mode to `worktree`, applies a
+tree lock when present, and retries directives. If interrupted after unlink,
+retry treats the absent destination or a partial `.git` worktree as resumable.
+It never replaces an unexpected real path.
+
+## 6. Metadata and compatibility
+
+Registry `format_version` becomes 2. Older binaries must reject v2 entries
+because their lifecycle operations do not understand shared paths. A v2
+reader accepts v1 metadata with these defaults:
 
 ```json
+{
+  "project": {
+    "mode": "worktree",
+    "clone_depth": null,
+    "strategy": null,
+    "est_bytes": null
+  },
+  "tree": {
+    "full": false,
+    "full_projects": [],
+    "no_reflink": false,
+    "heavy_jobs": 3
+  }
+}
+```
+
+Newly created v2 project records use:
+
+```json
+"mode": "worktree" | "symlink-shared",
+"clone_depth": 1 | null,
 "strategy": "reflink" | "checkout" | null,
 "est_bytes": 1234 | null
 ```
 
-`strategy` is null until population succeeds. Tree metadata gains:
+Human `list` appends `(<n> shared)` when nonzero. Porcelain output includes
+`shared <n>` immediately after `skipped`. JSON exposes the metadata directly.
 
-```json
-"no_reflink": false,
-"heavy_jobs": 3
-```
+## 7. Worktree performance
 
-Readers default absent `strategy` and `est_bytes` to null, `no_reflink` to
-false, and `heavy_jobs` to 3 so existing version-1 entries remain readable.
+Worktree-mode projects retain the safe optimizations below.
 
-## 3. Tracked-size estimation
+### 7.1 Tracked-size scheduling
 
-After Git common-directory and supplemented-project HEAD discovery, pinning
-computes `est_bytes` for each pending project from the pinned tree, not by
-walking its live checkout:
+Compute `est_bytes` from the pinned tree with
+`git --git-dir=<common> ls-tree -rlz <sha>`. Failures produce null and do not
+fail `add`. Preserve parent-before-child dependencies; among ready projects
+dispatch largest first. Limit projects over 500 MiB to `heavy_jobs`, while
+allowing ready light work to fill remaining `-j` slots.
 
-```text
-git --git-dir=<git_common_dir> ls-tree -rlz <sha>
-```
+### 7.2 Parallel checkout
 
-Sum the reported blob sizes with saturating arithmetic. Trees, gitlinks,
-malformed entries, and entries without a numeric size contribute zero. Run
-estimates in the existing manifest worker pool. A command or object-availability
-failure produces `est_bytes: null` and does not fail `add`.
-
-This estimate excludes untracked and ignored build output, is immutable for
-the snapshot, and also works when the source checkout directory is absent.
-
-## 4. Scheduling and heavy throttling
-
-The parent-before-child project dependency rule remains authoritative.
-Among currently ready projects, dispatch the largest `est_bytes` first;
-null estimates sort as zero, with project path as the deterministic tie-break.
-
-A project is heavy when:
-
-```text
-est_bytes > 500 * 1024 * 1024
-```
-
-At most `heavy_jobs` heavy projects may run simultaneously. Light ready
-projects may fill all remaining slots up to `jobs`; a throttled heavy project
-must not block a ready light project. The effective heavy limit never exceeds
-`jobs`.
-
-## 5. Native parallel checkout
-
-Every Git command that populates a worktree through checkout, including
-normal `worktree add` and resume/fallback `reset --hard`, receives per-command
+All checkout and resume-reset commands receive, without changing repository
 configuration:
 
 ```text
--c checkout.workers=8
--c checkout.thresholdForParallelism=100
+-c checkout.workers=8 -c checkout.thresholdForParallelism=100
 ```
 
-These constants do not scale with `-j`; project concurrency and Git checkout
-worker concurrency multiply. The configuration is never written to a
-repository.
+### 7.3 Conservative reflink
 
-## 6. Conservative reflink eligibility
+Reflink may run only when the source checkout exists at the exact pinned
+HEAD, is non-sparse, and has an empty full porcelain status. It populates from
+the pinned tree, preserves Git modes and symlinks, then rechecks the source
+and validates the destination against the pinned index. Any uncertain
+precondition falls back to checkout. Failure after worktree registration is
+repaired with pinned `reset --hard`. A failed filesystem pair is memoized for
+the run.
 
-Unless `--no-reflink` was recorded, each project may attempt reflink
-population. Every failed or ambiguous precondition silently selects checkout
-and emits only a `-v` diagnostic.
+An unfinished destination already containing `.git` is always reset hard to
+the pinned SHA; HEAD equality alone never proves completion.
 
-Immediately before registering the destination, all of these must hold:
+## 8. User and agent guidance
 
-1. `<source-root>/<project-path>` exists as a Git checkout.
-2. Its `HEAD` exactly equals the pinned SHA.
-3. Sparse checkout is not enabled.
-4. `git status --porcelain=v1 -z --untracked-files=all` is empty. This
-   deliberately rejects staged, tracked, untracked, and ignored-by-index
-   deviations that Git reports.
-5. The source/destination filesystem pair has not already failed a reflink
-   during this run.
+README and the embedded skill must explain both modes without alarm:
 
-No Git lock or source file is changed by this optimization.
+* Most projects are isolated worktrees.
+* Explicit fixed-depth projects may be shared for speed and are effectively
+  read-only from the created tree.
+* Before editing a project, agents inspect `list --json`; when its mode is
+  `symlink-shared`, they run `materialize <tree> <project-path>`.
+* `--full` creates an entirely materialized tree when needed.
 
-## 7. Reflink population and validation
+## 9. Required tests
 
-For an eligible project:
-
-1. Run `git ... worktree add --no-checkout [--detach|-b <branch>]
-   <destination> <sha>`.
-2. Initialize the worktree index with `git -C <destination> read-tree <sha>`,
-   then enumerate the pinned tree recursively with
-   `git --git-dir=<git_common_dir> ls-tree -rz <sha>`.
-3. For regular entries, create parent directories and use the pinned
-   `reflink-copy` crate's `reflink` operation from the source checkout to the
-   destination. Set permissions from the Git mode (0644 or 0755).
-4. Recreate mode `120000` entries as symlinks with the source link target.
-   Create mode `160000` entries as empty directories for the existing
-   submodule phase. Any missing, unexpected, or unsafe entry aborts the
-   optimization.
-5. Re-check source `HEAD`, sparse mode, and full cleanliness.
-6. Verify the destination against the pinned index with:
-
-   ```text
-   git -C <destination> update-index --refresh
-   git -C <destination> diff-files --quiet
-   git -C <destination> diff-index --cached --quiet <sha>
-   ```
-
-Only a project passing all checks records `strategy: "reflink"`. Thus even a
-source modification racing the copy cannot be accepted as committed output.
-
-If any step after registration fails, run the configured parallel
-`git -C <destination> reset --hard <sha>` in the existing worktree. Success
-records `strategy: "checkout"`; failure reports the project failed normally.
-A reflink failure marks that source/destination device pair unsupported for
-the rest of the run, preventing repeated expensive failures.
-
-## 8. Ordinary checkout
-
-Ineligible projects run:
-
-```text
-git -C <source-project> \
-  -c checkout.workers=8 \
-  -c checkout.thresholdForParallelism=100 \
-  worktree add [--detach|-b <branch>] <destination> <sha>
-```
-
-The main spec's `--git-dir` fallback remains unchanged. Success records
-`strategy: "checkout"`.
-
-## 9. Resume and durability
-
-Project completion is reported only after its `project-add done` record has
-been included in a durable journal batch. Metadata is written after the
-batch.
-
-An unfinished project whose destination already contains `.git` is never
-accepted from `HEAD` equality alone. `add --continue` runs the configured
-parallel `reset --hard <sha>` and records checkout success. This repairs
-crashes during `--no-checkout`, reflink copying, validation, or journal/meta
-handoff. Replaying a project whose journal record was durable but whose
-metadata update was interrupted is safe and idempotent.
-
-The original `no_reflink`, `heavy_jobs`, project estimates, and pinned SHAs
-remain authoritative on resume.
-
-## 10. User and agent guidance
-
-README and the embedded `SKILL.md` must state:
-
-* Fast add still creates isolated real worktrees; there are no shared project
-  symlinks.
-* Scheduling is longest-ready-first with a default three-heavy-project cap.
-* `--no-reflink` is a diagnostic fallback.
-* `--heavy-jobs` may be lowered on storage-constrained machines.
-* `--continue` repairs and resumes an interrupted optimized checkout.
-
-## 11. Tests
-
-Required coverage:
-
-1. Tracked-size parsing ignores non-blobs/malformed sizes and saturates.
-2. Dependency scheduling remains parent-before-child, orders ready projects
-   largest first, and starts light work while heavy work is throttled.
-3. Checkout invocations and resume resets carry both parallel-checkout
-   configuration values.
-4. A clean source on a reflink-capable filesystem yields a clean destination
-   with `strategy: "reflink"`; unsupported filesystems and `--no-reflink`
-   yield an identical `strategy: "checkout"` tree.
-5. Dirty, untracked, wrong-HEAD, or sparse sources never use reflink and never
-   transport source-only content.
-6. Symlinks, executable modes, and gitlinks preserve normal checkout
-   semantics.
-7. A partial registered worktree with pinned `HEAD` is reset on resume rather
-   than incorrectly accepted as complete.
-8. Existing version-1 metadata without the new fields remains readable.
+1. Positive, absent, and malformed `clone-depth` parsing, including
+   supplemented snapshot preservation.
+2. Default selection, `--full`, repeatable `--full-project`, client-wide
+   guardrail, branch, nested-parent, directive-destination, dirty/wrong-HEAD,
+   sparse, and submodule demotions.
+3. Shared links are absolute and exact; resume is idempotent; unexpected
+   real paths are preserved.
+4. Removing a tree deletes the links while every source file remains;
+   lifecycle Git commands do not operate through shared links.
+5. Repair restores missing/wrong links without replacing real data.
+6. Materialize creates a clean pinned worktree, resumes partial work,
+   preserves locking, retries directives, and rejects non-shared paths.
+7. Existing tracked-size, dependency scheduler, heavy throttle, checkout,
+   reflink, source-race, and resume tests continue to pass.
+8. v1 metadata loads with worktree defaults; v2 metadata is rejected by
+   readers whose supported format is 1.
 
 — end of addendum —

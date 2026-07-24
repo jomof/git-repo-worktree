@@ -44,6 +44,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Move(_) => "move",
         Command::Prune(_) => "prune",
         Command::Repair(_) => "repair",
+        Command::Materialize(_) => "materialize",
         Command::Version => "version",
         Command::Completions(_) => "completions",
         Command::Skill(args) => match &args.command {
@@ -76,6 +77,7 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
         Command::Move(args) => tree::move_tree(args, cwd, cli.quiet),
         Command::Prune(args) => tree::prune(args, cwd, cli.quiet),
         Command::Repair(args) => tree::repair(args, cwd, cli.quiet),
+        Command::Materialize(args) => tree::materialize(args, cwd, cli.quiet, cli.verbose),
         Command::Version => version(cli.verbose, cli.json),
         Command::Completions(args) => completions(args.shell, cli.json),
         Command::Skill(args) => skill::run(&args.command, cwd, cli.json, cli.quiet),
@@ -229,6 +231,7 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
         "move",
         "prune",
         "repair",
+        "materialize",
         "version",
         "completions",
     ] {

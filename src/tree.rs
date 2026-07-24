@@ -1,5 +1,6 @@
 use crate::cli::{
-    AddArgs, ListArgs, LockArgs, MoveArgs, PruneArgs, RemoveArgs, RepairArgs, UnlockArgs,
+    AddArgs, ListArgs, LockArgs, MaterializeArgs, MoveArgs, PruneArgs, RemoveArgs, RepairArgs,
+    UnlockArgs,
 };
 use crate::discovery::{check_git_version, check_repo_version, discover_client};
 use crate::error::{AppError, AppResult};
@@ -11,8 +12,8 @@ use crate::registry::{load_all, select_tree, with_registry_lock, LockMode};
 use crate::util::{
     absolutize, append_journal, append_journal_batch, canonicalize_missing, copy_permissions,
     dedupe_paths, default_jobs, ensure_safe_destination, exit_reason, is_path_prefix,
-    journal_has_done, journal_record, now, path_is_safe_relative, relative_path, sanitize_name,
-    truncated_stderr, write_breadcrumb, write_meta,
+    journal_has_done, journal_has_project_status, journal_record, now, path_is_safe_relative,
+    relative_path, sanitize_name, truncated_stderr, write_breadcrumb, write_meta,
 };
 use crate::INTERRUPTED;
 use rayon::prelude::*;
@@ -71,11 +72,13 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             || args.submodules
             || args.lock
             || args.reason.is_some()
+            || args.full
+            || !args.full_projects.is_empty()
             || args.no_reflink
             || args.heavy_jobs.is_some())
     {
         return Err(AppError::usage(
-            "--name, -b, --submodules, --lock, --reason, --no-reflink, and --heavy-jobs are invalid with --continue",
+            "--name, -b, --submodules, --lock, --reason, --full, --full-project, --no-reflink, and --heavy-jobs are invalid with --continue",
         ));
     }
     let selector = args.path.as_deref().ok_or_else(|| {
@@ -114,6 +117,13 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 meta.projects = parsed.projects;
                 meta.copyfiles = parsed.copyfiles;
                 meta.linkfiles = parsed.linkfiles;
+                configure_population_modes(
+                    &mut meta,
+                    &parsed.malformed_clone_depth,
+                    jobs,
+                    quiet,
+                    verbose,
+                )?;
                 write_meta(&meta)?;
             }
             if !meta.root().exists() {
@@ -188,6 +198,8 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             state: "creating".into(),
             branch: args.branch.clone(),
             submodules: args.submodules,
+            full: args.full,
+            full_projects: args.full_projects.clone(),
             no_reflink: args.no_reflink,
             heavy_jobs: args.heavy_jobs.unwrap_or_else(default_heavy_jobs),
             locked: args.lock.then(|| LockMeta {
@@ -234,6 +246,16 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         meta.projects = parsed.projects;
         meta.copyfiles = parsed.copyfiles;
         meta.linkfiles = parsed.linkfiles;
+        if let Err(error) = configure_population_modes(
+            &mut meta,
+            &parsed.malformed_clone_depth,
+            jobs,
+            quiet,
+            verbose,
+        ) {
+            let _ = fs::remove_dir_all(&entry);
+            return Err(error);
+        }
         append_journal(&entry, "pin", "done", None, None, None)?;
         write_meta(&meta)?;
         phase_done(
@@ -298,6 +320,152 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
     })
 }
 
+fn configure_population_modes(
+    meta: &mut TreeMeta,
+    malformed_clone_depth: &[String],
+    jobs: usize,
+    quiet: bool,
+    verbose: u8,
+) -> AppResult<()> {
+    let known = meta
+        .projects
+        .iter()
+        .map(|project| project.path.as_str())
+        .collect::<HashSet<_>>();
+    let unknown = meta
+        .full_projects
+        .iter()
+        .filter(|path| !known.contains(path.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(AppError::usage(format!(
+            "unknown --full-project path(s): {}",
+            unknown.join(", ")
+        )));
+    }
+
+    for project in &mut meta.projects {
+        project.mode = "worktree".into();
+        if project.state != "done" {
+            project.strategy = None;
+        }
+    }
+    if !quiet && !malformed_clone_depth.is_empty() {
+        if verbose > 0 {
+            for path in malformed_clone_depth {
+                eprintln!("warning: ignoring malformed clone-depth for {path}");
+            }
+        } else {
+            eprintln!(
+                "warning: ignoring malformed clone-depth on {} project(s)",
+                malformed_clone_depth.len()
+            );
+        }
+    }
+
+    let pending = meta
+        .projects
+        .iter()
+        .enumerate()
+        .filter(|(_, project)| project.state == "pending")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let candidates = pending
+        .iter()
+        .copied()
+        .filter(|index| meta.projects[*index].clone_depth.is_some())
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    if candidates.len() == pending.len() {
+        if !quiet && verbose > 0 {
+            eprintln!(
+                "sharing disabled: every active project has clone-depth (client-wide shallow guardrail)"
+            );
+        }
+        return Ok(());
+    }
+
+    let forced = meta.full_projects.iter().cloned().collect::<HashSet<_>>();
+    let active_paths = pending
+        .iter()
+        .map(|index| meta.projects[*index].path.clone())
+        .collect::<Vec<_>>();
+    let directive_destinations = meta
+        .copyfiles
+        .iter()
+        .chain(meta.linkfiles.iter())
+        .filter(|directive| path_is_safe_relative(Path::new(&directive.dest)))
+        .map(|directive| PathBuf::from(&directive.dest))
+        .collect::<Vec<_>>();
+    let full = meta.full;
+    let branch = meta.branch.is_some();
+    let submodules = meta.submodules;
+    let source = meta.source();
+    let checks = candidates
+        .iter()
+        .map(|index| (*index, meta.projects[*index].clone()))
+        .collect::<Vec<_>>();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .map_err(|error| AppError::io("create sharing preflight pool", error))?;
+    let results = pool.install(|| {
+        checks
+            .par_iter()
+            .map(|(index, project)| {
+                let reason = if full {
+                    Some("--full".to_string())
+                } else if forced.contains(&project.path) {
+                    Some("--full-project".to_string())
+                } else if branch {
+                    Some("branch creation requires a worktree".to_string())
+                } else if active_paths.iter().any(|other| {
+                    other != &project.path && Path::new(other).starts_with(Path::new(&project.path))
+                }) {
+                    Some("project contains another active project".to_string())
+                } else if directive_destinations
+                    .iter()
+                    .any(|dest| dest.starts_with(Path::new(&project.path)))
+                {
+                    Some("directive destination is inside project".to_string())
+                } else if submodules && pinned_path_exists(project, ".gitmodules") {
+                    Some("--submodules requires an isolated worktree".to_string())
+                } else if !source.join(&project.path).is_dir() {
+                    Some("source checkout is missing".to_string())
+                } else {
+                    None
+                };
+                (*index, reason)
+            })
+            .collect::<Vec<_>>()
+    });
+    for (index, reason) in results {
+        if let Some(reason) = reason {
+            if !quiet && verbose > 0 {
+                eprintln!(
+                    "project {}: using worktree ({reason})",
+                    meta.projects[index].path
+                );
+            }
+        } else {
+            meta.projects[index].mode = "symlink-shared".into();
+        }
+    }
+    Ok(())
+}
+
+fn pinned_path_exists(project: &ProjectMeta, path: &str) -> bool {
+    Command::new("git")
+        .arg(format!("--git-dir={}", project.git_common_dir))
+        .args(["cat-file", "-e", &format!("{}:{path}", project.sha)])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(true)
+}
+
 fn run_add_phases(
     meta: &mut TreeMeta,
     jobs: usize,
@@ -338,6 +506,25 @@ fn run_add_phases(
         quiet,
         verbose,
     )?;
+    let shared = meta
+        .projects
+        .iter()
+        .filter(|project| project.mode == "symlink-shared" && project.state == "done")
+        .count();
+    if shared > 0 && !quiet {
+        eprintln!(
+            "warning: sharing {shared} clone-depth project(s) with the source checkout; materialize one before editing it"
+        );
+        if verbose > 0 {
+            for project in meta
+                .projects
+                .iter()
+                .filter(|project| project.mode == "symlink-shared" && project.state == "done")
+            {
+                eprintln!("shared {}", project.path);
+            }
+        }
+    }
     phase_done(
         quiet,
         verbose,
@@ -467,7 +654,7 @@ fn build_project_schedule(projects: &[ProjectMeta]) -> ProjectSchedule {
 }
 
 fn project_is_heavy(project: &ProjectMeta) -> bool {
-    project.est_bytes.unwrap_or(0) > HEAVY_PROJECT_BYTES
+    project.mode == "worktree" && project.est_bytes.unwrap_or(0) > HEAVY_PROJECT_BYTES
 }
 
 fn pop_next_ready(
@@ -492,7 +679,8 @@ fn pop_next_ready(
 
 #[derive(Debug)]
 struct ProjectOutcome {
-    strategy: &'static str,
+    mode: &'static str,
+    strategy: Option<&'static str>,
     note: Option<String>,
 }
 
@@ -604,10 +792,28 @@ fn run_project_phase(
             .map(|(index, result)| {
                 let path = &meta.projects[*index].path;
                 match result {
-                    Ok(_) => journal_record("project-add", "done", Some(path), None, None),
-                    Err(reason) => {
-                        journal_record("project-add", "failed", Some(path), None, Some(reason))
-                    }
+                    Ok(outcome) => journal_record(
+                        if outcome.mode == "symlink-shared" {
+                            "project-share"
+                        } else {
+                            "project-add"
+                        },
+                        "done",
+                        Some(path),
+                        None,
+                        None,
+                    ),
+                    Err(reason) => journal_record(
+                        if meta.projects[*index].mode == "symlink-shared" {
+                            "project-share"
+                        } else {
+                            "project-add"
+                        },
+                        "failed",
+                        Some(path),
+                        None,
+                        Some(reason),
+                    ),
                 }
             })
             .collect::<Vec<_>>();
@@ -621,18 +827,20 @@ fn run_project_phase(
                 Ok(outcome) => {
                     meta.projects[index].state = "done".into();
                     meta.projects[index].reason = None;
-                    meta.projects[index].strategy = Some(outcome.strategy.into());
+                    meta.projects[index].mode = outcome.mode.into();
+                    meta.projects[index].strategy = outcome.strategy.map(str::to_owned);
                     completed_for_hook += 1;
                     maybe_crash_after(completed_for_hook);
                     if verbose > 0 && !quiet {
+                        let description = outcome.strategy.unwrap_or("shared");
                         match outcome.note {
                             Some(note) => eprintln!(
                                 "project {settled}/{total}: added {project_path} ({}, {note})",
-                                outcome.strategy
+                                description
                             ),
                             None => eprintln!(
                                 "project {settled}/{total}: added {project_path} ({})",
-                                outcome.strategy
+                                description
                             ),
                         }
                     }
@@ -675,18 +883,43 @@ fn process_project(
     reflink_state: &ReflinkState,
 ) -> Result<ProjectOutcome, String> {
     let worktree = destination.join(&project.path);
-    if worktree.join(".git").exists() {
+    let source_checkout = source_root.join(&project.path);
+    let worktree_is_symlink = fs::symlink_metadata(&worktree)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false);
+    if !worktree_is_symlink && worktree.join(".git").exists() {
         reset_worktree(&worktree, &project.sha)?;
         return Ok(ProjectOutcome {
-            strategy: "checkout",
+            mode: "worktree",
+            strategy: Some("checkout"),
             note: Some("resumed with reset --hard".into()),
         });
+    }
+    if project.mode == "symlink-shared" {
+        match source_is_clean_at_sha(&source_checkout, &project.sha) {
+            Ok(()) => {
+                share_project(&source_checkout, &worktree)?;
+                return Ok(ProjectOutcome {
+                    mode: "symlink-shared",
+                    strategy: None,
+                    note: None,
+                });
+            }
+            Err(reason) => {
+                remove_expected_shared_link(&source_checkout, &worktree)?;
+                ordinary_checkout(project, &source_checkout, &worktree, branch)?;
+                return Ok(ProjectOutcome {
+                    mode: "worktree",
+                    strategy: Some("checkout"),
+                    note: Some(format!("sharing preflight changed: {reason}")),
+                });
+            }
+        }
     }
     if let Some(parent) = worktree.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
-    let source_checkout = source_root.join(&project.path);
     let reflink_reason = if no_reflink {
         Some("reflink disabled".into())
     } else {
@@ -703,14 +936,16 @@ fn process_project(
         ) {
             Ok(()) => {
                 return Ok(ProjectOutcome {
-                    strategy: "reflink",
+                    mode: "worktree",
+                    strategy: Some("reflink"),
                     note: None,
                 });
             }
             Err(ReflinkAttemptError::AfterRegistration(reason)) => {
                 reset_worktree(&worktree, &project.sha)?;
                 return Ok(ProjectOutcome {
-                    strategy: "checkout",
+                    mode: "worktree",
+                    strategy: Some("checkout"),
                     note: Some(format!("reflink fallback: {reason}")),
                 });
             }
@@ -720,7 +955,8 @@ fn process_project(
                 }
                 return ordinary_checkout(project, &source_checkout, &worktree, branch).map(|_| {
                     ProjectOutcome {
-                        strategy: "checkout",
+                        mode: "worktree",
+                        strategy: Some("checkout"),
                         note: Some(format!("reflink setup failed: {reason}")),
                     }
                 });
@@ -728,9 +964,49 @@ fn process_project(
         }
     }
     ordinary_checkout(project, &source_checkout, &worktree, branch).map(|_| ProjectOutcome {
-        strategy: "checkout",
+        mode: "worktree",
+        strategy: Some("checkout"),
         note: reflink_reason,
     })
+}
+
+fn remove_expected_shared_link(expected: &Path, destination: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let current = fs::read_link(destination)
+                .map_err(|error| format!("inspect shared link: {error}"))?;
+            if current != expected {
+                return Err("dest-occupied".into());
+            }
+            fs::remove_file(destination)
+                .map_err(|error| format!("remove shared link for checkout: {error}"))
+        }
+        Ok(_) => Err("dest-occupied".into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("inspect shared destination: {error}")),
+    }
+}
+
+fn share_project(source_checkout: &Path, destination: &Path) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let current = fs::read_link(destination)
+                .map_err(|error| format!("inspect shared link: {error}"))?;
+            if current == source_checkout {
+                return Ok(());
+            }
+            fs::remove_file(destination)
+                .map_err(|error| format!("replace shared link: {error}"))?;
+        }
+        Ok(_) => return Err("dest-occupied".into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("inspect shared destination: {error}")),
+    }
+    symlink(source_checkout, destination).map_err(|error| format!("create shared link: {error}"))
 }
 
 fn checkout_command() -> Command {
@@ -1099,6 +1375,12 @@ fn process_directives(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
         .collect::<HashSet<_>>();
     let root = meta.root();
     let entry = meta.registry_entry();
+    let shared_paths = meta
+        .projects
+        .iter()
+        .filter(|project| project.mode == "symlink-shared")
+        .map(|project| PathBuf::from(&project.path))
+        .collect::<Vec<_>>();
     let copy_work = meta
         .copyfiles
         .iter()
@@ -1113,7 +1395,14 @@ fn process_directives(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
     let copy_results = pool.install(|| {
         copy_work
             .par_iter()
-            .map(|(index, directive)| (*index, apply_copy(&root, directive, false)))
+            .map(|(index, directive)| {
+                let result = if destination_is_shared(&shared_paths, &directive.dest) {
+                    Err("dest-in-shared".into())
+                } else {
+                    apply_copy(&root, directive, false)
+                };
+                (*index, result)
+            })
             .collect::<Vec<_>>()
     });
     let copy_records = copy_results
@@ -1151,7 +1440,14 @@ fn process_directives(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
     let link_results = pool.install(|| {
         link_work
             .par_iter()
-            .map(|(index, directive)| (*index, apply_link(&root, directive, false)))
+            .map(|(index, directive)| {
+                let result = if destination_is_shared(&shared_paths, &directive.dest) {
+                    Err("dest-in-shared".into())
+                } else {
+                    apply_link(&root, directive, false)
+                };
+                (*index, result)
+            })
             .collect::<Vec<_>>()
     });
     let link_records = link_results
@@ -1165,6 +1461,13 @@ fn process_directives(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
         apply_directive_result(&mut meta.linkfiles[index], result, "linkfile", quiet);
     }
     write_meta(meta)
+}
+
+fn destination_is_shared(shared_paths: &[PathBuf], destination: &str) -> bool {
+    let destination = Path::new(destination);
+    shared_paths
+        .iter()
+        .any(|shared| destination.starts_with(shared))
 }
 
 fn directive_journal_record(
@@ -1284,7 +1587,9 @@ fn process_submodules(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool
         .iter()
         .enumerate()
         .filter(|(_, project)| {
-            project.state == "done" && root.join(&project.path).join(".gitmodules").is_file()
+            project.mode == "worktree"
+                && project.state == "done"
+                && root.join(&project.path).join(".gitmodules").is_file()
         })
         .map(|(index, project)| (index, project.clone()))
         .collect::<Vec<_>>();
@@ -1469,11 +1774,16 @@ pub fn list(args: &ListArgs, cwd: &Path, json_output: bool, verbose: u8) -> AppR
                 for tree in &trees {
                     let locked = tree.locked.as_ref().map(|_| "  locked").unwrap_or("");
                     println!(
-                        "{}  {}  {}/{} projects{}",
+                        "{}  {}  {}/{} projects{}{}",
                         tree.path,
                         tree.state,
                         tree.done_count(),
                         tree.total_non_skipped(),
+                        if tree.shared_count() > 0 {
+                            format!(" ({} shared)", tree.shared_count())
+                        } else {
+                            String::new()
+                        },
                         locked
                     );
                     if verbose > 0 {
@@ -1513,6 +1823,7 @@ fn print_porcelain(trees: &[TreeMeta], registry: &Path, nul: bool) -> AppResult<
             ),
             format!("projects {}", tree.done_count()),
             format!("skipped {}", tree.skipped_count()),
+            format!("shared {}", tree.shared_count()),
             format!("failed {}", tree.failed_count()),
         ];
         if let Some(locked) = &tree.locked {
@@ -1588,7 +1899,8 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 projects[start..end]
                     .par_iter()
                     .filter(|project| {
-                        meta.root().join(&project.path).exists()
+                        project.mode == "worktree"
+                            && meta.root().join(&project.path).exists()
                             && !project.git_common_dir.is_empty()
                     })
                     .for_each(|project| {
@@ -1609,7 +1921,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
         let gitdirs = dedupe_paths(
             meta.projects
                 .iter()
-                .filter(|project| !project.git_common_dir.is_empty())
+                .filter(|project| project.mode == "worktree" && !project.git_common_dir.is_empty())
                 .map(|project| &project.git_common_dir),
         );
         pool.install(|| {
@@ -1637,7 +1949,7 @@ fn dirty_projects(meta: &TreeMeta) -> AppResult<Vec<String>> {
     for project in meta
         .projects
         .iter()
-        .filter(|project| project.state == "done")
+        .filter(|project| project.mode == "worktree" && project.state == "done")
     {
         let path = meta.root().join(&project.path);
         if !path.exists() {
@@ -1710,7 +2022,7 @@ fn lock_existing_projects(meta: &TreeMeta, jobs: usize) -> AppResult<usize> {
     let warnings = pool.install(|| {
         meta.projects
             .par_iter()
-            .filter(|project| root.join(&project.path).exists())
+            .filter(|project| project.mode == "worktree" && root.join(&project.path).exists())
             .filter(|project| {
                 Command::new("git")
                     .arg(format!("--git-dir={}", project.git_common_dir))
@@ -1747,7 +2059,7 @@ pub fn unlock(args: &UnlockArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
         let warnings = pool.install(|| {
             meta.projects
                 .par_iter()
-                .filter(|project| project.state == "done")
+                .filter(|project| project.mode == "worktree" && project.state == "done")
                 .filter(|project| {
                     Command::new("git")
                         .arg(format!("--git-dir={}", project.git_common_dir))
@@ -1806,7 +2118,7 @@ pub fn move_tree(args: &MoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
         maybe_crash_after_move();
         meta.path = new_path.to_string_lossy().into_owned();
         write_breadcrumb(&meta)?;
-        let warnings = repair_git_links(&mut meta, default_jobs());
+        let warnings = repair_shared_links(&mut meta) + repair_git_links(&mut meta, default_jobs());
         meta.moving = None;
         meta.state = if old_state == "complete" && warnings == 0 && meta.is_complete() {
             "complete".into()
@@ -1838,6 +2150,222 @@ fn maybe_crash_after_move() {
     }
 }
 
+pub fn materialize(
+    args: &MaterializeArgs,
+    cwd: &Path,
+    quiet: bool,
+    verbose: u8,
+) -> AppResult<Value> {
+    check_git_version()?;
+    let client = discover_client(cwd, true)?;
+    with_registry_lock(&client.root, LockMode::Exclusive, false, |registry| {
+        let mut meta = select_tree(registry, &args.tree, cwd)?;
+        let mut requested = Vec::new();
+        let mut seen = HashSet::new();
+        for path in &args.projects {
+            if seen.insert(path.clone()) {
+                requested.push(path.clone());
+            }
+        }
+        let mut indices = Vec::new();
+        for path in &requested {
+            let Some((index, project)) = meta
+                .projects
+                .iter()
+                .enumerate()
+                .find(|(_, project)| project.path == *path)
+            else {
+                return Err(AppError::operational(
+                    "E_NOT_SHARED",
+                    format!("{path} is not a project in tree {}", meta.name),
+                ));
+            };
+            if project.mode != "symlink-shared" {
+                return Err(AppError::operational(
+                    "E_NOT_SHARED",
+                    format!("{path} has mode {}, not symlink-shared", project.mode),
+                ));
+            }
+            indices.push(index);
+        }
+
+        let entry = meta.registry_entry();
+        let source = meta.source();
+        let destination = meta.root();
+        let reflink_state = ReflinkState::default();
+        let mut failures = 0usize;
+        for index in indices {
+            let path = meta.projects[index].path.clone();
+            let expected = source.join(&path);
+            let target = destination.join(&path);
+            let started =
+                journal_has_project_status(&entry, "project-materialize", "started", &path)?;
+            let prepared = prepare_materialize(&entry, &path, &expected, &target, started);
+            let result = match prepared {
+                Ok(()) => {
+                    let mut project = meta.projects[index].clone();
+                    project.mode = "worktree".into();
+                    process_project(
+                        &project,
+                        &source,
+                        &destination,
+                        None,
+                        meta.no_reflink,
+                        &reflink_state,
+                    )
+                    .and_then(|outcome| {
+                        if meta.locked.is_some() {
+                            lock_materialized_project(&meta, &project)?;
+                        }
+                        Ok(outcome)
+                    })
+                }
+                Err(reason) => Err(reason),
+            };
+            match result {
+                Ok(outcome) => {
+                    append_journal(
+                        &entry,
+                        "project-materialize",
+                        "done",
+                        Some(&path),
+                        None,
+                        None,
+                    )?;
+                    meta.projects[index].mode = "worktree".into();
+                    meta.projects[index].strategy = outcome.strategy.map(str::to_owned);
+                    meta.projects[index].state = "done".into();
+                    meta.projects[index].reason = None;
+                    if !meta.full_projects.contains(&path) {
+                        meta.full_projects.push(path.clone());
+                    }
+                    if !quiet && verbose > 0 {
+                        eprintln!(
+                            "materialized {path} ({})",
+                            outcome.strategy.unwrap_or("checkout")
+                        );
+                    }
+                }
+                Err(reason) => {
+                    failures += 1;
+                    append_journal(
+                        &entry,
+                        "project-materialize",
+                        "failed",
+                        Some(&path),
+                        None,
+                        Some(&reason),
+                    )?;
+                    meta.projects[index].state = "failed".into();
+                    meta.projects[index].reason = Some(format!("materialize: {reason}"));
+                    if !quiet {
+                        eprintln!("warning: materialize {path} failed: {reason}");
+                    }
+                }
+            }
+            write_meta(&meta)?;
+        }
+
+        repair_directives(&mut meta, args.jobs.unwrap_or_else(default_jobs), quiet)?;
+        meta.state = if meta.is_complete() {
+            "complete".into()
+        } else {
+            "incomplete".into()
+        };
+        write_meta(&meta)?;
+        if !quiet {
+            eprintln!(
+                "materialized {} project(s) in {}{}",
+                requested.len().saturating_sub(failures),
+                meta.name,
+                if failures > 0 {
+                    format!(", {failures} failed")
+                } else {
+                    String::new()
+                }
+            );
+        }
+        let result = serde_json::to_value(&meta).expect("tree metadata serializes");
+        if failures > 0 {
+            Err(AppError::partial(result))
+        } else {
+            Ok(result)
+        }
+    })
+}
+
+fn prepare_materialize(
+    entry: &Path,
+    project: &str,
+    expected: &Path,
+    target: &Path,
+    started: bool,
+) -> Result<(), String> {
+    match fs::symlink_metadata(target) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let current =
+                fs::read_link(target).map_err(|error| format!("inspect shared link: {error}"))?;
+            if current != expected {
+                return Err("dest-occupied".into());
+            }
+            append_journal(
+                entry,
+                "project-materialize",
+                "started",
+                Some(project),
+                None,
+                None,
+            )
+            .map_err(|error| error.message)?;
+            fs::remove_file(target).map_err(|error| format!("unlink shared project: {error}"))
+        }
+        Ok(metadata) if metadata.is_dir() && target.join(".git").exists() && started => Ok(()),
+        Ok(_) => Err("dest-occupied".into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if !started {
+                append_journal(
+                    entry,
+                    "project-materialize",
+                    "started",
+                    Some(project),
+                    None,
+                    None,
+                )
+                .map_err(|error| error.message)?;
+            }
+            Ok(())
+        }
+        Err(error) => Err(format!("inspect shared project: {error}")),
+    }
+}
+
+fn lock_materialized_project(meta: &TreeMeta, project: &ProjectMeta) -> Result<(), String> {
+    let reason = meta
+        .locked
+        .as_ref()
+        .map(|lock| lock.reason.as_str())
+        .unwrap_or("");
+    let output = Command::new("git")
+        .arg(format!("--git-dir={}", project.git_common_dir))
+        .args(["worktree", "lock", "--reason"])
+        .arg(format!("repo-worktree:{}: {reason}", meta.name))
+        .arg(meta.root().join(&project.path))
+        .output()
+        .map_err(|error| format!("lock materialized worktree: {error}"))?;
+    if output.status.success()
+        || truncated_stderr(&output)
+            .to_ascii_lowercase()
+            .contains("already locked")
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "lock materialized worktree: {}",
+            exit_reason(&output)
+        ))
+    }
+}
+
 pub fn prune(args: &PruneArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
     check_git_version()?;
     let client = discover_client(cwd, true)?;
@@ -1858,7 +2386,9 @@ pub fn prune(args: &PruneArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 gitdirs.extend(
                     tree.projects
                         .iter()
-                        .filter(|project| !project.git_common_dir.is_empty())
+                        .filter(|project| {
+                            project.mode == "worktree" && !project.git_common_dir.is_empty()
+                        })
                         .map(|project| project.git_common_dir.clone()),
                 );
                 let entry = tree.registry_entry();
@@ -1926,6 +2456,7 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 }
                 continue;
             }
+            repair_shared_links(meta);
             repair_git_links(meta, jobs);
             repair_directives(meta, jobs, quiet)?;
             meta.state = if meta.is_complete() {
@@ -1979,6 +2510,7 @@ fn recover_move(meta: &mut TreeMeta) -> AppResult<()> {
     if to.exists() {
         meta.path = to.to_string_lossy().into_owned();
         write_breadcrumb(meta)?;
+        repair_shared_links(meta);
         repair_git_links(meta, default_jobs());
     }
     meta.moving = None;
@@ -2000,7 +2532,11 @@ fn repair_git_links(meta: &mut TreeMeta, jobs: usize) -> usize {
         meta.projects
             .par_iter()
             .enumerate()
-            .filter(|(_, project)| project.state != "skipped" && root.join(&project.path).exists())
+            .filter(|(_, project)| {
+                project.mode == "worktree"
+                    && project.state != "skipped"
+                    && root.join(&project.path).exists()
+            })
             .map(|(index, project)| {
                 let success = Command::new("git")
                     .arg(format!("--git-dir={}", project.git_common_dir))
@@ -2023,6 +2559,37 @@ fn repair_git_links(meta: &mut TreeMeta, jobs: usize) -> usize {
     failures
 }
 
+fn repair_shared_links(meta: &mut TreeMeta) -> usize {
+    let root = meta.root();
+    let source = meta.source();
+    let mut failures = 0usize;
+    for project in &mut meta.projects {
+        if project.mode != "symlink-shared" {
+            continue;
+        }
+        let expected = source.join(&project.path);
+        let target = root.join(&project.path);
+        let result = if expected.is_dir() {
+            share_project(&expected, &target)
+        } else {
+            Err("source-missing".into())
+        };
+        match result {
+            Ok(()) => {
+                project.state = "done".into();
+                project.reason = None;
+                project.strategy = None;
+            }
+            Err(reason) => {
+                failures += 1;
+                project.state = "failed".into();
+                project.reason = Some(format!("repair: {reason}"));
+            }
+        }
+    }
+    failures
+}
+
 fn repair_directives(meta: &mut TreeMeta, jobs: usize, quiet: bool) -> AppResult<()> {
     let done = meta
         .projects
@@ -2031,6 +2598,12 @@ fn repair_directives(meta: &mut TreeMeta, jobs: usize, quiet: bool) -> AppResult
         .map(|project| project.path.clone())
         .collect::<HashSet<_>>();
     let root = meta.root();
+    let shared_paths = meta
+        .projects
+        .iter()
+        .filter(|project| project.mode == "symlink-shared")
+        .map(|project| PathBuf::from(&project.path))
+        .collect::<Vec<_>>();
     let pool = ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()
@@ -2040,7 +2613,14 @@ fn repair_directives(meta: &mut TreeMeta, jobs: usize, quiet: bool) -> AppResult
             .par_iter()
             .enumerate()
             .filter(|(_, directive)| done.contains(&directive.project))
-            .map(|(index, directive)| (index, apply_copy(&root, directive, true)))
+            .map(|(index, directive)| {
+                let result = if destination_is_shared(&shared_paths, &directive.dest) {
+                    Err("dest-in-shared".into())
+                } else {
+                    apply_copy(&root, directive, true)
+                };
+                (index, result)
+            })
             .collect::<Vec<_>>()
     });
     for (index, result) in copy_results {
@@ -2060,7 +2640,14 @@ fn repair_directives(meta: &mut TreeMeta, jobs: usize, quiet: bool) -> AppResult
             .par_iter()
             .enumerate()
             .filter(|(_, directive)| done.contains(&directive.project))
-            .map(|(index, directive)| (index, apply_link(&root, directive, true)))
+            .map(|(index, directive)| {
+                let result = if destination_is_shared(&shared_paths, &directive.dest) {
+                    Err("dest-in-shared".into())
+                } else {
+                    apply_link(&root, directive, true)
+                };
+                (index, result)
+            })
             .collect::<Vec<_>>()
     });
     for (index, result) in link_results {
@@ -2096,6 +2683,8 @@ mod tests {
             git_common_dir: format!("/git/{path}"),
             state: state.into(),
             reason: None,
+            mode: "worktree".into(),
+            clone_depth: None,
             strategy: None,
             est_bytes: None,
         }
@@ -2178,6 +2767,8 @@ mod tests {
             state: "complete".into(),
             branch: None,
             submodules: false,
+            full: false,
+            full_projects: vec![],
             no_reflink: false,
             heavy_jobs: 3,
             locked: None,
@@ -2222,5 +2813,9 @@ mod tests {
         assert_eq!(meta.heavy_jobs, 3);
         assert_eq!(meta.projects[0].strategy, None);
         assert_eq!(meta.projects[0].est_bytes, None);
+        assert_eq!(meta.projects[0].mode, "worktree");
+        assert_eq!(meta.projects[0].clone_depth, None);
+        assert!(!meta.full);
+        assert!(meta.full_projects.is_empty());
     }
 }

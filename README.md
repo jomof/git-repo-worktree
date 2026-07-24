@@ -1,12 +1,14 @@
 # git-repo-worktree
 
-`git-repo-worktree` creates and manages cheap, isolated images of an entire Google
-`repo` client. Each manifest project becomes a linked Git worktree at the revision
-captured by `repo manifest -r`; manifest `copyfile` and `linkfile` directives are
-replayed into the new tree.
+`git-repo-worktree` creates and manages cheap parallel images of an entire Google
+`repo` client. Projects normally become linked Git worktrees at the revision
+captured by `repo manifest -r`; large fixed-depth projects may be shared from
+the source checkout for speed. Manifest `copyfile` and `linkfile` directives
+are replayed into the new tree.
 
-The source client's uncommitted work is left alone and is never copied. Created trees
-are useful for hotfixes, reviews, parallel coding agents, and disposable builds.
+The source client's uncommitted work is never copied into a new worktree.
+Created trees are useful for hotfixes, reviews, parallel coding agents, and
+disposable builds.
 
 ## Install
 
@@ -61,15 +63,29 @@ as its journal batch is durable. Project checkouts and snapshot Git-directory
 discovery use `-j/--jobs` workers (default: logical CPUs, capped at 32). On
 storage-bound clients, a smaller value such as `-j 4` or `-j 8` can be faster.
 
-`add` remains fully isolated: every project is a real linked Git worktree, with
-no project directory symlinked to the source client. For speed, Git's native
-parallel checkout is enabled and ready projects are started largest-first using
-their pinned tracked-file sizes. Projects over 500 MiB are limited to three
-concurrent checkouts by default; use `--heavy-jobs N` to tune that storage
-pressure. On a clean, non-sparse source checkout at the pinned SHA, the tool may
-clone file extents with filesystem reflinks and then verifies the result with
-Git. Any ambiguity falls back to a normal checkout. Use `--no-reflink` as a
-diagnostic escape hatch.
+By default, a project with an explicit positive manifest `clone-depth` may be
+an absolute symlink to its clean, pinned source checkout. This avoids copying
+large prebuilts on filesystems such as ext4 that lack reflinks. `add` prints a
+short warning when it uses this mode. Shared projects are live views of the
+source and should be treated as read-only; convert one before editing:
+
+```sh
+git repo-worktree materialize <tree> <project-path>
+```
+
+`--full` forces an entirely materialized tree, while repeatable
+`--full-project <project-path>` forces selected projects. Sharing is
+automatically disabled for branch creation, nested parents, directive
+destinations, dirty/wrong-HEAD/sparse sources, relevant submodule population,
+and clients where every active project has `clone-depth`.
+
+For worktree projects, Git's native parallel checkout is enabled and ready
+projects are started largest-first using pinned tracked-file sizes. Projects
+over 500 MiB are limited to three concurrent checkouts by default; use
+`--heavy-jobs N` to tune storage pressure. On a clean, non-sparse source at the
+pinned SHA, the tool may clone file extents with filesystem reflinks and verify
+the result with Git. Any ambiguity falls back to normal checkout. Use
+`--no-reflink` as a diagnostic escape hatch.
 
 Creation is journaled. If it is interrupted or partially fails, resolve the reported
 problem and resume without re-pinning:
@@ -98,6 +114,7 @@ An interrupted optimized population is never accepted merely because its
 git repo-worktree lock --reason "release reference" ref-tree
 git repo-worktree unlock ref-tree
 git repo-worktree move ref-tree ../new-location
+git repo-worktree materialize ref-tree prebuilts/example
 git repo-worktree repair [<tree>...]
 git repo-worktree prune --dry-run
 git repo-worktree prune
@@ -109,7 +126,8 @@ work. A locked tree is protected from prune and requires `--force --force` for
 removal.
 
 `move` supports same-filesystem relocation and repairs every Git registration.
-`repair` restores registrations and missing manifest directives at registered paths.
+`repair` restores registrations, shared links, and missing manifest directives
+at registered paths without replacing unexpected real data.
 
 ### If a tree was moved with `mv`
 
@@ -153,7 +171,8 @@ copy after a tool upgrade.
 ## v1 limitations
 
 The v1 limitations are: git-only trees (no repo commands inside), no dirty-state
-transport, no Windows, no cross-filesystem move, submodules opt-in.
+transport into materialized worktrees, no Windows, no cross-filesystem move,
+submodules opt-in.
 
 The tool never synthesizes `.repo` in a created tree, never fetches proactively, and
 never writes repo internals outside `.repo/repo-worktrees`.

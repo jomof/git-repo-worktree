@@ -162,6 +162,19 @@ pub fn append_journal_batch(entry: &Path, records: &[JournalRecord]) -> AppResul
 }
 
 pub fn journal_has_done(entry: &Path, step: &str) -> AppResult<bool> {
+    journal_has(entry, step, "done", None)
+}
+
+pub fn journal_has_project_status(
+    entry: &Path,
+    step: &str,
+    status: &str,
+    project: &str,
+) -> AppResult<bool> {
+    journal_has(entry, step, status, Some(project))
+}
+
+fn journal_has(entry: &Path, step: &str, status: &str, project: Option<&str>) -> AppResult<bool> {
     let path = entry.join("journal.jsonl");
     let mut contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
@@ -188,7 +201,10 @@ pub fn journal_has_done(entry: &Path, step: &str) -> AppResult<bool> {
         let value: serde_json::Value = serde_json::from_str(line)
             .map_err(|error| AppError::io(format!("parse {}", path.display()), error))?;
         if value.get("step").and_then(serde_json::Value::as_str) == Some(step)
-            && value.get("status").and_then(serde_json::Value::as_str) == Some("done")
+            && value.get("status").and_then(serde_json::Value::as_str) == Some(status)
+            && project.map_or(true, |project| {
+                value.get("project").and_then(serde_json::Value::as_str) == Some(project)
+            })
         {
             return Ok(true);
         }

@@ -1,7 +1,7 @@
 ---
 name: git-repo-worktree
 description: >-
-  Create and manage isolated whole-tree Git worktrees for Google repo-managed
+  Create and manage fast whole-tree Git worktrees for Google repo-managed
   clients (AOSP-style multi-project checkouts with a .repo directory). Use when
   Codex needs a disposable second checkout of an entire repo client for parallel
   work, hotfixes, review, experiments, or clean builds; when users mention
@@ -15,18 +15,19 @@ description: >-
 
 # git-repo-worktree
 
-Create parallel directory trees in which **every active project** of a `repo`
-client is checked out as a linked `git worktree` at pinned SHAs, with manifest
-`<copyfile>`/`<linkfile>` directives replayed. Think `git worktree`, but for
-the entire multi-project tree at once. Trees are cheap (objects are shared),
-isolate working files and indexes, and are disposable.
+Create parallel directory trees for every active project of a `repo` client,
+with manifest `<copyfile>`/`<linkfile>` directives replayed. Most projects are
+linked `git worktree`s at pinned SHAs. Explicit fixed-depth projects may be
+shared from the source checkout until they need editing. Think `git worktree`,
+but for the entire multi-project tree at once.
 
 Key properties to keep in mind:
 
-- Created trees are **git-only**: every project is a real git checkout, but
-  `repo` commands do NOT work inside them. Use plain git there.
-- All projects start on **detached HEAD** at the SHAs the source client had at
-  creation time. Uncommitted changes in the source are never copied.
+- Created trees are **git-only**: `repo` commands do NOT work inside them. Use
+  plain git there.
+- Worktree-mode projects start on **detached HEAD** at their pinned SHAs.
+  Shared projects are live, read-only-by-convention views of clean fixed-depth
+  source checkouts.
 - Operations are **journaled and resumable** — a failed or interrupted `add`
   is resumed with `add --continue`, never by deleting and starting over.
 
@@ -56,7 +57,7 @@ Before creating anything, inspect `result.trees`: reuse a suitable `complete`
 tree, resume a `creating` or `incomplete` tree, or choose a unique name and
 destination.
 
-### Create an isolated tree
+### Create a parallel tree
 
 ```bash
 git repo-worktree add --json --name mywork /absolute/path/outside-client/mywork
@@ -68,15 +69,30 @@ git repo-worktree add --json --name mywork /absolute/path/outside-client/mywork
 - Need a topic branch in every project from the start? Add `-b <branch>`.
 - Projects containing `.gitmodules` are left unpopulated by default; pass
   `--submodules` if the task needs them.
-- Let the default safe population optimizations run: every project still becomes
-  an isolated real worktree. Ready projects start largest-first, projects over
-  500 MiB are capped at three concurrent populations, and clean pinned source
-  checkouts may use verified filesystem reflinks.
+- Let the default population policy run. Projects with a positive manifest
+  `clone-depth` may be shared with the source checkout, and `add` reports how
+  many. Other projects are isolated worktrees. Ready work starts largest-first,
+  projects over 500 MiB are capped at three concurrent populations, and clean
+  pinned source checkouts may use verified filesystem reflinks.
+- Use `--full` only when the whole tree must be independently writable, or
+  repeat `--full-project <path>` for selected projects.
 - On storage-constrained machines, lower heavy concurrency with
   `--heavy-jobs <n>`. Use `--no-reflink` only to diagnose filesystem or
-  performance problems; it forces Git checkout for every project.
+  performance problems; it forces Git checkout for every materialized project.
 
 ### Work inside the tree
+
+Before editing a project, find the selected tree in `list --json` and inspect
+its `projects[]` entry. If its `"mode"` is `"symlink-shared"`, materialize it
+first:
+
+```bash
+git repo-worktree materialize --json <tree> <project-path>
+```
+
+Materialization is automatic, resumable, and also works when the tree is
+locked. Re-read the returned project and proceed only when its mode is
+`"worktree"`.
 
 Use ordinary Git commands per project directory. Create branches with
 `git switch -c` and commit as the task requires; push only when the user asks.
@@ -119,6 +135,7 @@ confirmation. If a tree was deleted with `rm -rf` instead, run
 git repo-worktree list --json
 git repo-worktree lock --reason "keep for release diffing" <tree>
 git repo-worktree move <tree> <new-path>        # same filesystem only
+git repo-worktree materialize <tree> <project-path>...
 git repo-worktree repair [<tree>...]            # repair registrations/directives
 ```
 
@@ -140,9 +157,11 @@ git repo-worktree repair [<tree>...]            # repair registrations/directive
   the registry is the tool's. Use `list`/`repair`/`prune` instead.
 - Never re-create a failed tree from scratch when `add --continue` applies —
   recreation wastes the journal and repeats completed work.
-- Treat every created project as a real isolated worktree. Fast `add` never
-  symlinks a project to the source client and never permits source-only dirty
-  or untracked content to enter the tree.
+- Treat `"mode": "symlink-shared"` projects as read-only because their files
+  are the source checkout's files. Materialize a shared project before editing
+  anywhere below its path. The tool only selects sharing from a clean checkout
+  at the pinned SHA and automatically falls back to a worktree when its safety
+  checks fail.
 - Never run `repo sync`, `repo start`, or any `repo` command inside a created
   tree; they will fail or act on the wrong client. Use git.
 - Do not `mv` a tree by hand; use `move`. If someone already did, `mv` it back

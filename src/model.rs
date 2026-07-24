@@ -1,10 +1,15 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 pub fn default_heavy_jobs() -> usize {
     3
+}
+
+fn default_project_mode() -> String {
+    "worktree".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,6 +33,10 @@ pub struct ProjectMeta {
     pub git_common_dir: String,
     pub state: String,
     pub reason: Option<String>,
+    #[serde(default = "default_project_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub clone_depth: Option<u32>,
     #[serde(default)]
     pub strategy: Option<String>,
     #[serde(default)]
@@ -55,6 +64,10 @@ pub struct TreeMeta {
     pub state: String,
     pub branch: Option<String>,
     pub submodules: bool,
+    #[serde(default)]
+    pub full: bool,
+    #[serde(default)]
+    pub full_projects: Vec<String>,
     #[serde(default)]
     pub no_reflink: bool,
     #[serde(default = "default_heavy_jobs")]
@@ -96,6 +109,13 @@ impl TreeMeta {
             .count()
     }
 
+    pub fn shared_count(&self) -> usize {
+        self.projects
+            .iter()
+            .filter(|project| project.mode == "symlink-shared")
+            .count()
+    }
+
     pub fn done_count(&self) -> usize {
         self.projects.iter().filter(|p| p.state == "done").count()
     }
@@ -121,7 +141,7 @@ impl TreeMeta {
     pub fn contains_project_dir(&self, root: &Path) -> bool {
         self.projects.iter().any(|project| {
             let path = root.join(&project.path);
-            path.exists()
+            path.exists() || fs::symlink_metadata(path).is_ok()
         })
     }
 }
