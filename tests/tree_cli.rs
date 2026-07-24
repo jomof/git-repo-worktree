@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use tempfile::TempDir;
@@ -106,6 +106,16 @@ fn output_json(assert: assert_cmd::assert::Assert) -> Value {
     serde_json::from_slice(&assert.get_output().stdout).unwrap()
 }
 
+fn write_fixture_snapshot(fixture: &Fixture, sha: &str) {
+    fs::write(
+        &fixture.snapshot,
+        format!(
+            r#"<manifest><project name="platform/p" path="p" revision="{sha}"><copyfile src="source.txt" dest="copied.txt"/><linkfile src="missing.txt" dest="linked.txt"/></project></manifest>"#
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
 fn happy_path_list_move_lock_unlock_and_remove() {
     let fixture = fixture();
@@ -118,6 +128,16 @@ fn happy_path_list_move_lock_unlock_and_remove() {
             .success(),
     );
     assert_eq!(added["result"]["state"], "complete");
+    assert!(
+        added["result"]["projects"][0]["est_bytes"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(matches!(
+        added["result"]["projects"][0]["strategy"].as_str(),
+        Some("reflink" | "checkout")
+    ));
     assert_eq!(
         fs::read_to_string(fixture.destination.join("copied.txt")).unwrap(),
         "snapshot\n"
@@ -381,6 +401,164 @@ fn verbose_add_reports_live_project_progress_and_phase_timings() {
     assert!(stderr.contains("project 1/1: added p"));
     assert!(stderr.contains("phase projects:"));
     assert!(stderr.contains("phase total:"));
+}
+
+#[test]
+fn dirty_source_content_never_enters_the_tree() {
+    let fixture = fixture();
+    fs::write(fixture.client.join("p/source.txt"), "dirty source\n").unwrap();
+    fs::write(fixture.client.join("p/untracked.txt"), "source only\n").unwrap();
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    assert_eq!(added["result"]["projects"][0]["strategy"], "checkout");
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+        "snapshot\n"
+    );
+    assert!(!fixture.destination.join("p/untracked.txt").exists());
+}
+
+#[test]
+fn wrong_head_sparse_and_no_reflink_all_fall_back_to_checkout() {
+    for mode in ["wrong-head", "sparse", "disabled"] {
+        let fixture = fixture();
+        match mode {
+            "wrong-head" => {
+                fs::write(fixture.client.join("p/source.txt"), "later\n").unwrap();
+                git(&fixture.client.join("p"), &["add", "source.txt"]);
+                git(&fixture.client.join("p"), &["commit", "-m", "later"]);
+            }
+            "sparse" => {
+                git(
+                    &fixture.client.join("p"),
+                    &["config", "core.sparseCheckout", "true"],
+                );
+            }
+            "disabled" => {}
+            _ => unreachable!(),
+        }
+        let mut add = command(&fixture);
+        add.args(["add", "--json"]);
+        if mode == "disabled" {
+            add.args(["--no-reflink", "--heavy-jobs", "1"]);
+        }
+        let added = output_json(add.arg(&fixture.destination).assert().success());
+        assert_eq!(added["result"]["projects"][0]["strategy"], "checkout");
+        if mode == "disabled" {
+            assert_eq!(added["result"]["no_reflink"], true);
+            assert_eq!(added["result"]["heavy_jobs"], 1);
+        }
+        assert_eq!(
+            fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+            "snapshot\n"
+        );
+    }
+}
+
+#[test]
+fn reflink_population_preserves_symlinks_modes_and_cleanliness_when_supported() {
+    let fixture = fixture();
+    let project = fixture.client.join("p");
+    fs::write(project.join("executable"), "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(
+        project.join("executable"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    symlink("source.txt", project.join("source-link")).unwrap();
+    git(&project, &["add", "executable", "source-link"]);
+    git(&project, &["commit", "-m", "add modes"]);
+    init_project(
+        &project,
+        "nested-submodule",
+        &[("submodule.txt", "nested\n")],
+    );
+    git(&project, &["add", "nested-submodule"]);
+    git(&project, &["commit", "-m", "add gitlink"]);
+    let sha = git(&project, &["rev-parse", "HEAD"]);
+    write_fixture_snapshot(&fixture, &sha);
+
+    let probe_source = fixture.temp.path().join("reflink-source");
+    let probe_dest = fixture.temp.path().join("reflink-dest");
+    fs::write(&probe_source, "probe").unwrap();
+    let reflink_supported = reflink_copy::reflink(&probe_source, &probe_dest).is_ok();
+
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    if reflink_supported {
+        assert_eq!(added["result"]["projects"][0]["strategy"], "reflink");
+    }
+    assert_eq!(
+        git(&fixture.destination.join("p"), &["status", "--porcelain"]),
+        ""
+    );
+    assert_eq!(
+        fs::read_link(fixture.destination.join("p/source-link")).unwrap(),
+        PathBuf::from("source.txt")
+    );
+    assert!(fixture.destination.join("p/nested-submodule").is_dir());
+    assert_ne!(
+        fs::metadata(fixture.destination.join("p/executable"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o111,
+        0
+    );
+}
+
+#[test]
+fn resume_resets_an_incomplete_registered_worktree_even_when_head_matches() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["add", "--no-reflink"])
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    fs::remove_file(fixture.destination.join("p/source.txt")).unwrap();
+    let meta_path = fixture.client.join(".repo/repo-worktrees/tree/meta.json");
+    let mut meta: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+    meta["state"] = Value::from("incomplete");
+    meta["projects"][0]["state"] = Value::from("pending");
+    meta["projects"][0]["strategy"] = Value::Null;
+    fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+
+    let resumed = output_json(
+        command(&fixture)
+            .args(["add", "--continue", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(resumed["result"]["projects"][0]["strategy"], "checkout");
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+        "snapshot\n"
+    );
+    let usage = output_json(
+        command(&fixture)
+            .args([
+                "add",
+                "--continue",
+                "--no-reflink",
+                "--heavy-jobs",
+                "1",
+                "tree",
+                "--json",
+            ])
+            .assert()
+            .code(2),
+    );
+    assert_eq!(usage["error"]["code"], "E_USAGE");
 }
 
 #[test]

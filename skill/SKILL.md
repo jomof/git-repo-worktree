@@ -68,6 +68,13 @@ git repo-worktree add --json --name mywork /absolute/path/outside-client/mywork
 - Need a topic branch in every project from the start? Add `-b <branch>`.
 - Projects containing `.gitmodules` are left unpopulated by default; pass
   `--submodules` if the task needs them.
+- Let the default safe population optimizations run: every project still becomes
+  an isolated real worktree. Ready projects start largest-first, projects over
+  500 MiB are capped at three concurrent populations, and clean pinned source
+  checkouts may use verified filesystem reflinks.
+- On storage-constrained machines, lower heavy concurrency with
+  `--heavy-jobs <n>`. Use `--no-reflink` only to diagnose filesystem or
+  performance problems; it forces Git checkout for every project.
 
 ### Work inside the tree
 
@@ -88,7 +95,8 @@ git repo-worktree list --json          # find the tree; read projects[] with sta
 git repo-worktree add --continue --json mywork
 ```
 
-Resume skips finished projects and retries failures. A reason mentioning
+Resume skips finished projects, repairs any interrupted optimized checkout with
+`reset --hard` at its pinned SHA, and retries failures. A reason mentioning
 partial clone / network means the source lazily fetches objects — retry when
 network/auth is available. A `branch-exists` reason (from `-b`) means that
 branch already exists in the named project; resolve it there, then continue.
@@ -132,6 +140,9 @@ git repo-worktree repair [<tree>...]            # repair registrations/directive
   the registry is the tool's. Use `list`/`repair`/`prune` instead.
 - Never re-create a failed tree from scratch when `add --continue` applies —
   recreation wastes the journal and repeats completed work.
+- Treat every created project as a real isolated worktree. Fast `add` never
+  symlinks a project to the source client and never permits source-only dirty
+  or untracked content to enter the tree.
 - Never run `repo sync`, `repo start`, or any `repo` command inside a created
   tree; they will fail or act on the wrong client. Use git.
 - Do not `mv` a tree by hand; use `move`. If someone already did, `mv` it back

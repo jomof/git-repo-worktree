@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 
 pub const FORMAT_VERSION: u32 = 1;
 
+pub fn default_heavy_jobs() -> usize {
+    3
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LockMeta {
     pub reason: String,
@@ -24,6 +28,10 @@ pub struct ProjectMeta {
     pub git_common_dir: String,
     pub state: String,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub strategy: Option<String>,
+    #[serde(default)]
+    pub est_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,6 +55,10 @@ pub struct TreeMeta {
     pub state: String,
     pub branch: Option<String>,
     pub submodules: bool,
+    #[serde(default)]
+    pub no_reflink: bool,
+    #[serde(default = "default_heavy_jobs")]
+    pub heavy_jobs: usize,
     pub locked: Option<LockMeta>,
     pub moving: Option<MovingMeta>,
     pub projects: Vec<ProjectMeta>,

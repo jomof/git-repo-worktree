@@ -61,6 +61,16 @@ as its journal batch is durable. Project checkouts and snapshot Git-directory
 discovery use `-j/--jobs` workers (default: logical CPUs, capped at 32). On
 storage-bound clients, a smaller value such as `-j 4` or `-j 8` can be faster.
 
+`add` remains fully isolated: every project is a real linked Git worktree, with
+no project directory symlinked to the source client. For speed, Git's native
+parallel checkout is enabled and ready projects are started largest-first using
+their pinned tracked-file sizes. Projects over 500 MiB are limited to three
+concurrent checkouts by default; use `--heavy-jobs N` to tune that storage
+pressure. On a clean, non-sparse source checkout at the pinned SHA, the tool may
+clone file extents with filesystem reflinks and then verifies the result with
+Git. Any ambiguity falls back to a normal checkout. Use `--no-reflink` as a
+diagnostic escape hatch.
+
 Creation is journaled. If it is interrupted or partially fails, resolve the reported
 problem and resume without re-pinning:
 
@@ -78,6 +88,9 @@ can run immediately even when their paths have different depths. Completion reco
 are coalesced into small batches and `fsync`ed before progress is reported or
 dependent projects are released; an interrupted batch is safely replayed by
 `add --continue`.
+An interrupted optimized population is never accepted merely because its
+`HEAD` is correct: resume repairs the unfinished worktree with a parallel
+`reset --hard` before marking it done.
 
 ## Manage trees
 

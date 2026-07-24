@@ -4,7 +4,9 @@ use crate::cli::{
 use crate::discovery::{check_git_version, check_repo_version, discover_client};
 use crate::error::{AppError, AppResult};
 use crate::manifest::{parse_snapshot_file, project_depth};
-use crate::model::{DirectiveMeta, LockMeta, MovingMeta, ProjectMeta, TreeMeta, FORMAT_VERSION};
+use crate::model::{
+    default_heavy_jobs, DirectiveMeta, LockMeta, MovingMeta, ProjectMeta, TreeMeta, FORMAT_VERSION,
+};
 use crate::registry::{load_all, select_tree, with_registry_lock, LockMode};
 use crate::util::{
     absolutize, append_journal, append_journal_batch, canonicalize_missing, copy_permissions,
@@ -16,17 +18,24 @@ use crate::INTERRUPTED;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::ffi::OsStringExt;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const JOURNAL_BATCH_WINDOW: Duration = Duration::from_millis(10);
+const CHECKOUT_WORKERS_CONFIG: &str = "checkout.workers=8";
+const CHECKOUT_THRESHOLD_CONFIG: &str = "checkout.thresholdForParallelism=100";
+const HEAVY_PROJECT_BYTES: u64 = 500 * 1024 * 1024;
 
 fn phase_start(quiet: bool, verbose: u8, phase: &str) {
     if !quiet && verbose > 0 {
@@ -61,10 +70,12 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             || args.branch.is_some()
             || args.submodules
             || args.lock
-            || args.reason.is_some())
+            || args.reason.is_some()
+            || args.no_reflink
+            || args.heavy_jobs.is_some())
     {
         return Err(AppError::usage(
-            "--name, -b, --submodules, --lock, and --reason are invalid with --continue",
+            "--name, -b, --submodules, --lock, --reason, --no-reflink, and --heavy-jobs are invalid with --continue",
         ));
     }
     let selector = args.path.as_deref().ok_or_else(|| {
@@ -177,6 +188,8 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             state: "creating".into(),
             branch: args.branch.clone(),
             submodules: args.submodules,
+            no_reflink: args.no_reflink,
+            heavy_jobs: args.heavy_jobs.unwrap_or_else(default_heavy_jobs),
             locked: args.lock.then(|| LockMeta {
                 reason: args.reason.clone().unwrap_or_default(),
                 at: now(),
@@ -310,6 +323,8 @@ fn run_add_phases(
     if !quiet && verbose > 0 {
         eprintln!("phase projects: starting {project_count} project(s) with {jobs} job(s)");
     }
+    let heavy_jobs = meta.heavy_jobs.min(jobs).max(1);
+    let no_reflink = meta.no_reflink;
     run_project_phase(
         meta,
         &pool,
@@ -317,6 +332,8 @@ fn run_add_phases(
         &destination,
         branch.as_deref(),
         jobs,
+        heavy_jobs,
+        no_reflink,
         fail_fast,
         quiet,
         verbose,
@@ -404,7 +421,7 @@ fn run_add_phases(
 
 #[derive(Debug)]
 struct ProjectSchedule {
-    ready: VecDeque<usize>,
+    ready: Vec<usize>,
     children: Vec<Vec<usize>>,
     work_count: usize,
 }
@@ -421,7 +438,7 @@ fn build_project_schedule(projects: &[ProjectMeta]) -> ProjectSchedule {
         .map(|index| (PathBuf::from(&projects[*index].path), *index))
         .collect::<HashMap<_, _>>();
     let mut children = vec![Vec::new(); projects.len()];
-    let mut ready = VecDeque::new();
+    let mut ready = Vec::new();
     for &child_index in &unfinished {
         let child_path = Path::new(&projects[child_index].path);
         let mut ancestor = child_path.parent();
@@ -439,7 +456,7 @@ fn build_project_schedule(projects: &[ProjectMeta]) -> ProjectSchedule {
         if let Some(parent_index) = parent {
             children[parent_index].push(child_index);
         } else {
-            ready.push_back(child_index);
+            ready.push(child_index);
         }
     }
     ProjectSchedule {
@@ -447,6 +464,47 @@ fn build_project_schedule(projects: &[ProjectMeta]) -> ProjectSchedule {
         children,
         work_count: unfinished.len(),
     }
+}
+
+fn project_is_heavy(project: &ProjectMeta) -> bool {
+    project.est_bytes.unwrap_or(0) > HEAVY_PROJECT_BYTES
+}
+
+fn pop_next_ready(
+    ready: &mut Vec<usize>,
+    projects: &[ProjectMeta],
+    allow_heavy: bool,
+) -> Option<usize> {
+    let position = ready
+        .iter()
+        .enumerate()
+        .filter(|(_, index)| allow_heavy || !project_is_heavy(&projects[**index]))
+        .min_by(|(_, left), (_, right)| {
+            projects[**right]
+                .est_bytes
+                .unwrap_or(0)
+                .cmp(&projects[**left].est_bytes.unwrap_or(0))
+                .then_with(|| projects[**left].path.cmp(&projects[**right].path))
+        })
+        .map(|(position, _)| position)?;
+    Some(ready.swap_remove(position))
+}
+
+#[derive(Debug)]
+struct ProjectOutcome {
+    strategy: &'static str,
+    note: Option<String>,
+}
+
+#[derive(Debug)]
+enum ReflinkAttemptError {
+    BeforeRegistration(String),
+    AfterRegistration(String),
+}
+
+#[derive(Debug, Default)]
+struct ReflinkState {
+    unsupported_pairs: Mutex<HashSet<(u64, u64)>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -457,6 +515,8 @@ fn run_project_phase(
     destination: &Path,
     branch: Option<&str>,
     jobs: usize,
+    heavy_jobs: usize,
+    no_reflink: bool,
     fail_fast: bool,
     quiet: bool,
     verbose: u8,
@@ -470,16 +530,20 @@ fn run_project_phase(
     let mut settled = total.saturating_sub(work_count);
     let mut processed = 0usize;
     let mut running = 0usize;
+    let mut running_heavy = 0usize;
     let mut stop = false;
     let mut completed_for_hook = 0usize;
-    let (sender, receiver) = mpsc::channel::<(usize, Result<(), String>)>();
+    let reflink_state = Arc::new(ReflinkState::default());
+    let (sender, receiver) = mpsc::channel::<(usize, Result<ProjectOutcome, String>)>();
 
     while processed < work_count {
         if INTERRUPTED.load(Ordering::SeqCst) {
             stop = true;
         }
         while !stop && running < jobs {
-            let Some(index) = ready.pop_front() else {
+            let Some(index) =
+                pop_next_ready(&mut ready, &meta.projects, running_heavy < heavy_jobs)
+            else {
                 break;
             };
             let project = meta.projects[index].clone();
@@ -487,11 +551,22 @@ fn run_project_phase(
             let destination = destination.to_path_buf();
             let branch = branch.map(str::to_owned);
             let sender = sender.clone();
+            let reflink_state = Arc::clone(&reflink_state);
             pool.spawn(move || {
-                let result = process_project(&project, &source, &destination, branch.as_deref());
+                let result = process_project(
+                    &project,
+                    &source,
+                    &destination,
+                    branch.as_deref(),
+                    no_reflink,
+                    &reflink_state,
+                );
                 let _ = sender.send((index, result));
             });
             running += 1;
+            if project_is_heavy(&meta.projects[index]) {
+                running_heavy += 1;
+            }
         }
         if running == 0 {
             break;
@@ -519,13 +594,17 @@ fn run_project_phase(
             }
         }
         running -= batch.len();
+        running_heavy -= batch
+            .iter()
+            .filter(|(index, _)| project_is_heavy(&meta.projects[*index]))
+            .count();
 
         let records = batch
             .iter()
             .map(|(index, result)| {
                 let path = &meta.projects[*index].path;
                 match result {
-                    Ok(()) => journal_record("project-add", "done", Some(path), None, None),
+                    Ok(_) => journal_record("project-add", "done", Some(path), None, None),
                     Err(reason) => {
                         journal_record("project-add", "failed", Some(path), None, Some(reason))
                     }
@@ -539,13 +618,23 @@ fn run_project_phase(
             settled += 1;
             let project_path = meta.projects[index].path.clone();
             match result {
-                Ok(()) => {
+                Ok(outcome) => {
                     meta.projects[index].state = "done".into();
                     meta.projects[index].reason = None;
+                    meta.projects[index].strategy = Some(outcome.strategy.into());
                     completed_for_hook += 1;
                     maybe_crash_after(completed_for_hook);
                     if verbose > 0 && !quiet {
-                        eprintln!("project {settled}/{total}: added {project_path}");
+                        match outcome.note {
+                            Some(note) => eprintln!(
+                                "project {settled}/{total}: added {project_path} ({}, {note})",
+                                outcome.strategy
+                            ),
+                            None => eprintln!(
+                                "project {settled}/{total}: added {project_path} ({})",
+                                outcome.strategy
+                            ),
+                        }
                     }
                 }
                 Err(reason) => {
@@ -562,7 +651,7 @@ fn run_project_phase(
                 }
             }
             for &child in &children[index] {
-                ready.push_back(child);
+                ready.push(child);
             }
         }
         write_meta(meta)?;
@@ -582,30 +671,88 @@ fn process_project(
     source_root: &Path,
     destination: &Path,
     branch: Option<&str>,
-) -> Result<(), String> {
+    no_reflink: bool,
+    reflink_state: &ReflinkState,
+) -> Result<ProjectOutcome, String> {
     let worktree = destination.join(&project.path);
     if worktree.join(".git").exists() {
-        if let Ok(output) = Command::new("git")
-            .arg("-C")
-            .arg(&worktree)
-            .args(["rev-parse", "HEAD"])
-            .output()
-        {
-            if output.status.success()
-                && String::from_utf8_lossy(&output.stdout).trim() == project.sha
-            {
-                return Ok(());
-            }
-        }
+        reset_worktree(&worktree, &project.sha)?;
+        return Ok(ProjectOutcome {
+            strategy: "checkout",
+            note: Some("resumed with reset --hard".into()),
+        });
     }
     if let Some(parent) = worktree.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
     let source_checkout = source_root.join(&project.path);
+    let reflink_reason = if no_reflink {
+        Some("reflink disabled".into())
+    } else {
+        reflink_ineligibility(&source_checkout, destination, &project.sha, reflink_state)?
+    };
+    if reflink_reason.is_none() {
+        match try_reflink_project(
+            project,
+            &source_checkout,
+            &worktree,
+            branch,
+            reflink_state,
+            destination,
+        ) {
+            Ok(()) => {
+                return Ok(ProjectOutcome {
+                    strategy: "reflink",
+                    note: None,
+                });
+            }
+            Err(ReflinkAttemptError::AfterRegistration(reason)) => {
+                reset_worktree(&worktree, &project.sha)?;
+                return Ok(ProjectOutcome {
+                    strategy: "checkout",
+                    note: Some(format!("reflink fallback: {reason}")),
+                });
+            }
+            Err(ReflinkAttemptError::BeforeRegistration(reason)) => {
+                if reason == "branch-exists" {
+                    return Err(reason);
+                }
+                return ordinary_checkout(project, &source_checkout, &worktree, branch).map(|_| {
+                    ProjectOutcome {
+                        strategy: "checkout",
+                        note: Some(format!("reflink setup failed: {reason}")),
+                    }
+                });
+            }
+        }
+    }
+    ordinary_checkout(project, &source_checkout, &worktree, branch).map(|_| ProjectOutcome {
+        strategy: "checkout",
+        note: reflink_reason,
+    })
+}
+
+fn checkout_command() -> Command {
     let mut command = Command::new("git");
+    command.args([
+        "-c",
+        CHECKOUT_WORKERS_CONFIG,
+        "-c",
+        CHECKOUT_THRESHOLD_CONFIG,
+    ]);
+    command
+}
+
+fn ordinary_checkout(
+    project: &ProjectMeta,
+    source_checkout: &Path,
+    worktree: &Path,
+    branch: Option<&str>,
+) -> Result<(), String> {
+    let mut command = checkout_command();
     if source_checkout.exists() {
-        command.arg("-C").arg(&source_checkout);
+        command.arg("-C").arg(source_checkout);
     } else {
         command.arg(format!("--git-dir={}", project.git_common_dir));
     }
@@ -616,7 +763,7 @@ fn process_project(
         command.arg("--detach");
     }
     let output = command
-        .arg(&worktree)
+        .arg(worktree)
         .arg(&project.sha)
         .output()
         .map_err(|error| format!("run git worktree add: {error}"))?;
@@ -632,6 +779,315 @@ fn process_project(
             Err(exit_reason(&output))
         }
     }
+}
+
+fn reset_worktree(worktree: &Path, sha: &str) -> Result<(), String> {
+    let output = checkout_command()
+        .arg("-C")
+        .arg(worktree)
+        .args(["reset", "--hard", sha])
+        .output()
+        .map_err(|error| format!("run git reset --hard: {error}"))?;
+    output
+        .status
+        .success()
+        .then_some(())
+        .ok_or_else(|| exit_reason(&output))
+}
+
+fn reflink_ineligibility(
+    source_checkout: &Path,
+    destination: &Path,
+    sha: &str,
+    state: &ReflinkState,
+) -> Result<Option<String>, String> {
+    if !source_checkout.is_dir() {
+        return Ok(Some("source checkout is missing".into()));
+    }
+    let pair = match device_pair(source_checkout, destination) {
+        Ok(pair) => pair,
+        Err(reason) => return Ok(Some(reason)),
+    };
+    let unsupported = state
+        .unsupported_pairs
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .contains(&pair);
+    if unsupported {
+        return Ok(Some("reflink unsupported for filesystem pair".into()));
+    }
+    Ok(source_is_clean_at_sha(source_checkout, sha).err())
+}
+
+fn device_pair(source: &Path, destination: &Path) -> Result<(u64, u64), String> {
+    let source_device = fs::metadata(source)
+        .map_err(|error| format!("inspect source filesystem: {error}"))?
+        .dev();
+    let destination_device = fs::metadata(destination)
+        .map_err(|error| format!("inspect destination filesystem: {error}"))?
+        .dev();
+    Ok((source_device, destination_device))
+}
+
+fn source_is_clean_at_sha(source_checkout: &Path, sha: &str) -> Result<(), String> {
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(source_checkout)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| format!("inspect source HEAD: {error}"))?;
+    if !head.status.success() {
+        return Err(format!("inspect source HEAD: {}", exit_reason(&head)));
+    }
+    if String::from_utf8_lossy(&head.stdout).trim() != sha {
+        return Err("source HEAD differs from pinned SHA".into());
+    }
+
+    let sparse = Command::new("git")
+        .arg("-C")
+        .arg(source_checkout)
+        .args(["config", "--bool", "core.sparseCheckout"])
+        .output()
+        .map_err(|error| format!("inspect sparse checkout: {error}"))?;
+    if sparse.status.success() {
+        if String::from_utf8_lossy(&sparse.stdout).trim() == "true" {
+            return Err("source uses sparse checkout".into());
+        }
+    } else if sparse.status.code() != Some(1) {
+        return Err(format!("inspect sparse checkout: {}", exit_reason(&sparse)));
+    }
+
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(source_checkout)
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .output()
+        .map_err(|error| format!("inspect source cleanliness: {error}"))?;
+    if !status.status.success() {
+        return Err(format!(
+            "inspect source cleanliness: {}",
+            exit_reason(&status)
+        ));
+    }
+    if !status.stdout.is_empty() {
+        return Err("source checkout is not clean".into());
+    }
+    Ok(())
+}
+
+fn try_reflink_project(
+    project: &ProjectMeta,
+    source_checkout: &Path,
+    worktree: &Path,
+    branch: Option<&str>,
+    state: &ReflinkState,
+    destination: &Path,
+) -> Result<(), ReflinkAttemptError> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(source_checkout)
+        .args(["worktree", "add", "--no-checkout"]);
+    if let Some(branch) = branch {
+        command.arg("-b").arg(branch);
+    } else {
+        command.arg("--detach");
+    }
+    let output = command
+        .arg(worktree)
+        .arg(&project.sha)
+        .output()
+        .map_err(|error| {
+            ReflinkAttemptError::BeforeRegistration(format!(
+                "run git worktree add --no-checkout: {error}"
+            ))
+        })?;
+    if !output.status.success() {
+        let stderr = truncated_stderr(&output);
+        let reason = if branch.is_some()
+            && (stderr.contains("already exists") || stderr.contains("already checked out"))
+        {
+            "branch-exists".into()
+        } else {
+            exit_reason(&output)
+        };
+        return Err(ReflinkAttemptError::BeforeRegistration(reason));
+    }
+
+    let read_tree = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .args(["read-tree", &project.sha])
+        .output()
+        .map_err(|error| {
+            ReflinkAttemptError::AfterRegistration(format!("initialize pinned index: {error}"))
+        })?;
+    if !read_tree.status.success() {
+        return Err(ReflinkAttemptError::AfterRegistration(format!(
+            "initialize pinned index: {}",
+            exit_reason(&read_tree)
+        )));
+    }
+
+    let pair = device_pair(source_checkout, destination)
+        .map_err(ReflinkAttemptError::AfterRegistration)?;
+    let entries = pinned_tree_entries(project).map_err(ReflinkAttemptError::AfterRegistration)?;
+    for entry in entries {
+        let source = source_checkout.join(&entry.path);
+        let target = worktree.join(&entry.path);
+        let parent = target.parent().ok_or_else(|| {
+            ReflinkAttemptError::AfterRegistration("tracked path has no parent".into())
+        })?;
+        fs::create_dir_all(parent).map_err(|error| {
+            ReflinkAttemptError::AfterRegistration(format!("create {}: {error}", parent.display()))
+        })?;
+        match (entry.mode.as_str(), entry.kind.as_str()) {
+            ("120000", "blob") => {
+                let link_target = fs::read_link(&source).map_err(|error| {
+                    ReflinkAttemptError::AfterRegistration(format!(
+                        "read source symlink {}: {error}",
+                        source.display()
+                    ))
+                })?;
+                symlink(link_target, &target).map_err(|error| {
+                    ReflinkAttemptError::AfterRegistration(format!(
+                        "create symlink {}: {error}",
+                        target.display()
+                    ))
+                })?;
+            }
+            ("160000", "commit") => {
+                fs::create_dir_all(&target).map_err(|error| {
+                    ReflinkAttemptError::AfterRegistration(format!(
+                        "create gitlink directory {}: {error}",
+                        target.display()
+                    ))
+                })?;
+            }
+            ("100644" | "100755", "blob") => {
+                let metadata = fs::symlink_metadata(&source).map_err(|error| {
+                    ReflinkAttemptError::AfterRegistration(format!(
+                        "inspect source file {}: {error}",
+                        source.display()
+                    ))
+                })?;
+                if !metadata.file_type().is_file() {
+                    return Err(ReflinkAttemptError::AfterRegistration(format!(
+                        "source path is not a regular file: {}",
+                        source.display()
+                    )));
+                }
+                let copy_result = if metadata.len() == 0 {
+                    fs::File::create(&target).map(|_| ())
+                } else {
+                    reflink_copy::reflink(&source, &target)
+                };
+                if let Err(error) = copy_result {
+                    state
+                        .unsupported_pairs
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .insert(pair);
+                    return Err(ReflinkAttemptError::AfterRegistration(format!(
+                        "reflink {}: {error}",
+                        entry.path.display()
+                    )));
+                }
+                let mode = if entry.mode == "100755" { 0o755 } else { 0o644 };
+                fs::set_permissions(&target, fs::Permissions::from_mode(mode)).map_err(
+                    |error| {
+                        ReflinkAttemptError::AfterRegistration(format!(
+                            "chmod {}: {error}",
+                            target.display()
+                        ))
+                    },
+                )?;
+            }
+            _ => {
+                return Err(ReflinkAttemptError::AfterRegistration(format!(
+                    "unsupported pinned tree entry {} {}",
+                    entry.mode, entry.kind
+                )));
+            }
+        }
+    }
+
+    source_is_clean_at_sha(source_checkout, &project.sha)
+        .map_err(ReflinkAttemptError::AfterRegistration)?;
+    for args in [
+        &["update-index", "--refresh"][..],
+        &["diff-files", "--quiet"][..],
+        &["diff-index", "--cached", "--quiet", project.sha.as_str()][..],
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(args)
+            .output()
+            .map_err(|error| {
+                ReflinkAttemptError::AfterRegistration(format!(
+                    "validate reflink checkout: {error}"
+                ))
+            })?;
+        if !output.status.success() {
+            return Err(ReflinkAttemptError::AfterRegistration(format!(
+                "reflink checkout validation {} failed: {}",
+                args[0],
+                exit_reason(&output)
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct PinnedTreeEntry {
+    mode: String,
+    kind: String,
+    path: PathBuf,
+}
+
+fn pinned_tree_entries(project: &ProjectMeta) -> Result<Vec<PinnedTreeEntry>, String> {
+    let output = Command::new("git")
+        .arg(format!("--git-dir={}", project.git_common_dir))
+        .args(["ls-tree", "-rz", &project.sha])
+        .output()
+        .map_err(|error| format!("enumerate pinned tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("enumerate pinned tree: {}", exit_reason(&output)));
+    }
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .map(parse_pinned_tree_entry)
+        .collect()
+}
+
+fn parse_pinned_tree_entry(record: &[u8]) -> Result<PinnedTreeEntry, String> {
+    let tab = record
+        .iter()
+        .position(|byte| *byte == b'\t')
+        .ok_or_else(|| "malformed ls-tree entry".to_string())?;
+    let mut fields = record[..tab].split(|byte| *byte == b' ');
+    let mode = fields
+        .next()
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .ok_or_else(|| "malformed ls-tree mode".to_string())?
+        .to_string();
+    let kind = fields
+        .next()
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .ok_or_else(|| "malformed ls-tree kind".to_string())?
+        .to_string();
+    let _object = fields
+        .next()
+        .ok_or_else(|| "malformed ls-tree object".to_string())?;
+    let path = PathBuf::from(OsString::from_vec(record[tab + 1..].to_vec()));
+    if !path_is_safe_relative(&path) {
+        return Err("unsafe path in pinned tree".into());
+    }
+    Ok(PinnedTreeEntry { mode, kind, path })
 }
 
 fn process_directives(meta: &mut TreeMeta, pool: &rayon::ThreadPool, quiet: bool) -> AppResult<()> {
@@ -1640,6 +2096,8 @@ mod tests {
             git_common_dir: format!("/git/{path}"),
             state: state.into(),
             reason: None,
+            strategy: None,
+            est_bytes: None,
         }
     }
 
@@ -1665,6 +2123,49 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_prefers_largest_ready_and_does_not_let_heavy_block_light() {
+        let mut projects = vec![
+            project("small", "pending"),
+            project("large", "pending"),
+            project("heavy", "pending"),
+        ];
+        projects[0].est_bytes = Some(1);
+        projects[1].est_bytes = Some(10);
+        projects[2].est_bytes = Some(HEAVY_PROJECT_BYTES + 1);
+        let mut ready = vec![0, 1, 2];
+        assert_eq!(pop_next_ready(&mut ready, &projects, true), Some(2));
+        assert_eq!(pop_next_ready(&mut ready, &projects, false), Some(1));
+        assert_eq!(pop_next_ready(&mut ready, &projects, false), Some(0));
+    }
+
+    #[test]
+    fn parses_safe_pinned_tree_entries() {
+        let entry =
+            parse_pinned_tree_entry(b"100755 blob 0123456789abcdef\tpath with spaces").unwrap();
+        assert_eq!(entry.mode, "100755");
+        assert_eq!(entry.kind, "blob");
+        assert_eq!(entry.path, PathBuf::from("path with spaces"));
+        assert!(parse_pinned_tree_entry(b"100644 blob object\t../escape").is_err());
+    }
+
+    #[test]
+    fn checkout_commands_use_fixed_parallel_configuration() {
+        let arguments = checkout_command()
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            vec![
+                "-c",
+                CHECKOUT_WORKERS_CONFIG,
+                "-c",
+                CHECKOUT_THRESHOLD_CONFIG
+            ]
+        );
+    }
+
+    #[test]
     fn porcelain_has_stable_fields() {
         let meta = TreeMeta {
             format_version: 1,
@@ -1677,6 +2178,8 @@ mod tests {
             state: "complete".into(),
             branch: None,
             submodules: false,
+            no_reflink: false,
+            heavy_jobs: 3,
             locked: None,
             moving: None,
             projects: vec![],
@@ -1686,5 +2189,38 @@ mod tests {
         let envelope = serde_json::to_value(&meta).unwrap();
         assert_eq!(envelope["format_version"], 1);
         assert_eq!(meta.done_count(), 0);
+    }
+
+    #[test]
+    fn version_one_metadata_without_fast_add_fields_still_loads() {
+        let value = json!({
+            "format_version": 1,
+            "tool_version": "1.0.0",
+            "name": "old",
+            "path": "/tmp/old",
+            "source_root": "/tmp/source",
+            "source_layout": "legacy",
+            "created_at": "2026-07-23T18:04:05Z",
+            "state": "complete",
+            "branch": null,
+            "submodules": false,
+            "locked": null,
+            "moving": null,
+            "projects": [{
+                "path": "p",
+                "name": "p",
+                "sha": "0123456789abcdef0123456789abcdef01234567",
+                "git_common_dir": "/git/p",
+                "state": "done",
+                "reason": null
+            }],
+            "copyfiles": [],
+            "linkfiles": []
+        });
+        let meta: TreeMeta = serde_json::from_value(value).unwrap();
+        assert!(!meta.no_reflink);
+        assert_eq!(meta.heavy_jobs, 3);
+        assert_eq!(meta.projects[0].strategy, None);
+        assert_eq!(meta.projects[0].est_bytes, None);
     }
 }

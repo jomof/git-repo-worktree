@@ -73,6 +73,8 @@ pub fn parse_snapshot(
             git_common_dir: String::new(),
             state: "pending".into(),
             reason: None,
+            strategy: None,
+            est_bytes: None,
         };
         let path_safe = path_is_safe_relative(Path::new(path));
         if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -132,6 +134,8 @@ pub fn parse_snapshot(
                 git_common_dir: String::new(),
                 state: if path_safe { "pending" } else { "skipped" }.into(),
                 reason: (!path_safe).then(|| "unsafe-project-path".into()),
+                strategy: None,
+                est_bytes: None,
             });
             if path_safe {
                 let Some(declaration) = declaration else {
@@ -468,7 +472,52 @@ fn resolve_git_common_dirs(
             }
         }
     }
+    let estimates = pool.install(|| {
+        projects
+            .par_iter()
+            .enumerate()
+            .filter(|(_, project)| project.state == "pending")
+            .map(|(index, project)| {
+                (
+                    index,
+                    estimate_tracked_bytes(Path::new(&project.git_common_dir), &project.sha),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    for (index, estimate) in estimates {
+        projects[index].est_bytes = estimate;
+    }
     Ok(())
+}
+
+fn estimate_tracked_bytes(git_common_dir: &Path, sha: &str) -> Option<u64> {
+    let output = Command::new("git")
+        .arg(format!("--git-dir={}", git_common_dir.display()))
+        .args(["ls-tree", "-rlz", sha])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| parse_tracked_bytes(&output.stdout))
+}
+
+fn parse_tracked_bytes(output: &[u8]) -> u64 {
+    output
+        .split(|byte| *byte == 0)
+        .filter_map(|record| {
+            let header = record.split(|byte| *byte == b'\t').next()?;
+            let mut fields = header
+                .split(|byte| byte.is_ascii_whitespace())
+                .filter(|field| !field.is_empty());
+            let _mode = fields.next()?;
+            (fields.next()? == b"blob").then_some(())?;
+            let _object = fields.next()?;
+            let size = fields.next()?;
+            std::str::from_utf8(size).ok()?.parse::<u64>().ok()
+        })
+        .fold(0u64, u64::saturating_add)
 }
 
 fn resolve_git_state(
@@ -605,5 +654,25 @@ mod tests {
         );
         let parsed = parse_snapshot(&xml, temp.path(), "p\n", 2).unwrap();
         assert_eq!(parsed.copyfiles[0].reason.as_deref(), Some("malformed"));
+    }
+
+    #[test]
+    fn parses_tracked_sizes_conservatively() {
+        let records = b"100644 blob a 12\tone\0\
+100755 blob b 34\ttwo\0\
+040000 tree c -\tdir\0\
+160000 commit d -\tsubmodule\0\
+100644 blob e malformed\tbad\0";
+        assert_eq!(parse_tracked_bytes(records), 46);
+    }
+
+    #[test]
+    fn tracked_size_sum_saturates() {
+        let records = format!(
+            "100644 blob a {}\tone\0\
+100644 blob b 1\ttwo\0",
+            u64::MAX
+        );
+        assert_eq!(parse_tracked_bytes(records.as_bytes()), u64::MAX);
     }
 }

@@ -79,6 +79,12 @@ pub struct AddArgs {
     pub force: bool,
     #[arg(short = 'j', long, value_parser = parse_jobs)]
     pub jobs: Option<usize>,
+    /// Disable copy-on-write population and always use Git checkout.
+    #[arg(long)]
+    pub no_reflink: bool,
+    /// Maximum concurrent projects larger than 500 MiB.
+    #[arg(long, value_parser = parse_jobs)]
+    pub heavy_jobs: Option<usize>,
     #[arg(long)]
     pub fail_fast: bool,
 }
