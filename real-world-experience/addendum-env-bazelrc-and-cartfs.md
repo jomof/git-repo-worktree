@@ -73,3 +73,35 @@ When `./build/bazel/env/setup` runs:
 
 4. **Clean Teardown on `git repo-worktree remove`**:
    - Before unmounting/deleting `<worktree_root>`, if `<worktree_root>/env.bazelrc` specifies `startup --output_base=<path>` (or if `bazel` was used), `remove` can shut down the worktree's Bazel server and optionally prune the worktree-specific `output_base` directory (`/google/cartfs/mount/<md5(worktree_root)>` or `~/.cache/bazel/_bazel_$USER/<md5(worktree_root)>`).
+
+---
+
+## 5. Actionable Conventions for the Reviewing Agent (No CartFS Required)
+
+> [!IMPORTANT]
+> **You (the reviewing/implementing agent) do NOT need CartFS installed in your environment**, and `git-repo-worktree` must **never** hardcode `/google/cartfs/mount` or depend on CartFS APIs/binaries.
+>
+> Instead, `git-repo-worktree` automatically takes advantage of CartFS whenever it happens to be present on a user's machine simply by following **four purely generic conventions**:
+
+1. **Convention 1 — Real `<worktree>/.repo/` Directory & Non-Symlinked Project Directories**:
+   - Synthesize `<worktree>/.repo/` as a real directory (Model E1) and ensure project directories (`<worktree>/build/bazel`, etc.) are real directories rather than `symlink-shared` symlinks to `<source_root>`.
+   - *Why this enables CartFS*: Scripts like `./build/bazel/env/setup` walk `Path(__file__).parents` looking for `(path / '.repo').is_dir()`. Following this convention ensures those scripts resolve `workspace_root = <worktree>` instead of failing with `FileNotFoundError` or escaping via symlinks to `<source_root>`.
+
+2. **Convention 2 — Generic `<source_root>` and `<md5(source_root)>` Substitution in Copied Root Configs**:
+   - When `git repo-worktree add` copies untracked root config files (`env.bazelrc`, `user.bazelrc`, `local.properties`) from `<source_root>` to `<worktree_root>`:
+     - Compute `source_md5 = md5_hex(source_root_str)` and `worktree_md5 = md5_hex(worktree_root_str)` as lowercase 32-character hex strings of the canonical UTF-8 path without a trailing slash (matching Python's `hashlib.md5(str(workspace_root).encode('utf-8')).hexdigest()`).
+     - Replace every occurrence of `source_root_str` with `worktree_root_str`, and every occurrence of `source_md5` with `worktree_md5`.
+   - *Why this enables CartFS*: When a user's source workspace has `startup --output_base=/google/cartfs/mount/<source_md5>` in `env.bazelrc`, this generic string replacement automatically transforms it into `startup --output_base=/google/cartfs/mount/<worktree_md5>`—giving the worktree both CartFS artifact deduplication and an isolated Bazel `output_base` without `git-repo-worktree` knowing anything about CartFS.
+
+3. **Convention 3 — Generic `startup --output_base=<path>` Inspection on `remove`**:
+   - During `git repo-worktree remove`, scan `<worktree>/*.bazelrc` for `startup --output_base=<path>`.
+   - Only shut down / clean up `<path>` if `<path>` contains `<worktree_md5>` or `<worktree_root>` (guaranteeing that `remove` never touches `<source_root>`'s `output_base`).
+
+4. **Convention 4 — How to Test Without CartFS**:
+   - Write integration tests using standard temporary directories (e.g. `/tmp/...`) by seeding `<source_root>/env.bazelrc` with:
+     ```ini
+     import %workspace%/tools/vendor/google/bazel/glinux.bazelrc
+     startup --output_base=/tmp/mock-dedup-mount/<source_md5>
+     build --config=rcache
+     ```
+   - Assert that `git repo-worktree add` produces `<worktree_root>/env.bazelrc` with `startup --output_base=/tmp/mock-dedup-mount/<worktree_md5>`.
