@@ -26,6 +26,10 @@ It is intended for an engineering/review agent auditing the entire `git-repo-wor
 2. **Starting Revisions Are the Detached `HEAD`s of the Initiating Repo (By Design)**: A newly created worktree must be initialized to the detached `HEAD` commits of the initiating `repo` workspace (`repo manifest -r`), matching `git worktree add --detach` semantics. It must **not** reset projects to remote `goog/studio-main`. To remediate agent confusion, `--help` (`src/cli.rs`), manpages, `skill/SKILL.md`, and `spec*.md` must explicitly spell out this by-design behavior.
 3. **Eliminate the `symlink-shared` Footgun Without Sacrificing Speed**: Raw directory symlinks into the live mutable source checkout (`<wt>/<proj> -> <source>/<proj>`) cause silent source corruption, Git state hijacking, and `realpath` escapes. Replace them with CoW FUSE overlay isolation (`fuse-overlayfs` / `FUSE_PASSTHROUGH`) backed by real `--no-checkout` Git worktrees.
 
+## Round 2
+
+8. **[`round-2-blindfold-test-plan.md`](round-2-blindfold-test-plan.md)**: plan for a blindfold subagent test run of the v2 build (`spec-v2.md`): scenarios that probe each round-1 rough edge, source-integrity checks, a studio-main performance matrix for the new pool and overlay defaults, and the deliverables for `round-2/`.
+
 ## Addendum
 
 7. **[`addendum-env-bazelrc-and-cartfs.md`](addendum-env-bazelrc-and-cartfs.md)** — **Addendum: How `env.bazelrc` and CartFS `output_base` Are Generated in `studio-main`**
