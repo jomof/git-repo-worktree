@@ -33,7 +33,7 @@ jobs:
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
           chmod +x "$HOME/bin/repo"
           echo "$HOME/bin" >> "$GITHUB_PATH"
-          git clone -q --depth 1 https://gerrit.googlesource.com/git-repo "$RUNNER_TEMP/git-repo"
+          git clone -q https://gerrit.googlesource.com/git-repo "$RUNNER_TEMP/git-repo"
           echo "GRW_TEST_REPO_URL=$RUNNER_TEMP/git-repo" >> "$GITHUB_ENV"
           git config --global user.name "CI"
           git config --global user.email "ci@example.com"
@@ -52,7 +52,7 @@ jobs:
           ! grep -q '^x-installed-' skill/SKILL.md
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-features
+      - run: cargo test --all-features --no-fail-fast
 
   musl-smoke:
     runs-on: ubuntu-22.04

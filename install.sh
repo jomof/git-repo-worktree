@@ -326,7 +326,9 @@ if [ "$install_man" -eq 1 ] && [ -f "$source_man_dir/git-repo-worktree.1" ]; the
     man_failed=0
     if mkdir -p "$man_dir/man1" 2>/dev/null; then
         for page in "$source_man_dir"/git-repo-worktree*.1; do
-            [ -f "$page" ] && [ ! -L "$page" ] || continue
+            if [ ! -f "$page" ] || [ -L "$page" ]; then
+                continue
+            fi
             name=${page##*/}
             if ! { cp "$page" "$man_dir/man1/.$name.$$" &&
                 chmod 644 "$man_dir/man1/.$name.$$" &&
