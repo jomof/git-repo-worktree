@@ -1762,9 +1762,13 @@ mod overlay_mode {
 
         let source = fixture.client.join("p");
         let source_head = git(&source, &["rev-parse", "HEAD"]);
+        let source_branch = git(&source, &["rev-parse", "--abbrev-ref", "HEAD"]);
         git(&p, &["switch", "-q", "-c", "overlay-topic"]);
         git(&p, &["commit", "-qam", "overlay commit"]);
-        assert_eq!(git(&source, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+        assert_eq!(
+            git(&source, &["rev-parse", "--abbrev-ref", "HEAD"]),
+            source_branch
+        );
         assert_eq!(git(&source, &["rev-parse", "HEAD"]), source_head);
         assert_eq!(git(&source, &["status", "--porcelain"]), "");
         let clean = output_json(
