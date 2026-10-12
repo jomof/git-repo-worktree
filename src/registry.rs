@@ -91,6 +91,30 @@ pub fn load_all(registry: &Path) -> AppResult<Vec<TreeMeta>> {
     paths.iter().map(|path| read_meta(path)).collect()
 }
 
+/// Selects a tree by name or path, or the tree containing `cwd` when no
+/// selector is given.
+pub fn select_tree_or_current(
+    registry: &Path,
+    selector: Option<&str>,
+    cwd: &Path,
+) -> AppResult<TreeMeta> {
+    if let Some(selector) = selector {
+        return select_tree(registry, selector, cwd);
+    }
+    containing_tree(registry, cwd)?
+        .ok_or_else(|| AppError::usage("name a tree, or run this command inside one"))
+}
+
+pub fn containing_tree(registry: &Path, cwd: &Path) -> AppResult<Option<TreeMeta>> {
+    for tree in load_all(registry)? {
+        let root = canonicalize_missing(Path::new(&tree.path))?;
+        if cwd.starts_with(&root) {
+            return Ok(Some(tree));
+        }
+    }
+    Ok(None)
+}
+
 pub fn select_tree(registry: &Path, selector: &str, cwd: &Path) -> AppResult<TreeMeta> {
     let trees = load_all(registry)?;
     let looks_like_path = selector.contains('/') || selector == "." || selector == "..";

@@ -13,28 +13,32 @@ pub struct Client {
 }
 
 pub fn find_direct_client_root(start: &Path) -> Option<PathBuf> {
-    for directory in start.ancestors() {
-        let repo = directory.join(".repo");
-        if repo.is_dir() && (repo.join("project.list").is_file() || repo.join("manifests").is_dir())
-        {
-            return Some(directory.to_path_buf());
-        }
-    }
-    None
+    start
+        .ancestors()
+        .find(|directory| is_client_root(directory))
+        .map(Path::to_path_buf)
 }
 
+fn is_client_root(directory: &Path) -> bool {
+    let repo = directory.join(".repo");
+    repo.is_dir() && (repo.join("project.list").is_file() || repo.join("manifests").is_dir())
+}
+
+/// Locates the source client. A tree root (marked by its `.repo-worktree`
+/// breadcrumb) is checked before `.repo` at the same level, because trees carry
+/// a synthesized `.repo` that must never be mistaken for a source client.
 pub fn discover_client(start: &Path, allow_breadcrumb: bool) -> AppResult<Client> {
-    if let Some(root) = find_direct_client_root(start) {
-        return Ok(Client {
-            layout: detect_layout(&root),
-            root,
-        });
-    }
-    if allow_breadcrumb {
-        for directory in start.ancestors() {
-            let path = directory.join(".repo-worktree");
-            if !path.is_file() {
-                continue;
+    for directory in start.ancestors() {
+        let path = directory.join(".repo-worktree");
+        if path.is_file() {
+            if !allow_breadcrumb {
+                return Err(AppError::operational(
+                    "E_NO_REPO_CLIENT",
+                    format!(
+                        "{} is a git-repo-worktree tree; run this command from the source client (or use -C)",
+                        directory.display()
+                    ),
+                ));
             }
             let bytes = fs::read(&path)
                 .map_err(|error| AppError::io(format!("read {}", path.display()), error))?;
@@ -64,9 +68,17 @@ pub fn discover_client(start: &Path, allow_breadcrumb: bool) -> AppResult<Client
                     ),
                 ));
             }
+            crate::metrics::set_source(&root);
             return Ok(Client {
                 layout: detect_layout(&root),
                 root,
+            });
+        }
+        if is_client_root(directory) {
+            crate::metrics::set_source(directory);
+            return Ok(Client {
+                layout: detect_layout(directory),
+                root: directory.to_path_buf(),
             });
         }
     }

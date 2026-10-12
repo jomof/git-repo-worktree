@@ -12,6 +12,8 @@ else
     install_dir=""
 fi
 create_git_alias=1
+install_man=1
+man_dir="${GIT_REPO_WORKTREE_MAN_DIR:-}"
 temporary_dir=""
 install_temporary=""
 
@@ -33,17 +35,26 @@ usage() {
 Install git-repo-worktree from a GitHub release.
 
 Usage:
-  install.sh [--version VERSION] [--install-dir DIR] [--no-git-alias]
+  install.sh [--version VERSION] [--install-dir DIR] [--man-dir DIR]
+             [--no-git-alias] [--no-man]
 
 Options:
   --version VERSION   Install a release such as v1.0.0 (default: latest).
   --install-dir DIR   Install the binary into DIR (default: ~/.local/bin).
+  --man-dir DIR       Install the manual page under DIR/man1 (default: the
+                      share/man directory beside DIR's parent, so a PATH entry
+                      ending in /bin finds it; otherwise ~/.local/share/man).
   --no-git-alias      Do not configure a global Git alias when DIR is off PATH.
+  --no-man            Do not install the manual page.
   -h, --help          Show this help.
+
+`git repo-worktree --help` opens the manual page; without it, use
+`git repo-worktree -h`.
 
 Environment:
   GIT_REPO_WORKTREE_VERSION       Default value for --version.
   GIT_REPO_WORKTREE_INSTALL_DIR   Default value for --install-dir.
+  GIT_REPO_WORKTREE_MAN_DIR       Default value for --man-dir.
 EOF
 }
 
@@ -71,8 +82,16 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -gt 0 ] || fail "--install-dir requires a value"
             install_dir=$1
             ;;
+        --man-dir)
+            shift
+            [ "$#" -gt 0 ] || fail "--man-dir requires a value"
+            man_dir=$1
+            ;;
         --no-git-alias)
             create_git_alias=0
+            ;;
+        --no-man)
+            install_man=0
             ;;
         -h | --help)
             usage
@@ -291,6 +310,41 @@ chmod 755 "$install_temporary"
 mv -f "$install_temporary" "$destination"
 install_temporary=""
 
+man_installed=""
+source_man_dir="$temporary_dir/extract/git-repo-worktree-$target"
+if [ "$install_man" -eq 1 ] && [ -f "$source_man_dir/git-repo-worktree.1" ]; then
+    if [ -z "$man_dir" ]; then
+        case "$install_dir" in
+            */bin) man_dir=${install_dir%/bin}/share/man ;;
+            *) man_dir=${HOME:-$install_dir}/.local/share/man ;;
+        esac
+    fi
+    case "$man_dir" in
+        /*) ;;
+        *) man_dir=$PWD/$man_dir ;;
+    esac
+    man_failed=0
+    if mkdir -p "$man_dir/man1" 2>/dev/null; then
+        for page in "$source_man_dir"/git-repo-worktree*.1; do
+            [ -f "$page" ] && [ ! -L "$page" ] || continue
+            name=${page##*/}
+            if ! { cp "$page" "$man_dir/man1/.$name.$$" &&
+                chmod 644 "$man_dir/man1/.$name.$$" &&
+                mv -f "$man_dir/man1/.$name.$$" "$man_dir/man1/$name"; }; then
+                rm -f "$man_dir/man1/.$name.$$"
+                man_failed=1
+            fi
+        done
+    else
+        man_failed=1
+    fi
+    if [ "$man_failed" -eq 0 ]; then
+        man_installed="$man_dir/man1/git-repo-worktree.1"
+    else
+        warn "could not install the manual pages into $man_dir/man1"
+    fi
+fi
+
 found_binary=$(command -v git-repo-worktree 2>/dev/null || true)
 if [ "$create_git_alias" -eq 1 ] && [ "$found_binary" != "$destination" ]; then
     git config --global alias.repo-worktree "$git_alias" ||
@@ -300,15 +354,34 @@ else
     alias_configured=0
 fi
 
+installed_version=$("$destination" version 2>/dev/null || true)
 if [ "$create_git_alias" -eq 1 ]; then
-    git repo-worktree version >/dev/null ||
+    git_version=$(git repo-worktree version 2>/dev/null) ||
         fail "installed the binary but 'git repo-worktree' did not pass verification"
 elif [ "$found_binary" != "$destination" ]; then
+    git_version=""
     warn "$install_dir is not the git-repo-worktree found on PATH"
     warn "add it to PATH before running git repo-worktree"
+else
+    git_version=$installed_version
+fi
+if [ -n "$found_binary" ] && [ "$found_binary" != "$destination" ] &&
+    [ "$("$found_binary" version 2>/dev/null || true)" != "$installed_version" ]; then
+    warn "another git-repo-worktree at $found_binary shadows $destination"
+    warn "git runs commands found on PATH before aliases, so 'git repo-worktree' uses the other copy"
+    warn "remove it (for example: cargo uninstall git-repo-worktree) or put $install_dir earlier on PATH"
+elif [ -n "$git_version" ] && [ "$git_version" != "$installed_version" ]; then
+    warn "'git repo-worktree version' reports '$git_version', not '$installed_version'"
 fi
 
 say "Installed $destination"
+if [ -n "$man_installed" ]; then
+    say "Installed manual pages in ${man_installed%/*}"
+    if command -v man >/dev/null 2>&1 &&
+        ! man -w git-repo-worktree >/dev/null 2>&1; then
+        say "Add $man_dir to MANPATH so 'git repo-worktree --help' can find it."
+    fi
+fi
 if [ "$alias_configured" -eq 1 ]; then
     say "Configured Git so 'git repo-worktree' works without changing PATH."
 fi

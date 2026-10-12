@@ -32,3 +32,46 @@ machine interface deterministic:
   `add --continue` safely repeats the idempotent worktree check. A partial trailing
   journal record is truncated during recovery; malformed durable records still fail
   closed.
+
+## `spec-v2.md` decisions
+
+- The tree's manifest checkout is on a per-tree branch `repo-worktree/<tree>`,
+  not detached. repo derives the manifest revision from the current manifest
+  branch's `branch.<name>.merge`; a detached checkout makes `repo sync -l` fail
+  with "revision refs/heads/master in manifests not found". The branch reuses
+  the source manifest branch's `remote` and `merge` and is deleted on `remove`
+  and `prune`.
+- Shared projects are left out of the generated `manifest.xml` and
+  `project.list`. Listing a project that repo does not see in `project.list`
+  makes `repo sync` delete its checkout, and repo "repairs" a `.git` it does
+  not own by replacing it, which for a shared project is the source's `.git`.
+- New branches track, in order: project `dest-branch`, project `upstream`,
+  symbolic project `revision`, then manifest defaults. `repo start` in a pinned
+  client skips the project `upstream`; using it is closer to the project's real
+  upstream when a project's revision differs from the default.
+- Overlay projects copy the source checkout's index unmodified. Measured on
+  ext4 under `fuse-overlayfs` with 40,000 files: `git status` hashes nothing
+  (0.5 s cold, 23 ms warm) because the overlay reports the lower files' stat
+  data and Git does not compare `st_dev` unless built with `USE_STDEV`. The
+  field report's `core.checkStat=minimal`/`sd_dev` workaround is unnecessary,
+  and `checkStat` would have had to be set in the source's shared config.
+- `remove` returns at most one spare per pool project. `pool fill --count`
+  can keep more.
+- Concurrent-sync detection matches only processes whose program is `repo`, or
+  a Python interpreter running `repo` or repo's `main.py`, with a `sync` or
+  `init` argument. The previous substring match tripped on any process whose
+  command line mentioned "repo sync", including agent shells.
+- A bridge that cannot be built for a supported reason (no `.repo/repo`,
+  `<submanifest>`) is `unsupported` and does not make the tree incomplete; any
+  other bridge failure is `failed` and does, so `repair` retries it.
+- Fast modes are the defaults so field use exercises them: inferred
+  fixed-depth candidates become overlays where FUSE works, and heavy source
+  projects use the pool. `defaults worktree` opts a project out of both;
+  `--no-overlay` or `GIT_REPO_WORKTREE_NO_OVERLAY=1` turns overlays off per tree
+  or per machine. Per-project `populate_ms` is recorded for the next round of
+  measurements.
+- The usage history is permanent rather than temporary instrumentation: an
+  `add` record is a few kilobytes even for large clients, writes are unsynced
+  appends, and the file is capped. Flag values are never recorded because they
+  carry paths and branch names; flag names are enough to see which invocations
+  agents get wrong.

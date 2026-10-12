@@ -5,6 +5,10 @@
 **Targets:** Linux and macOS only
 **Language:** Rust, published to crates.io as `git-repo-worktree`
 
+Addenda: [`spec-fast-add.md`](spec-fast-add.md) (fast default `add`) and
+[`spec-v2.md`](spec-v2.md) (repo fidelity, scoped branches, inspection, pool and
+overlay modes). Where an addendum conflicts with this document, the addendum wins.
+
 This document is written so that an implementing agent can build the tool without
 making policy decisions. Where a choice existed, it has been made and is recorded
 here. If the implementer encounters a genuinely unspecified situation, the rule is:
@@ -25,9 +29,9 @@ client.
 
 ### 1.1 Non-goals (v1)
 
-1. **No `.repo` in created trees.** Created trees are *git-only*: `git` commands
-   work in every project; `repo` commands do not work inside the created tree.
-   The tool must not attempt to synthesize or copy a `.repo` directory.
+1. ~~**No `.repo` in created trees.**~~ Retired by `spec-v2.md` §3: trees carry a
+   synthesized `.repo` bridge so repo commands work inside them (`--git-only`
+   opts out).
 2. **No transport of dirty state.** Uncommitted/untracked changes in the source
    tree are never copied. Created trees materialize committed state only
    (mirrors `git worktree add`).
@@ -40,17 +44,18 @@ client.
 6. **No mutation of repo internals.** The tool writes only: (a) its own registry
    under `.repo/repo-worktrees/`, (b) the destination tree, (c) worktree
    registration data that *git itself* writes as a side effect of `git worktree`
-   commands. It never edits manifests, project.list, repo config, or anything
-   else under `.repo/`.
+   commands, plus the bridge links inside those registrations and the per-tree
+   manifest branch described in `spec-v2.md` §3. It never edits the source's
+   manifests, project.list, repo config, or anything else under `.repo/`.
 
 ### 1.2 Fixed policy decisions (agreed with the commissioner)
 
 | # | Topic | Decision |
 |---|-------|----------|
-| P1 | repo commands inside created tree | Not supported (git-only tree) |
+| P1 | repo commands inside created tree | Supported via a synthesized `.repo` bridge (`spec-v2.md` §3) |
 | P2 | Source layouts | Support both legacy layout and `repo init --worktree` layout; auto-detect |
 | P3 | Dirty state | Mirror `git worktree`: not transported; source dirtiness does not block `add` |
-| P4 | Branch model | Detached HEAD at pinned SHAs by default; optional `-b` |
+| P4 | Branch model | Detached HEAD at pinned SHAs by default; optional `-b` scoped to `-p` projects or `--all-projects`, with upstream tracking (`spec-v2.md` §4) |
 | P5 | Failure semantics | Journaled + idempotent resume (`add --continue`); never all-or-nothing rollback |
 | P6 | Manifest features | copyfile/linkfile: full support. Partial clone & superproject sources: supported. local_manifests: supported via snapshot. Groups: by-construction (enumerate what is on disk). Nested projects: supported. Submodules: off by default, `--submodules` opt-in |
 | P7 | Platforms | Linux + macOS |

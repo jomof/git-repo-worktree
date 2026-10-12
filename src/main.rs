@@ -3,19 +3,27 @@
 #[cfg(not(unix))]
 compile_error!("git-repo-worktree supports Linux and macOS only");
 
+mod bridge;
 mod cli;
 mod defaults;
 mod discovery;
 mod error;
+mod inspect;
 mod manifest;
+mod metrics;
 mod model;
+mod overlay;
+mod pool;
 mod registry;
+mod report;
+mod resolve;
 mod skill;
+mod status;
 mod tree;
 mod util;
 
 use clap::{error::ErrorKind, CommandFactory, Parser};
-use cli::{Cli, Command, CompletionShell, DefaultsCommand, SkillCommand};
+use cli::{Cli, Command, CompletionShell, DefaultsCommand, PoolCommand, SkillCommand};
 use error::{AppError, AppResult, Envelope};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -39,6 +47,8 @@ fn command_name(command: &Command) -> &'static str {
     match command {
         Command::Add(_) => "add",
         Command::List(_) => "list",
+        Command::Status(_) => "status",
+        Command::Detach(_) => "detach",
         Command::Remove(_) => "remove",
         Command::Lock(_) => "lock",
         Command::Unlock(_) => "unlock",
@@ -50,7 +60,15 @@ fn command_name(command: &Command) -> &'static str {
             DefaultsCommand::List => "defaults list",
             DefaultsCommand::Symlink(_) => "defaults symlink",
             DefaultsCommand::Worktree(_) => "defaults worktree",
+            DefaultsCommand::Pool(_) => "defaults pool",
+            DefaultsCommand::Overlay(_) => "defaults overlay",
             DefaultsCommand::Auto(_) => "defaults auto",
+        },
+        Command::Report(_) => "report",
+        Command::Pool(args) => match &args.command {
+            PoolCommand::List => "pool list",
+            PoolCommand::Fill(_) => "pool fill",
+            PoolCommand::Clear(_) => "pool clear",
         },
         Command::Version => "version",
         Command::Completions(_) => "completions",
@@ -78,6 +96,8 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
     match &cli.command {
         Command::Add(args) => tree::add(args, cwd, cli.quiet, cli.verbose),
         Command::List(args) => tree::list(args, cwd, cli.json, cli.verbose),
+        Command::Status(args) => status::status(args, cwd, cli.json, cli.verbose),
+        Command::Detach(args) => status::detach(args, cwd, cli.json, cli.quiet),
         Command::Remove(args) => tree::remove(args, cwd, cli.quiet),
         Command::Lock(args) => tree::lock(args, cwd, cli.quiet),
         Command::Unlock(args) => tree::unlock(args, cwd, cli.quiet),
@@ -86,6 +106,8 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
         Command::Repair(args) => tree::repair(args, cwd, cli.quiet),
         Command::Materialize(args) => tree::materialize(args, cwd, cli.quiet, cli.verbose),
         Command::Defaults(args) => defaults::run(&args.command, cwd, cli.json, cli.quiet),
+        Command::Pool(args) => pool::run(&args.command, cwd, cli.json, cli.quiet),
+        Command::Report(args) => report::run(args, cwd, cli.json),
         Command::Version => version(cli.verbose, cli.json),
         Command::Completions(args) => completions(args.shell, cli.json),
         Command::Skill(args) => skill::run(&args.command, cwd, cli.json, cli.quiet),
@@ -95,7 +117,15 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
 fn version(verbose: u8, json_output: bool) -> AppResult<Value> {
     let version = env!("CARGO_PKG_VERSION").to_string();
     let git = discovery::program_version("git", &["version"]).ok();
-    let repo = discovery::program_version("repo", &["--version"]).ok();
+    let repo = discovery::program_version("repo", &["--version"])
+        .ok()
+        .filter(|version| !version.contains("not installed"))
+        .or_else(|| {
+            discovery::check_repo_version()
+                .ok()
+                .filter(|version| version != "unknown")
+                .map(|version| format!("launcher {version}"))
+        });
     if !json_output {
         if verbose > 0 {
             println!("git-repo-worktree {version}");
@@ -139,8 +169,67 @@ fn completions(shell: CompletionShell, json_output: bool) -> AppResult<Value> {
     Ok(json!({"shell": format!("{shell:?}").to_ascii_lowercase(), "script": script}))
 }
 
+const SUBCOMMANDS: &[&str] = &[
+    "add",
+    "list",
+    "status",
+    "detach",
+    "remove",
+    "lock",
+    "unlock",
+    "move",
+    "prune",
+    "repair",
+    "materialize",
+    "defaults",
+    "pool",
+    "report",
+    "version",
+    "completions",
+    "skill",
+    "symlink",
+    "worktree",
+    "auto",
+    "show",
+    "sync",
+    "fill",
+    "clear",
+];
+
+fn argument_shape(raw_args: &[std::ffi::OsString]) -> Vec<String> {
+    let arguments = raw_args
+        .iter()
+        .skip(1)
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    metrics::argument_shape(&arguments, SUBCOMMANDS)
+}
+
+/// Records a command line clap rejected, so repeated agent mistakes show up
+/// in `report`.
+fn record_usage_error(raw_args: &[std::ffi::OsString], started: std::time::Instant, code: i32) {
+    if let Ok(current) = std::env::current_dir() {
+        let directory = raw_args
+            .iter()
+            .position(|argument| argument == "-C")
+            .and_then(|index| raw_args.get(index + 1))
+            .map_or(current.clone(), |directory| {
+                util::absolutize(std::path::Path::new(directory), &current)
+            });
+        let _ = discovery::discover_client(&directory, true);
+    }
+    metrics::finish(
+        &infer_command(raw_args),
+        argument_shape(raw_args),
+        metrics::elapsed_ms(started),
+        code,
+        Some("E_USAGE"),
+    );
+}
+
 fn main() -> ExitCode {
     install_signal_handler();
+    let started = std::time::Instant::now();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let cli = match Cli::try_parse_from(&raw_args) {
         Ok(cli) => cli,
@@ -165,6 +254,7 @@ fn main() -> ExitCode {
                 let _ = error.print();
                 return ExitCode::from(code as u8);
             }
+            record_usage_error(&raw_args, started, 2);
             if json_output {
                 let app_error = AppError::usage(error.to_string());
                 let envelope = Envelope::failure(infer_command(&raw_args), &app_error);
@@ -180,7 +270,13 @@ fn main() -> ExitCode {
         }
     };
     let command = command_name(&cli.command);
-    let mut result = cwd(&cli).and_then(|cwd| execute(&cli, &cwd));
+    let mut result = cwd(&cli).and_then(|cwd| {
+        let result = execute(&cli, &cwd);
+        if result.is_err() {
+            let _ = discovery::discover_client(&cwd, true);
+        }
+        result
+    });
     if INTERRUPTED.load(Ordering::SeqCst)
         && result.is_ok()
         && !matches!(&cli.command, Command::Add(_) | Command::Repair(_))
@@ -191,6 +287,7 @@ fn main() -> ExitCode {
         ));
     }
 
+    let error_code = result.as_ref().err().map(|error| error.code);
     let exit_code = match result {
         Ok(result) => {
             if cli.json {
@@ -215,6 +312,13 @@ fn main() -> ExitCode {
             error.exit_code
         }
     };
+    metrics::finish(
+        command,
+        argument_shape(&raw_args),
+        metrics::elapsed_ms(started),
+        exit_code,
+        error_code,
+    );
     ExitCode::from(exit_code as u8)
 }
 
@@ -230,6 +334,12 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
         }
         return "skill".into();
     }
+    if let Some(index) = values.iter().position(|value| *value == "pool") {
+        if let Some(subcommand) = values.get(index + 1) {
+            return format!("pool {subcommand}");
+        }
+        return "pool".into();
+    }
     if let Some(index) = values.iter().position(|value| *value == "defaults") {
         if let Some(subcommand) = values.get(index + 1) {
             return format!("defaults {subcommand}");
@@ -239,6 +349,8 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
     for name in [
         "add",
         "list",
+        "status",
+        "detach",
         "remove",
         "lock",
         "unlock",
@@ -247,6 +359,7 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
         "repair",
         "materialize",
         "defaults",
+        "report",
         "version",
         "completions",
     ] {

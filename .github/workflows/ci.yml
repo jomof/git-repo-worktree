@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14]
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -33,6 +33,16 @@ jobs:
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
           chmod +x "$HOME/bin/repo"
           echo "$HOME/bin" >> "$GITHUB_PATH"
+          git clone -q --depth 1 https://gerrit.googlesource.com/git-repo "$RUNNER_TEMP/git-repo"
+          echo "GRW_TEST_REPO_URL=$RUNNER_TEMP/git-repo" >> "$GITHUB_ENV"
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+      - name: Install fuse-overlayfs
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fuse-overlayfs fuse3
+          echo "GRW_TEST_REQUIRE_OVERLAY=1" >> "$GITHUB_ENV"
       - name: Validate embedded skill
         shell: bash
         run: |

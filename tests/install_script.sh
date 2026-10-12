@@ -49,6 +49,8 @@ if [ -n "${GIT_REPO_WORKTREE_TEST_LOG:-}" ]; then
 fi
 EOF
 chmod +x "$release_dir/$package/git-repo-worktree"
+printf '.TH GIT-REPO-WORKTREE 1\n' >"$release_dir/$package/git-repo-worktree.1"
+printf '.TH GIT-REPO-WORKTREE-ADD 1\n' >"$release_dir/$package/git-repo-worktree-add.1"
 tar -czf "$release_dir/$package.tar.gz" -C "$release_dir" "$package"
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -58,6 +60,9 @@ else
 fi
 checksum=${checksum%% *}
 printf '%s  %s.tar.gz\n' "$checksum" "$package" >"$release_dir/SHA256SUMS"
+
+PATH="$(dirname "$(command -v git)"):/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH
 
 test_home="$temporary_dir/home"
 install_dir="$temporary_dir/install dir's bin"
@@ -72,6 +77,11 @@ export GIT_REPO_WORKTREE_RELEASE_BASE="file://$release_dir"
 
 test -x "$install_dir/git-repo-worktree"
 git repo-worktree version >/dev/null
+test -f "$test_home/.local/share/man/man1/git-repo-worktree.1"
+bin_layout="$temporary_dir/prefix/bin"
+HOME="$test_home" "$installer_shell" "$project_root/install.sh" \
+    --version v9.9.9 --install-dir "$bin_layout" --no-git-alias >/dev/null 2>&1
+test -f "$temporary_dir/prefix/share/man/man1/git-repo-worktree.1"
 
 argument_log="$temporary_dir/arguments"
 export GIT_REPO_WORKTREE_TEST_LOG="$argument_log"
@@ -94,6 +104,18 @@ mkdir "$default_home"
 HOME="$default_home" "$installer_shell" "$project_root/install.sh" --version v9.9.9
 test -x "$default_home/.local/bin/git-repo-worktree"
 HOME="$default_home" git repo-worktree version >/dev/null
+test -f "$default_home/.local/share/man/man1/git-repo-worktree.1"
+test -f "$default_home/.local/share/man/man1/git-repo-worktree-add.1"
+
+shadow_home="$temporary_dir/shadow-home"
+shadow_bin="$temporary_dir/shadow-bin"
+mkdir "$shadow_home" "$shadow_bin"
+printf '%s\n' '#!/bin/sh' "printf 'git-repo-worktree stale\\n'" >"$shadow_bin/git-repo-worktree"
+chmod +x "$shadow_bin/git-repo-worktree"
+HOME="$shadow_home" PATH="$shadow_bin:$PATH" "$installer_shell" "$project_root/install.sh" \
+    --version v9.9.9 --no-man >"$temporary_dir/shadow-output" 2>&1
+grep -q "shadows .*shadow-home/.local/bin/git-repo-worktree" "$temporary_dir/shadow-output"
+test ! -e "$shadow_home/.local/share/man/man1/git-repo-worktree.1"
 
 no_alias_home="$temporary_dir/no-alias-home"
 no_alias_dir="$temporary_dir/no-alias-bin"

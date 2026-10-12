@@ -2,6 +2,7 @@ use crate::cli::{DefaultProjectsArgs, DefaultsCommand};
 use crate::discovery::discover_client;
 use crate::error::{AppError, AppResult};
 use crate::registry::{with_registry_lock, LockMode};
+use crate::resolve::{is_filesystem_style, resolve_projects};
 use crate::util::{path_is_safe_relative, write_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -65,7 +66,7 @@ pub fn load(registry: &Path) -> AppResult<ProjectDefaults> {
     if let Some((project, mode)) = defaults
         .projects
         .iter()
-        .find(|(_, mode)| !matches!(mode.as_str(), "symlink" | "worktree"))
+        .find(|(_, mode)| !matches!(mode.as_str(), "symlink" | "worktree" | "pool" | "overlay"))
     {
         return Err(AppError::operational(
             "E_DEFAULTS_INVALID",
@@ -91,41 +92,86 @@ pub fn run(
             })
         }
         DefaultsCommand::Symlink(args) => {
-            mutate(&client.root, args, Some("symlink"), json_output, quiet)
+            mutate(&client.root, cwd, args, Some("symlink"), json_output, quiet)
         }
-        DefaultsCommand::Worktree(args) => {
-            mutate(&client.root, args, Some("worktree"), json_output, quiet)
+        DefaultsCommand::Worktree(args) => mutate(
+            &client.root,
+            cwd,
+            args,
+            Some("worktree"),
+            json_output,
+            quiet,
+        ),
+        DefaultsCommand::Pool(args) => {
+            mutate(&client.root, cwd, args, Some("pool"), json_output, quiet)
         }
-        DefaultsCommand::Auto(args) => mutate(&client.root, args, None, json_output, quiet),
+        DefaultsCommand::Overlay(args) => {
+            if let Some(reason) = crate::overlay::unavailable_reason() {
+                if !quiet {
+                    eprintln!(
+                        "warning: {reason}; overlay projects will be created as worktrees here"
+                    );
+                }
+            }
+            mutate(&client.root, cwd, args, Some("overlay"), json_output, quiet)
+        }
+        DefaultsCommand::Auto(args) => mutate(&client.root, cwd, args, None, json_output, quiet),
     }
 }
 
 fn mutate(
     source_root: &Path,
+    cwd: &Path,
     args: &DefaultProjectsArgs,
     mode: Option<&str>,
     json_output: bool,
     quiet: bool,
 ) -> AppResult<Value> {
-    let projects = dedupe_and_validate_paths(&args.projects)?;
-    let active = if mode.is_some() {
-        Some(load_active_projects(source_root)?)
-    } else {
-        None
-    };
-    if let Some(active) = &active {
-        let unknown = projects
-            .iter()
-            .filter(|project| !active.contains(project.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !unknown.is_empty() {
-            return Err(AppError::operational(
-                "E_UNKNOWN_PROJECT",
-                format!("unknown active project path(s): {}", unknown.join(", ")),
-            ));
+    let requested = dedupe_and_validate_paths(&args.projects, source_root, cwd)?;
+    let active = load_active_projects(source_root);
+    let known = active
+        .as_ref()
+        .map(|active| {
+            let mut known = active.iter().cloned().collect::<Vec<_>>();
+            known.sort();
+            known
+        })
+        .unwrap_or_default();
+    let roots = [source_root.to_path_buf()];
+    let mut projects = Vec::new();
+    let mut unknown = Vec::new();
+    for input in &requested {
+        if mode.is_none() && !is_filesystem_style(input) {
+            projects.push(input.clone());
+            continue;
+        }
+        match resolve_projects(std::slice::from_ref(input), &known, &roots, cwd) {
+            Ok(resolved) => {
+                for resolution in resolved {
+                    if !quiet && resolution.project != *input {
+                        eprintln!(
+                            "resolved {} to project {}",
+                            resolution.input, resolution.project
+                        );
+                    }
+                    projects.push(resolution.project);
+                }
+            }
+            Err(_) if mode.is_none() => projects.push(input.clone()),
+            Err(_) => unknown.push(input.clone()),
         }
     }
+    if mode.is_some() {
+        active?;
+    }
+    if !unknown.is_empty() {
+        return Err(AppError::operational(
+            "E_UNKNOWN_PROJECT",
+            format!("unknown active project path(s): {}", unknown.join(", ")),
+        ));
+    }
+    projects.sort();
+    projects.dedup();
 
     with_registry_lock(source_root, LockMode::Exclusive, true, |registry| {
         let mut defaults = load(registry)?;
@@ -159,11 +205,18 @@ fn mutate(
     })
 }
 
-fn dedupe_and_validate_paths(projects: &[String]) -> AppResult<Vec<String>> {
+fn dedupe_and_validate_paths(
+    projects: &[String],
+    source_root: &Path,
+    cwd: &Path,
+) -> AppResult<Vec<String>> {
     let mut seen = HashSet::new();
     let mut output = Vec::new();
     for project in projects {
-        if !path_is_safe_relative(Path::new(project)) {
+        let path = Path::new(project);
+        let inside_source = is_filesystem_style(project)
+            && crate::util::absolutize(path, cwd).starts_with(source_root);
+        if !path_is_safe_relative(path) && !inside_source {
             return Err(AppError::operational(
                 "E_BAD_PROJECT_PATH",
                 format!("unsafe project path: {project}"),

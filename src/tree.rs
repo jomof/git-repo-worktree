@@ -1,3 +1,4 @@
+use crate::bridge;
 use crate::cli::{
     AddArgs, ListArgs, LockArgs, MaterializeArgs, MoveArgs, PruneArgs, RemoveArgs, RepairArgs,
     UnlockArgs,
@@ -5,11 +6,17 @@ use crate::cli::{
 use crate::defaults;
 use crate::discovery::{check_git_version, check_repo_version, discover_client};
 use crate::error::{AppError, AppResult};
+use crate::inspect::inspect_tree;
 use crate::manifest::{parse_snapshot_file, project_depth};
 use crate::model::{
     default_heavy_jobs, DirectiveMeta, LockMeta, MovingMeta, ProjectMeta, TreeMeta, FORMAT_VERSION,
+    HEAVY_PROJECT_BYTES, MODE_OVERLAY, MODE_SHARED, MODE_WORKTREE,
 };
+use crate::overlay;
+use crate::pool;
+use crate::registry::registry_path;
 use crate::registry::{load_all, select_tree, with_registry_lock, LockMode};
+use crate::resolve::{resolve_projects, rewritten};
 use crate::util::{
     absolutize, append_journal, append_journal_batch, canonicalize_missing, copy_permissions,
     dedupe_paths, default_jobs, ensure_safe_destination, exit_reason, is_path_prefix,
@@ -37,7 +44,6 @@ use std::time::{Duration, Instant};
 const JOURNAL_BATCH_WINDOW: Duration = Duration::from_millis(10);
 const CHECKOUT_WORKERS_CONFIG: &str = "checkout.workers=8";
 const CHECKOUT_THRESHOLD_CONFIG: &str = "checkout.thresholdForParallelism=100";
-const HEAVY_PROJECT_BYTES: u64 = 500 * 1024 * 1024;
 
 fn phase_start(quiet: bool, verbose: u8, phase: &str) {
     if !quiet && verbose > 0 {
@@ -46,6 +52,7 @@ fn phase_start(quiet: bool, verbose: u8, phase: &str) {
 }
 
 fn phase_done(quiet: bool, verbose: u8, phase: &str, started: Instant, detail: Option<&str>) {
+    crate::metrics::phase(phase, crate::metrics::elapsed_ms(started));
     if quiet || verbose == 0 {
         return;
     }
@@ -76,10 +83,18 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             || args.full
             || !args.full_projects.is_empty()
             || args.no_reflink
+            || args.no_overlay
+            || args.git_only
             || args.heavy_jobs.is_some())
     {
         return Err(AppError::usage(
-            "--name, -b, --submodules, --lock, --reason, --full, --full-project, --no-reflink, and --heavy-jobs are invalid with --continue",
+            "--name, -b, --submodules, --lock, --reason, --full, --full-project, --no-reflink, --no-overlay, --git-only, and --heavy-jobs are invalid with --continue",
+        ));
+    }
+    if args.branch.is_some() && args.projects.is_empty() && !args.all_projects {
+        return Err(AppError::usage_code(
+            "E_BRANCH_NEEDS_PROJECT_SCOPE",
+            "-b needs a scope: pass -p <project> (repeatable) for the projects you will change, or --all-projects to branch every project",
         ));
     }
     let selector = args.path.as_deref().ok_or_else(|| {
@@ -118,9 +133,11 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 meta.projects = parsed.projects;
                 meta.copyfiles = parsed.copyfiles;
                 meta.linkfiles = parsed.linkfiles;
+                let source = meta.source();
                 configure_population_modes(
                     &mut meta,
                     &parsed.malformed_clone_depth,
+                    &source,
                     jobs,
                     quiet,
                     verbose,
@@ -177,6 +194,12 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 "tree name is empty after sanitization",
             ));
         }
+        if name == pool::DIR_NAME {
+            return Err(AppError::operational(
+                "E_BAD_NAME",
+                format!("{name} is reserved; pass --name"),
+            ));
+        }
         let entry = registry.join(&name);
         if entry.exists() {
             return Err(AppError::operational(
@@ -199,17 +222,21 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             created_at: now(),
             state: "creating".into(),
             branch: args.branch.clone(),
+            branch_projects: (args.branch.is_some() && !args.all_projects)
+                .then(|| args.projects.clone()),
             submodules: args.submodules,
             full: args.full,
             full_projects: args.full_projects.clone(),
             default_modes: std::collections::BTreeMap::new(),
             no_reflink: args.no_reflink,
+            no_overlay: args.no_overlay || overlay_disabled_by_environment(),
             heavy_jobs: args.heavy_jobs.unwrap_or_else(default_heavy_jobs),
             locked: args.lock.then(|| LockMeta {
                 reason: args.reason.clone().unwrap_or_default(),
                 at: now(),
             }),
             moving: None,
+            repo_bridge: (!args.git_only).then(bridge::new_meta),
             projects: Vec::new(),
             copyfiles: Vec::new(),
             linkfiles: Vec::new(),
@@ -262,6 +289,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         if let Err(error) = configure_population_modes(
             &mut meta,
             &parsed.malformed_clone_depth,
+            cwd,
             jobs,
             quiet,
             verbose,
@@ -333,29 +361,58 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
     })
 }
 
+fn resolve_tree_projects(
+    meta: &TreeMeta,
+    inputs: &[String],
+    cwd: &Path,
+    flag: &str,
+    quiet: bool,
+) -> AppResult<Vec<String>> {
+    let known = meta
+        .projects
+        .iter()
+        .filter(|project| project.state != "skipped")
+        .map(|project| project.path.clone())
+        .collect::<Vec<_>>();
+    let roots = [meta.source(), meta.root()];
+    let resolved = resolve_projects(inputs, &known, &roots, cwd).map_err(|unknown| {
+        AppError::usage_code(
+            "E_UNKNOWN_PROJECT",
+            format!("unknown {flag} path(s): {}", unknown.join(", ")),
+        )
+    })?;
+    if !quiet {
+        for resolution in rewritten(&resolved) {
+            eprintln!(
+                "resolved {flag} {} to project {}",
+                resolution.input, resolution.project
+            );
+        }
+    }
+    Ok(resolved
+        .into_iter()
+        .map(|resolution| resolution.project)
+        .collect())
+}
+
 fn configure_population_modes(
     meta: &mut TreeMeta,
     malformed_clone_depth: &[String],
+    cwd: &Path,
     jobs: usize,
     quiet: bool,
     verbose: u8,
 ) -> AppResult<()> {
-    let known = meta
-        .projects
-        .iter()
-        .map(|project| project.path.as_str())
-        .collect::<HashSet<_>>();
-    let unknown = meta
-        .full_projects
-        .iter()
-        .filter(|path| !known.contains(path.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !unknown.is_empty() {
-        return Err(AppError::usage(format!(
-            "unknown --full-project path(s): {}",
-            unknown.join(", ")
-        )));
+    meta.full_projects =
+        resolve_tree_projects(meta, &meta.full_projects, cwd, "--full-project", quiet)?;
+    if let Some(projects) = meta.branch_projects.clone() {
+        meta.branch_projects = Some(resolve_tree_projects(
+            meta,
+            &projects,
+            cwd,
+            "--project",
+            quiet,
+        )?);
     }
 
     for project in &mut meta.projects {
@@ -394,12 +451,17 @@ fn configure_population_modes(
         .filter(|index| {
             let project = &meta.projects[*index];
             match meta.default_modes.get(&project.path).map(String::as_str) {
-                Some("worktree") => false,
-                Some("symlink") => true,
+                Some("worktree" | "pool") => false,
+                Some("symlink" | "overlay") => true,
                 _ => project.clone_depth.is_some() && !all_clone_depth,
             }
         })
         .collect::<Vec<_>>();
+    let overlay_unavailable = if meta.no_overlay {
+        Some("overlays are disabled".to_string())
+    } else {
+        overlay::unavailable_reason()
+    };
     if all_clone_depth && !quiet && verbose > 0 {
         eprintln!(
             "clone-depth sharing disabled: every active project has clone-depth (explicit symlink defaults still apply)"
@@ -422,12 +484,20 @@ fn configure_population_modes(
         .map(|directive| PathBuf::from(&directive.dest))
         .collect::<Vec<_>>();
     let full = meta.full;
-    let branch = meta.branch.is_some();
     let submodules = meta.submodules;
     let source = meta.source();
     let checks = candidates
         .iter()
-        .map(|index| (*index, meta.projects[*index].clone()))
+        .map(|index| {
+            let project = meta.projects[*index].clone();
+            let overlay = match meta.default_modes.get(&project.path).map(String::as_str) {
+                Some("overlay") => true,
+                Some(_) => false,
+                None => overlay_unavailable.is_none(),
+            };
+            let branched = meta.branch_for(&project.path).is_some();
+            (*index, project, overlay, branched)
+        })
         .collect::<Vec<_>>();
     let pool = ThreadPoolBuilder::new()
         .num_threads(jobs)
@@ -436,20 +506,23 @@ fn configure_population_modes(
     let results = pool.install(|| {
         checks
             .par_iter()
-            .map(|(index, project)| {
+            .map(|(index, project, overlay, branched)| {
                 let reason = if full {
                     Some("--full".to_string())
                 } else if forced.contains(&project.path) {
                     Some("--full-project".to_string())
-                } else if branch {
+                } else if *branched {
                     Some("branch creation requires a worktree".to_string())
+                } else if *overlay && overlay_unavailable.is_some() {
+                    overlay_unavailable.clone()
                 } else if active_paths.iter().any(|other| {
                     other != &project.path && Path::new(other).starts_with(Path::new(&project.path))
                 }) {
                     Some("project contains another active project".to_string())
-                } else if directive_destinations
-                    .iter()
-                    .any(|dest| dest.starts_with(Path::new(&project.path)))
+                } else if !*overlay
+                    && directive_destinations
+                        .iter()
+                        .any(|dest| dest.starts_with(Path::new(&project.path)))
                 {
                     Some("directive destination is inside project".to_string())
                 } else if submodules && pinned_path_exists(project, ".gitmodules") {
@@ -459,20 +532,24 @@ fn configure_population_modes(
                 } else {
                     None
                 };
-                (*index, reason)
+                (*index, *overlay, reason)
             })
             .collect::<Vec<_>>()
     });
-    for (index, reason) in results {
+    for (index, overlay, reason) in results {
         if let Some(reason) = reason {
-            if !quiet && verbose > 0 {
+            let requested_overlay = meta
+                .default_modes
+                .get(&meta.projects[index].path)
+                .is_some_and(|mode| mode == "overlay");
+            if !quiet && (verbose > 0 || requested_overlay) {
                 eprintln!(
                     "project {}: using worktree ({reason})",
                     meta.projects[index].path
                 );
             }
         } else {
-            meta.projects[index].mode = "symlink-shared".into();
+            meta.projects[index].mode = if overlay { MODE_OVERLAY } else { MODE_SHARED }.into();
         }
     }
     Ok(())
@@ -498,7 +575,6 @@ fn run_add_phases(
     let entry = meta.registry_entry();
     let source = meta.source();
     let destination = meta.root();
-    let branch = meta.branch.clone();
     let pool = ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()
@@ -519,7 +595,6 @@ fn run_add_phases(
         &pool,
         &source,
         &destination,
-        branch.as_deref(),
         jobs,
         heavy_jobs,
         no_reflink,
@@ -530,7 +605,7 @@ fn run_add_phases(
     let shared = meta
         .projects
         .iter()
-        .filter(|project| project.mode == "symlink-shared" && project.state == "done")
+        .filter(|project| project.mode == MODE_SHARED && project.state == "done")
         .count();
     if shared > 0 && !quiet {
         eprintln!(
@@ -540,11 +615,21 @@ fn run_add_phases(
             for project in meta
                 .projects
                 .iter()
-                .filter(|project| project.mode == "symlink-shared" && project.state == "done")
+                .filter(|project| project.mode == MODE_SHARED && project.state == "done")
             {
                 eprintln!("shared {}", project.path);
             }
         }
+    }
+    let overlays = meta
+        .projects
+        .iter()
+        .filter(|project| project.mode == MODE_OVERLAY && project.state == "done")
+        .count();
+    if overlays > 0 && !quiet {
+        eprintln!(
+            "note: {overlays} project(s) are copy-on-write overlays of the source checkout; `repair` remounts them after a reboot"
+        );
     }
     phase_done(
         quiet,
@@ -578,6 +663,18 @@ fn run_add_phases(
     phase_start(quiet, verbose, "submodules");
     process_submodules(meta, &pool, quiet)?;
     phase_done(quiet, verbose, "submodules", submodule_started, None);
+    if meta.repo_bridge.is_some() {
+        let bridge_started = Instant::now();
+        phase_start(quiet, verbose, "repo-bridge");
+        bridge::synthesize(meta, quiet)?;
+        let state = meta
+            .repo_bridge
+            .as_ref()
+            .map(|bridge| bridge.state.clone())
+            .unwrap_or_default();
+        append_journal(&entry, "repo-bridge", &state, None, None, None)?;
+        phase_done(quiet, verbose, "repo-bridge", bridge_started, Some(&state));
+    }
     if meta.locked.is_some() {
         let lock_started = Instant::now();
         phase_start(quiet, verbose, "lock");
@@ -619,12 +716,46 @@ fn run_add_phases(
         );
     }
     phase_done(quiet, verbose, "total", operation_started, None);
+    record_tree_metrics(meta);
     let result = serde_json::to_value(&*meta).expect("tree metadata serializes");
     if meta.state == "incomplete" {
         Err(AppError::partial(result))
     } else {
         Ok(result)
     }
+}
+
+/// Summarizes a tree's projects for the usage history.
+fn record_tree_metrics(meta: &TreeMeta) {
+    let projects = meta
+        .projects
+        .iter()
+        .filter(|project| project.state != "skipped")
+        .map(|project| {
+            json!({
+                "path": project.path,
+                "mode": project.mode,
+                "strategy": project.strategy,
+                "state": project.state,
+                "ms": project.populate_ms,
+                "bytes": project.est_bytes,
+                "pooled": meta.uses_pool(project),
+                "reason": project.reason,
+            })
+        })
+        .collect::<Vec<_>>();
+    crate::metrics::record("tree", json!(meta.name));
+    crate::metrics::record("state", json!(meta.state));
+    crate::metrics::record("skipped", json!(meta.skipped_count()));
+    crate::metrics::record(
+        "repo_bridge",
+        json!(meta.repo_bridge.as_ref().map(|bridge| bridge.state.clone())),
+    );
+    crate::metrics::record("projects", Value::Array(projects));
+    crate::metrics::record(
+        "environment",
+        crate::metrics::environment(&meta.source(), &meta.root()),
+    );
 }
 
 #[derive(Debug)]
@@ -722,7 +853,6 @@ fn run_project_phase(
     pool: &rayon::ThreadPool,
     source: &Path,
     destination: &Path,
-    branch: Option<&str>,
     jobs: usize,
     heavy_jobs: usize,
     no_reflink: bool,
@@ -743,7 +873,7 @@ fn run_project_phase(
     let mut stop = false;
     let mut completed_for_hook = 0usize;
     let reflink_state = Arc::new(ReflinkState::default());
-    let (sender, receiver) = mpsc::channel::<(usize, Result<ProjectOutcome, String>)>();
+    let (sender, receiver) = mpsc::channel::<(usize, Result<ProjectOutcome, String>, u64)>();
 
     while processed < work_count {
         if INTERRUPTED.load(Ordering::SeqCst) {
@@ -756,21 +886,21 @@ fn run_project_phase(
                 break;
             };
             let project = meta.projects[index].clone();
-            let source = source.to_path_buf();
-            let destination = destination.to_path_buf();
-            let branch = branch.map(str::to_owned);
+            let context = PopulateContext {
+                source_root: source.to_path_buf(),
+                destination: destination.to_path_buf(),
+                entry: meta.registry_entry(),
+                branch: meta.branch_for(&project.path).map(str::to_owned),
+                no_reflink,
+                pool_registry: meta.uses_pool(&project).then(|| registry_path(source)),
+            };
             let sender = sender.clone();
             let reflink_state = Arc::clone(&reflink_state);
             pool.spawn(move || {
-                let result = process_project(
-                    &project,
-                    &source,
-                    &destination,
-                    branch.as_deref(),
-                    no_reflink,
-                    &reflink_state,
-                );
-                let _ = sender.send((index, result));
+                let started = Instant::now();
+                let result = process_project(&project, &context, &reflink_state);
+                let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                let _ = sender.send((index, result, elapsed));
             });
             running += 1;
             if project_is_heavy(&meta.projects[index]) {
@@ -805,16 +935,16 @@ fn run_project_phase(
         running -= batch.len();
         running_heavy -= batch
             .iter()
-            .filter(|(index, _)| project_is_heavy(&meta.projects[*index]))
+            .filter(|(index, _, _)| project_is_heavy(&meta.projects[*index]))
             .count();
 
         let records = batch
             .iter()
-            .map(|(index, result)| {
+            .map(|(index, result, _)| {
                 let path = &meta.projects[*index].path;
                 match result {
                     Ok(outcome) => journal_record(
-                        if outcome.mode == "symlink-shared" {
+                        if outcome.mode == MODE_SHARED {
                             "project-share"
                         } else {
                             "project-add"
@@ -825,7 +955,7 @@ fn run_project_phase(
                         None,
                     ),
                     Err(reason) => journal_record(
-                        if meta.projects[*index].mode == "symlink-shared" {
+                        if meta.projects[*index].mode == MODE_SHARED {
                             "project-share"
                         } else {
                             "project-add"
@@ -840,7 +970,7 @@ fn run_project_phase(
             .collect::<Vec<_>>();
         append_journal_batch(&meta.registry_entry(), &records)?;
 
-        for (index, result) in batch {
+        for (index, result, elapsed) in batch {
             processed += 1;
             settled += 1;
             let project_path = meta.projects[index].path.clone();
@@ -850,6 +980,13 @@ fn run_project_phase(
                     meta.projects[index].reason = None;
                     meta.projects[index].mode = outcome.mode.into();
                     meta.projects[index].strategy = outcome.strategy.map(str::to_owned);
+                    meta.projects[index].populate_ms = Some(elapsed);
+                    if let Some(note) = &outcome.note {
+                        crate::metrics::push(
+                            "notes",
+                            json!({"project": project_path, "note": note}),
+                        );
+                    }
                     completed_for_hook += 1;
                     maybe_crash_after(completed_for_hook);
                     if verbose > 0 && !quiet {
@@ -895,16 +1032,95 @@ fn run_project_phase(
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct PopulateContext {
+    source_root: PathBuf,
+    destination: PathBuf,
+    entry: PathBuf,
+    branch: Option<String>,
+    no_reflink: bool,
+    pool_registry: Option<PathBuf>,
+}
+
 fn process_project(
     project: &ProjectMeta,
-    source_root: &Path,
-    destination: &Path,
-    branch: Option<&str>,
-    no_reflink: bool,
+    context: &PopulateContext,
     reflink_state: &ReflinkState,
 ) -> Result<ProjectOutcome, String> {
+    let outcome = populate_project(project, context, reflink_state)?;
+    if let Some(branch) = &context.branch {
+        if outcome.mode == MODE_WORKTREE {
+            configure_branch_tracking(&context.destination.join(&project.path), branch, project)?;
+        }
+    }
+    Ok(outcome)
+}
+
+/// Records the upstream a new branch tracks, as `repo start` does, so
+/// `repo upload` and tools that read `branch.<name>.merge` find it.
+fn configure_branch_tracking(
+    worktree: &Path,
+    branch: &str,
+    project: &ProjectMeta,
+) -> Result<(), String> {
+    let (Some(remote), Some(upstream)) = (&project.remote, &project.upstream) else {
+        return Ok(());
+    };
+    for (key, value) in [("remote", remote), ("merge", upstream)] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(["config", &format!("branch.{branch}.{key}"), value])
+            .output()
+            .map_err(|error| format!("configure branch tracking: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "configure branch tracking: {}",
+                exit_reason(&output)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn populate_project(
+    project: &ProjectMeta,
+    context: &PopulateContext,
+    reflink_state: &ReflinkState,
+) -> Result<ProjectOutcome, String> {
+    let source_root = context.source_root.as_path();
+    let destination = context.destination.as_path();
+    let branch = context.branch.as_deref();
+    let no_reflink = context.no_reflink;
     let worktree = destination.join(&project.path);
     let source_checkout = source_root.join(&project.path);
+    if project.mode == MODE_OVERLAY {
+        match source_is_clean_at_sha(&source_checkout, &project.sha) {
+            Ok(()) => {
+                overlay::populate(
+                    &source_checkout,
+                    &worktree,
+                    &context.entry,
+                    &project.path,
+                    &project.sha,
+                )?;
+                return Ok(ProjectOutcome {
+                    mode: MODE_OVERLAY,
+                    strategy: Some(overlay::STRATEGY),
+                    note: None,
+                });
+            }
+            Err(reason) if !overlay_started(&context.entry, &project.path) => {
+                let mut fallback = project.clone();
+                fallback.mode = MODE_WORKTREE.into();
+                return populate_project(&fallback, context, reflink_state).map(|mut outcome| {
+                    outcome.note = Some(format!("overlay preflight changed: {reason}"));
+                    outcome
+                });
+            }
+            Err(reason) => return Err(format!("overlay source changed: {reason}")),
+        }
+    }
     let worktree_is_symlink = fs::symlink_metadata(&worktree)
         .map(|metadata| metadata.file_type().is_symlink())
         .unwrap_or(false);
@@ -916,7 +1132,22 @@ fn process_project(
             note: Some("resumed with reset --hard".into()),
         });
     }
-    if project.mode == "symlink-shared" {
+    if let (Some(registry), None) = (&context.pool_registry, branch) {
+        if pool::take(
+            registry,
+            &project.path,
+            &project.git_common_dir,
+            &worktree,
+            &project.sha,
+        )? {
+            return Ok(ProjectOutcome {
+                mode: MODE_WORKTREE,
+                strategy: Some(pool::STRATEGY),
+                note: None,
+            });
+        }
+    }
+    if project.mode == MODE_SHARED {
         match source_is_clean_at_sha(&source_checkout, &project.sha) {
             Ok(()) => {
                 share_project(&source_checkout, &worktree)?;
@@ -989,6 +1220,15 @@ fn process_project(
         strategy: Some("checkout"),
         note: reflink_reason,
     })
+}
+
+fn overlay_disabled_by_environment() -> bool {
+    std::env::var("GIT_REPO_WORKTREE_NO_OVERLAY")
+        .is_ok_and(|value| !value.is_empty() && value != "0")
+}
+
+fn overlay_started(entry: &Path, project_path: &str) -> bool {
+    fs::symlink_metadata(overlay::upper_dir(entry, project_path).join(".git")).is_ok()
 }
 
 fn remove_expected_shared_link(expected: &Path, destination: &Path) -> Result<(), String> {
@@ -1541,6 +1781,12 @@ fn directive_paths(root: &Path, directive: &DirectiveMeta) -> Result<(PathBuf, P
     if !path_is_safe_relative(src) || !path_is_safe_relative(dest) {
         return Err("unsafe-path".into());
     }
+    if matches!(
+        dest.components().next().map(|component| component.as_os_str().to_owned()),
+        Some(first) if first == ".repo" || first == ".repo-worktree"
+    ) {
+        return Err("unsafe-path".into());
+    }
     let source = root.join(&directive.project).join(src);
     let destination = ensure_safe_destination(root, dest).map_err(|_| "unsafe-path".to_string())?;
     Ok((source, destination))
@@ -1703,10 +1949,7 @@ fn check_quiescence(source_root: &Path, force: bool, quiet: bool) -> AppResult<(
             .and_then(|output| {
                 String::from_utf8_lossy(&output.stdout)
                     .lines()
-                    .find(|line| {
-                        let normalized = line.replace('/', " ");
-                        normalized.contains("repo sync") || normalized.contains("repo init")
-                    })
+                    .find(|line| is_repo_sync_process(line))
                     .map(str::to_owned)
             })
     } else {
@@ -1736,6 +1979,37 @@ fn check_quiescence(source_root: &Path, force: bool, quiet: bool) -> AppResult<(
             format!("repo sync appears to be active ({detail}); use --force to proceed"),
         ))
     }
+}
+
+/// Whether a `ps` command line is repo itself running `sync` or `init`: the
+/// program is `repo` or a Python interpreter running `repo` or repo's
+/// `main.py`. Shells and other programs whose arguments merely mention
+/// "repo sync" do not match.
+fn is_repo_sync_process(line: &str) -> bool {
+    let tokens = line.split_whitespace().collect::<Vec<_>>();
+    let basename = |token: &str| token.rsplit('/').next().unwrap_or(token).to_string();
+    let Some(program) = tokens.first().map(|token| basename(token)) else {
+        return false;
+    };
+    let script = if program == "repo" {
+        Some(0)
+    } else if program.starts_with("python") {
+        tokens
+            .iter()
+            .skip(1)
+            .take_while(|token| {
+                token.starts_with('-') || matches!(basename(token).as_str(), "repo" | "main.py")
+            })
+            .position(|token| matches!(basename(token).as_str(), "repo" | "main.py"))
+            .map(|position| position + 1)
+    } else {
+        None
+    };
+    script.is_some_and(|index| {
+        tokens[index + 1..]
+            .iter()
+            .any(|token| *token == "sync" || *token == "init")
+    })
 }
 
 fn validate_destination(
@@ -1826,6 +2100,15 @@ pub fn list(args: &ListArgs, cwd: &Path, json_output: bool, verbose: u8) -> AppR
                 }
             }
         }
+        let trees = trees
+            .iter()
+            .map(|tree| {
+                let mut value = serde_json::to_value(tree).expect("tree metadata serializes");
+                value["checked_out_branches"] =
+                    Value::Array(crate::status::checked_out_branches(tree));
+                value
+            })
+            .collect::<Vec<_>>();
         Ok(json!({"trees": trees}))
     })
 }
@@ -1868,16 +2151,44 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
     let client = discover_client(cwd, true)?;
     with_registry_lock(&client.root, LockMode::Exclusive, false, |registry| {
         let mut meta = select_tree(registry, &args.tree, cwd)?;
+        let jobs = args.jobs.unwrap_or_else(default_jobs);
+        let mut clean_projects = None;
+        crate::metrics::record("tree", json!(meta.name));
+        crate::metrics::record("force", json!(args.force));
         if meta.state != "removing" {
             if args.force == 0 {
-                let dirty = dirty_projects(&meta)?;
+                let inspect_started = Instant::now();
+                let inspections = inspect_tree(&meta, jobs);
+                crate::metrics::phase("inspect", crate::metrics::elapsed_ms(inspect_started));
+                record_slow_inspections(&inspections);
+                let dirty = inspections
+                    .iter()
+                    .filter(|inspection| inspection.dirty)
+                    .collect::<Vec<_>>();
                 if !dirty.is_empty() {
-                    let shown = dirty.iter().take(10).cloned().collect::<Vec<_>>();
+                    crate::metrics::record(
+                        "dirty",
+                        Value::Array(
+                            dirty
+                                .iter()
+                                .map(|inspection| {
+                                    json!({"project": inspection.path, "reasons": inspection.reasons})
+                                })
+                                .collect(),
+                        ),
+                    );
+                    let shown = dirty
+                        .iter()
+                        .take(10)
+                        .map(|inspection| {
+                            format!("{} ({})", inspection.path, inspection.reasons.join(", "))
+                        })
+                        .collect::<Vec<_>>();
                     let extra = dirty.len().saturating_sub(shown.len());
                     return Err(AppError::operational(
                         "E_DIRTY",
                         format!(
-                            "tree has dirty projects: {}{}",
+                            "tree has dirty projects: {}{}; inspect with `status`, or pass --force to discard",
                             shown.join(", "),
                             if extra > 0 {
                                 format!(" (+{extra} more)")
@@ -1885,8 +2196,15 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                                 String::new()
                             }
                         ),
-                    ));
+                    )
+                    .with_details(json!({"dirty_projects": dirty})));
                 }
+                clean_projects = Some(
+                    inspections
+                        .into_iter()
+                        .map(|inspection| inspection.path)
+                        .collect::<HashSet<_>>(),
+                );
             }
             if let Some(lock) = &meta.locked {
                 if args.force < 2 {
@@ -1899,13 +2217,36 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     ));
                 }
             }
+        }
+        let step = Instant::now();
+        release_overlays(&meta, args.force > 0)?;
+        crate::metrics::phase("unmount", crate::metrics::elapsed_ms(step));
+        if meta.state != "removing" {
             meta.state = "removing".into();
             write_meta(&meta)?;
         }
         let pool = ThreadPoolBuilder::new()
-            .num_threads(args.jobs.unwrap_or_else(default_jobs))
+            .num_threads(jobs)
             .build()
             .map_err(|error| AppError::io("create worker pool", error))?;
+        let step = Instant::now();
+        let returned = if args.no_pool {
+            Vec::new()
+        } else {
+            return_projects_to_pool(&meta, registry, clean_projects.as_ref(), quiet)
+        };
+        crate::metrics::phase("pool-return", crate::metrics::elapsed_ms(step));
+        crate::metrics::record("returned_to_pool", json!(returned.len()));
+        crate::metrics::record(
+            "projects",
+            json!(meta
+                .projects
+                .iter()
+                .filter(|project| project.state != "skipped")
+                .count()),
+        );
+        let step = Instant::now();
+        let locked = meta.locked.is_some();
         let mut projects = meta.projects.clone();
         projects.sort_by_key(|project| std::cmp::Reverse(project_depth(&project.path)));
         let mut start = 0;
@@ -1920,31 +2261,48 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 projects[start..end]
                     .par_iter()
                     .filter(|project| {
-                        project.mode == "worktree"
+                        project.mode == MODE_WORKTREE
                             && meta.root().join(&project.path).exists()
                             && !project.git_common_dir.is_empty()
                     })
                     .for_each(|project| {
-                        let _ = Command::new("git")
+                        let checkout = meta.root().join(&project.path);
+                        let _ = bridge::to_gitfile(&checkout.join(".git"));
+                        let mut command = Command::new("git");
+                        command
                             .arg(format!("--git-dir={}", project.git_common_dir))
-                            .args(["worktree", "remove", "--force"])
-                            .arg(meta.root().join(&project.path))
-                            .output();
+                            .args(["worktree", "remove", "--force"]);
+                        if locked {
+                            command.arg("--force");
+                        }
+                        let _ = command.arg(&checkout).output();
                     });
             });
             start = end;
         }
+        bridge::remove_manifests(&meta);
+        crate::metrics::phase("worktree-remove", crate::metrics::elapsed_ms(step));
+        let step = Instant::now();
         if meta.root().exists() {
             fs::remove_dir_all(meta.root()).map_err(|error| {
                 AppError::io(format!("remove tree {}", meta.root().display()), error)
             })?;
         }
-        let gitdirs = dedupe_paths(
+        crate::metrics::phase("delete", crate::metrics::elapsed_ms(step));
+        let step = Instant::now();
+        let mut gitdirs = dedupe_paths(
             meta.projects
                 .iter()
-                .filter(|project| project.mode == "worktree" && !project.git_common_dir.is_empty())
+                .filter(|project| project.has_worktree() && !project.git_common_dir.is_empty())
                 .map(|project| &project.git_common_dir),
         );
+        if let Some(git_dir) = meta
+            .repo_bridge
+            .as_ref()
+            .and_then(|bridge| bridge.manifests_git_dir.clone())
+        {
+            gitdirs.push(git_dir);
+        }
         pool.install(|| {
             gitdirs.par_iter().for_each(|gitdir| {
                 let _ = Command::new("git")
@@ -1953,50 +2311,111 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     .output();
             });
         });
+        crate::metrics::phase("prune", crate::metrics::elapsed_ms(step));
         let entry = meta.registry_entry();
         if entry.exists() {
             fs::remove_dir_all(&entry)
                 .map_err(|error| AppError::io(format!("remove {}", entry.display()), error))?;
         }
         if !quiet {
+            if !returned.is_empty() {
+                eprintln!("returned {} project(s) to the pool", returned.len());
+            }
             eprintln!("removed {} ({})", meta.name, meta.path);
         }
-        Ok(json!({"name": meta.name, "path": meta.path, "removed": true}))
+        Ok(json!({
+            "name": meta.name,
+            "path": meta.path,
+            "removed": true,
+            "returned_to_pool": returned,
+        }))
     })
 }
 
-fn dirty_projects(meta: &TreeMeta) -> AppResult<Vec<String>> {
-    let mut dirty = Vec::new();
+/// Records inspections slow enough to matter for `remove` and `status` latency.
+pub fn record_slow_inspections(inspections: &[crate::inspect::ProjectInspection]) {
+    let mut slow = inspections
+        .iter()
+        .filter(|inspection| inspection.ms >= 100)
+        .map(|inspection| json!({"project": inspection.path, "mode": inspection.mode, "ms": inspection.ms}))
+        .collect::<Vec<_>>();
+    slow.sort_by_key(|entry| std::cmp::Reverse(entry["ms"].as_u64().unwrap_or(0)));
+    slow.truncate(20);
+    crate::metrics::record("inspected", json!(inspections.len()));
+    crate::metrics::record("slow_inspections", Value::Array(slow));
+}
+
+/// Unmounts every overlay project. A busy mount fails unless `lazy`, which
+/// detaches it once the last user exits.
+fn release_overlays(meta: &TreeMeta, lazy: bool) -> AppResult<()> {
+    let entry = meta.registry_entry();
     for project in meta
         .projects
         .iter()
-        .filter(|project| project.mode == "worktree" && project.state == "done")
+        .filter(|project| project.mode == MODE_OVERLAY)
     {
-        let path = meta.root().join(&project.path);
-        if !path.exists() {
+        let checkout = meta.root().join(&project.path);
+        overlay::release(&checkout, &entry, &project.path, lazy).map_err(|reason| {
+            AppError::operational(
+                "E_OVERLAY_BUSY",
+                format!("{reason}; close programs using it or pass --force"),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn return_projects_to_pool(
+    meta: &TreeMeta,
+    registry: &Path,
+    clean: Option<&HashSet<String>>,
+    quiet: bool,
+) -> Vec<String> {
+    let root = meta.root();
+    let candidates = meta
+        .projects
+        .iter()
+        .filter(|project| {
+            project.mode == MODE_WORKTREE
+                && project.state == "done"
+                && meta.uses_pool(project)
+                && root.join(&project.path).join(".git").exists()
+                && !meta.projects.iter().any(|other| {
+                    other.path != project.path
+                        && Path::new(&other.path).starts_with(Path::new(&project.path))
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut returned = Vec::new();
+    for project in candidates {
+        let is_clean = match clean {
+            Some(clean) => clean.contains(&project.path),
+            None => !crate::inspect::inspect_project(&root, &meta.registry_entry(), project).dirty,
+        };
+        if !is_clean {
             continue;
         }
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&path)
-            .args(["status", "--porcelain", "--untracked-files=normal"])
-            .output()
-            .map_err(|error| AppError::io(format!("inspect {}", path.display()), error))?;
-        if !output.status.success() {
-            return Err(AppError::operational(
-                "E_IO",
-                format!(
-                    "git status failed for {}: {}",
-                    project.path,
-                    truncated_stderr(&output)
-                ),
-            ));
-        }
-        if !output.stdout.is_empty() {
-            dirty.push(project.path.clone());
+        let checkout = root.join(&project.path);
+        match pool::give_back(
+            registry,
+            &project.path,
+            &project.git_common_dir,
+            &checkout,
+            1,
+        ) {
+            Ok(true) => returned.push(project.path.clone()),
+            Ok(false) => {}
+            Err(reason) => {
+                if !quiet {
+                    eprintln!(
+                        "warning: could not return {} to the pool: {reason}",
+                        project.path
+                    );
+                }
+            }
         }
     }
-    Ok(dirty)
+    returned
 }
 
 pub fn lock(args: &LockArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
@@ -2043,7 +2462,7 @@ fn lock_existing_projects(meta: &TreeMeta, jobs: usize) -> AppResult<usize> {
     let warnings = pool.install(|| {
         meta.projects
             .par_iter()
-            .filter(|project| project.mode == "worktree" && root.join(&project.path).exists())
+            .filter(|project| project.has_worktree() && root.join(&project.path).exists())
             .filter(|project| {
                 Command::new("git")
                     .arg(format!("--git-dir={}", project.git_common_dir))
@@ -2080,7 +2499,7 @@ pub fn unlock(args: &UnlockArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
         let warnings = pool.install(|| {
             meta.projects
                 .par_iter()
-                .filter(|project| project.mode == "worktree" && project.state == "done")
+                .filter(|project| project.has_worktree() && project.state == "done")
                 .filter(|project| {
                     Command::new("git")
                         .arg(format!("--git-dir={}", project.git_common_dir))
@@ -2119,12 +2538,14 @@ pub fn move_tree(args: &MoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             to: new_path.to_string_lossy().into_owned(),
             at: now(),
         });
+        release_overlays(&meta, false)?;
         meta.state = "moving".into();
         write_meta(&meta)?;
         if let Err(error) = fs::rename(&old_path, &new_path) {
             meta.moving = None;
             meta.state = old_state;
             write_meta(&meta)?;
+            remount_overlays(&mut meta);
             if error.raw_os_error() == Some(18) {
                 return Err(AppError::operational(
                     "E_CROSS_DEVICE",
@@ -2139,7 +2560,10 @@ pub fn move_tree(args: &MoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
         maybe_crash_after_move();
         meta.path = new_path.to_string_lossy().into_owned();
         write_breadcrumb(&meta)?;
-        let warnings = repair_shared_links(&mut meta) + repair_git_links(&mut meta, default_jobs());
+        let warnings = remount_overlays(&mut meta)
+            + repair_shared_links(&mut meta)
+            + repair_git_links(&mut meta, default_jobs())
+            + usize::from(bridge::repair_manifests(&meta).is_err());
         meta.moving = None;
         meta.state = if old_state == "complete" && warnings == 0 && meta.is_complete() {
             "complete".into()
@@ -2164,6 +2588,47 @@ pub fn move_tree(args: &MoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
     })
 }
 
+/// Mounts overlay projects that are not mounted (after a reboot or move).
+fn remount_overlays(meta: &mut TreeMeta) -> usize {
+    let root = meta.root();
+    let source = meta.source();
+    let entry = meta.registry_entry();
+    let mut failures = 0;
+    for project in meta
+        .projects
+        .iter_mut()
+        .filter(|project| project.mode == MODE_OVERLAY && project.state != "skipped")
+    {
+        if !overlay_started(&entry, &project.path) {
+            continue;
+        }
+        let checkout = root.join(&project.path);
+        match overlay::remount(
+            &source.join(&project.path),
+            &checkout,
+            &entry,
+            &project.path,
+        ) {
+            Ok(()) => {
+                if project
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.starts_with("remount:"))
+                {
+                    project.state = "done".into();
+                    project.reason = None;
+                }
+            }
+            Err(reason) => {
+                failures += 1;
+                project.state = "failed".into();
+                project.reason = Some(format!("remount: {reason}"));
+            }
+        }
+    }
+    failures
+}
+
 fn maybe_crash_after_move() {
     #[cfg(feature = "test-hooks")]
     if std::env::var_os("GRW_TEST_CRASH_AFTER_MOVE").is_some() {
@@ -2181,33 +2646,44 @@ pub fn materialize(
     let client = discover_client(cwd, true)?;
     with_registry_lock(&client.root, LockMode::Exclusive, false, |registry| {
         let mut meta = select_tree(registry, &args.tree, cwd)?;
-        let mut requested = Vec::new();
-        let mut seen = HashSet::new();
-        for path in &args.projects {
-            if seen.insert(path.clone()) {
-                requested.push(path.clone());
+        let known = meta
+            .projects
+            .iter()
+            .filter(|project| project.state != "skipped")
+            .map(|project| project.path.clone())
+            .collect::<Vec<_>>();
+        let resolved = resolve_projects(&args.projects, &known, &[meta.root(), meta.source()], cwd)
+            .map_err(|unknown| {
+                AppError::operational(
+                    "E_UNKNOWN_PROJECT",
+                    format!(
+                        "not a project in tree {}: {}",
+                        meta.name,
+                        unknown.join(", ")
+                    ),
+                )
+            })?;
+        if !quiet {
+            for resolution in rewritten(&resolved) {
+                eprintln!(
+                    "resolved {} to project {}",
+                    resolution.input, resolution.project
+                );
             }
         }
         let mut indices = Vec::new();
-        for path in &requested {
-            let Some((index, project)) = meta
+        let mut already = Vec::new();
+        for resolution in &resolved {
+            let index = meta
                 .projects
                 .iter()
-                .enumerate()
-                .find(|(_, project)| project.path == *path)
-            else {
-                return Err(AppError::operational(
-                    "E_NOT_SHARED",
-                    format!("{path} is not a project in tree {}", meta.name),
-                ));
-            };
-            if project.mode != "symlink-shared" {
-                return Err(AppError::operational(
-                    "E_NOT_SHARED",
-                    format!("{path} has mode {}, not symlink-shared", project.mode),
-                ));
+                .position(|project| project.path == resolution.project)
+                .expect("resolved projects come from the tree");
+            if meta.projects[index].mode == MODE_WORKTREE {
+                already.push(resolution.project.clone());
+            } else {
+                indices.push(index);
             }
-            indices.push(index);
         }
 
         let entry = meta.registry_entry();
@@ -2215,34 +2691,62 @@ pub fn materialize(
         let destination = meta.root();
         let reflink_state = ReflinkState::default();
         let mut failures = 0usize;
+        let mut converted = Vec::new();
         for index in indices {
             let path = meta.projects[index].path.clone();
             let expected = source.join(&path);
             let target = destination.join(&path);
-            let started =
-                journal_has_project_status(&entry, "project-materialize", "started", &path)?;
-            let prepared = prepare_materialize(&entry, &path, &expected, &target, started);
-            let result = match prepared {
-                Ok(()) => {
-                    let mut project = meta.projects[index].clone();
-                    project.mode = "worktree".into();
-                    process_project(
-                        &project,
-                        &source,
-                        &destination,
-                        None,
-                        meta.no_reflink,
-                        &reflink_state,
-                    )
-                    .and_then(|outcome| {
-                        if meta.locked.is_some() {
-                            lock_materialized_project(&meta, &project)?;
-                        }
-                        Ok(outcome)
-                    })
+            let from_mode = meta.projects[index].mode.clone();
+            let started = Instant::now();
+            let result = if meta.projects[index].mode == MODE_OVERLAY {
+                append_journal(
+                    &entry,
+                    "project-materialize",
+                    "started",
+                    Some(&path),
+                    None,
+                    None,
+                )?;
+                overlay::materialize(&target, &entry, &path).map(|()| ProjectOutcome {
+                    mode: MODE_WORKTREE,
+                    strategy: Some("checkout"),
+                    note: None,
+                })
+            } else {
+                let started =
+                    journal_has_project_status(&entry, "project-materialize", "started", &path)?;
+                match prepare_materialize(&entry, &path, &expected, &target, started) {
+                    Ok(()) => {
+                        let mut project = meta.projects[index].clone();
+                        project.mode = MODE_WORKTREE.into();
+                        let context = PopulateContext {
+                            source_root: source.clone(),
+                            destination: destination.clone(),
+                            entry: entry.clone(),
+                            branch: None,
+                            no_reflink: meta.no_reflink,
+                            pool_registry: None,
+                        };
+                        process_project(&project, &context, &reflink_state).and_then(|outcome| {
+                            if meta.locked.is_some() {
+                                lock_materialized_project(&meta, &project)?;
+                            }
+                            Ok(outcome)
+                        })
+                    }
+                    Err(reason) => Err(reason),
                 }
-                Err(reason) => Err(reason),
             };
+            crate::metrics::push(
+                "projects",
+                json!({
+                    "path": path,
+                    "from": from_mode,
+                    "ms": crate::metrics::elapsed_ms(started),
+                    "ok": result.is_ok(),
+                    "reason": result.as_ref().err(),
+                }),
+            );
             match result {
                 Ok(outcome) => {
                     append_journal(
@@ -2253,13 +2757,14 @@ pub fn materialize(
                         None,
                         None,
                     )?;
-                    meta.projects[index].mode = "worktree".into();
+                    meta.projects[index].mode = MODE_WORKTREE.into();
                     meta.projects[index].strategy = outcome.strategy.map(str::to_owned);
                     meta.projects[index].state = "done".into();
                     meta.projects[index].reason = None;
                     if !meta.full_projects.contains(&path) {
                         meta.full_projects.push(path.clone());
                     }
+                    converted.push(path.clone());
                     if !quiet && verbose > 0 {
                         eprintln!(
                             "materialized {path} ({})",
@@ -2277,8 +2782,12 @@ pub fn materialize(
                         None,
                         Some(&reason),
                     )?;
-                    meta.projects[index].state = "failed".into();
-                    meta.projects[index].reason = Some(format!("materialize: {reason}"));
+                    let intact_overlay =
+                        meta.projects[index].mode == MODE_OVERLAY && overlay::is_mounted(&target);
+                    if !intact_overlay {
+                        meta.projects[index].state = "failed".into();
+                        meta.projects[index].reason = Some(format!("materialize: {reason}"));
+                    }
                     if !quiet {
                         eprintln!("warning: materialize {path} failed: {reason}");
                     }
@@ -2288,6 +2797,9 @@ pub fn materialize(
         }
 
         repair_directives(&mut meta, args.jobs.unwrap_or_else(default_jobs), quiet)?;
+        if !converted.is_empty() {
+            bridge::synthesize(&mut meta, quiet)?;
+        }
         meta.state = if meta.is_complete() {
             "complete".into()
         } else {
@@ -2296,9 +2808,14 @@ pub fn materialize(
         write_meta(&meta)?;
         if !quiet {
             eprintln!(
-                "materialized {} project(s) in {}{}",
-                requested.len().saturating_sub(failures),
+                "materialized {} project(s) in {}{}{}",
+                converted.len(),
                 meta.name,
+                if already.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} already materialized", already.len())
+                },
                 if failures > 0 {
                     format!(", {failures} failed")
                 } else {
@@ -2306,7 +2823,10 @@ pub fn materialize(
                 }
             );
         }
-        let result = serde_json::to_value(&meta).expect("tree metadata serializes");
+        let mut result = serde_json::to_value(&meta).expect("tree metadata serializes");
+        result["materialized"] = json!(converted);
+        result["already_materialized"] = json!(already);
+        result["resolved"] = json!(resolved);
         if failures > 0 {
             Err(AppError::partial(result))
         } else {
@@ -2408,10 +2928,16 @@ pub fn prune(args: &PruneArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     tree.projects
                         .iter()
                         .filter(|project| {
-                            project.mode == "worktree" && !project.git_common_dir.is_empty()
+                            project.has_worktree() && !project.git_common_dir.is_empty()
                         })
                         .map(|project| project.git_common_dir.clone()),
                 );
+                gitdirs.extend(
+                    tree.repo_bridge
+                        .as_ref()
+                        .and_then(|bridge| bridge.manifests_git_dir.clone()),
+                );
+                bridge::remove_manifests(&tree);
                 let entry = tree.registry_entry();
                 if entry.exists() {
                     fs::remove_dir_all(&entry).map_err(|error| {
@@ -2477,9 +3003,23 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 }
                 continue;
             }
+            let remount_failures = remount_overlays(meta);
+            crate::metrics::push(
+                "trees",
+                json!({"tree": meta.name, "remount_failures": remount_failures}),
+            );
+            if remount_failures > 0 && !quiet {
+                eprintln!("warning: {remount_failures} overlay project(s) could not be mounted");
+            }
             repair_shared_links(meta);
             repair_git_links(meta, jobs);
+            if let Err(reason) = bridge::repair_manifests(meta) {
+                if !quiet {
+                    eprintln!("warning: {reason}");
+                }
+            }
             repair_directives(meta, jobs, quiet)?;
+            bridge::synthesize(meta, quiet)?;
             meta.state = if meta.is_complete() {
                 "complete".into()
             } else {
@@ -2531,8 +3071,10 @@ fn recover_move(meta: &mut TreeMeta) -> AppResult<()> {
     if to.exists() {
         meta.path = to.to_string_lossy().into_owned();
         write_breadcrumb(meta)?;
+        remount_overlays(meta);
         repair_shared_links(meta);
         repair_git_links(meta, default_jobs());
+        let _ = bridge::repair_manifests(meta);
     }
     meta.moving = None;
     meta.state = if meta.is_complete() {
@@ -2554,19 +3096,23 @@ fn repair_git_links(meta: &mut TreeMeta, jobs: usize) -> usize {
             .par_iter()
             .enumerate()
             .filter(|(_, project)| {
-                project.mode == "worktree"
+                project.has_worktree()
                     && project.state != "skipped"
                     && root.join(&project.path).exists()
             })
             .map(|(index, project)| {
+                let checkout = root.join(&project.path);
+                let dot_git = checkout.join(".git");
+                let link = bridge::to_gitfile(&dot_git).ok().flatten();
                 let success = Command::new("git")
                     .arg(format!("--git-dir={}", project.git_common_dir))
                     .args(["worktree", "repair"])
-                    .arg(root.join(&project.path))
+                    .arg(&checkout)
                     .output()
                     .map(|output| output.status.success())
                     .unwrap_or(false);
-                (index, success)
+                let restored = bridge::restore_link(&dot_git, link).is_ok();
+                (index, success && restored)
             })
             .collect::<Vec<_>>()
     });
@@ -2708,6 +3254,9 @@ mod tests {
             clone_depth: None,
             strategy: None,
             est_bytes: None,
+            remote: None,
+            upstream: None,
+            populate_ms: None,
         }
     }
 
@@ -2749,6 +3298,52 @@ mod tests {
     }
 
     #[test]
+    fn heavy_projects_without_defaults_use_the_pool() {
+        let mut meta: TreeMeta = serde_json::from_value(json!({
+            "format_version": 3, "tool_version": "t", "name": "t", "path": "/t",
+            "source_root": "/s", "source_layout": "legacy", "created_at": "now",
+            "state": "complete", "branch": null, "submodules": false,
+            "locked": null, "moving": null, "projects": [], "copyfiles": [], "linkfiles": []
+        }))
+        .unwrap();
+        let mut heavy = project("heavy", "done");
+        heavy.est_bytes = Some(HEAVY_PROJECT_BYTES + 1);
+        let mut light = project("light", "done");
+        light.est_bytes = Some(HEAVY_PROJECT_BYTES);
+        let mut prebuilt = heavy.clone();
+        prebuilt.path = "prebuilt".into();
+        prebuilt.clone_depth = Some(1);
+        assert!(meta.uses_pool(&heavy));
+        assert!(!meta.uses_pool(&light));
+        assert!(!meta.uses_pool(&prebuilt));
+        meta.default_modes.insert("heavy".into(), "worktree".into());
+        meta.default_modes.insert("light".into(), "pool".into());
+        assert!(!meta.uses_pool(&heavy));
+        assert!(meta.uses_pool(&light));
+    }
+
+    #[test]
+    fn sync_detection_matches_repo_processes_only() {
+        for line in [
+            "repo sync -j8",
+            "/usr/bin/python3 /usr/bin/repo sync -c",
+            "python3 -E /home/u/src/.repo/repo/main.py --repo-dir=/home/u/src/.repo --wrapper-version=2.4 -- sync -j8",
+            "/opt/homebrew/bin/repo init -u url",
+        ] {
+            assert!(is_repo_sync_process(line), "{line}");
+        }
+        for line in [
+            "/bin/zsh -c cd /x && repo sync -l",
+            "vim notes about repo sync",
+            "python3 tool.py repo sync",
+            "/usr/bin/repo status",
+            "git log --grep=repo sync",
+        ] {
+            assert!(!is_repo_sync_process(line), "{line}");
+        }
+    }
+
+    #[test]
     fn parses_safe_pinned_tree_entries() {
         let entry =
             parse_pinned_tree_entry(b"100755 blob 0123456789abcdef\tpath with spaces").unwrap();
@@ -2787,14 +3382,17 @@ mod tests {
             created_at: "2026-07-23T18:04:05Z".into(),
             state: "complete".into(),
             branch: None,
+            branch_projects: None,
             submodules: false,
             full: false,
             full_projects: vec![],
             default_modes: std::collections::BTreeMap::new(),
             no_reflink: false,
+            no_overlay: false,
             heavy_jobs: 3,
             locked: None,
             moving: None,
+            repo_bridge: None,
             projects: vec![],
             copyfiles: vec![],
             linkfiles: vec![],

@@ -30,8 +30,104 @@ struct ProjectDeclaration {
     path: String,
     clone_depth: Option<u32>,
     malformed_clone_depth: bool,
+    remote: Option<String>,
+    upstream: Option<String>,
     copyfiles: Vec<DirectiveDeclaration>,
     linkfiles: Vec<DirectiveDeclaration>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ManifestDefaults {
+    remote: Option<String>,
+    revision: Option<String>,
+    dest_branch: Option<String>,
+    remote_revisions: HashMap<String, String>,
+}
+
+impl ManifestDefaults {
+    fn absorb(&mut self, node: roxmltree::Node<'_, '_>) {
+        match node.tag_name().name() {
+            "default" => {
+                if let Some(remote) = node.attribute("remote") {
+                    self.remote = Some(remote.to_string());
+                }
+                if let Some(revision) = node.attribute("revision") {
+                    self.revision = Some(revision.to_string());
+                }
+                if let Some(dest_branch) = node.attribute("dest-branch") {
+                    self.dest_branch = Some(dest_branch.to_string());
+                }
+            }
+            "remote" => {
+                if let (Some(name), Some(revision)) =
+                    (node.attribute("name"), node.attribute("revision"))
+                {
+                    self.remote_revisions
+                        .insert(name.to_string(), revision.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn remote_for(&self, node: roxmltree::Node<'_, '_>) -> Option<String> {
+        node.attribute("remote")
+            .map(str::to_owned)
+            .or_else(|| self.remote.clone())
+    }
+
+    /// The branch a new local branch should track, chosen like `repo start`
+    /// does for a pinned project: the project's dest-branch, its recorded
+    /// upstream, its symbolic revision, then manifest-wide defaults.
+    fn upstream_for(&self, node: roxmltree::Node<'_, '_>, remote: Option<&str>) -> Option<String> {
+        let symbolic = |value: Option<&str>| {
+            value
+                .filter(|value| !is_object_id(value))
+                .map(str::to_owned)
+        };
+        symbolic(node.attribute("dest-branch"))
+            .or_else(|| symbolic(node.attribute("upstream")))
+            .or_else(|| symbolic(node.attribute("revision")))
+            .or_else(|| symbolic(self.dest_branch.as_deref()))
+            .or_else(|| {
+                symbolic(
+                    remote
+                        .and_then(|remote| self.remote_revisions.get(remote))
+                        .map(String::as_str),
+                )
+            })
+            .or_else(|| symbolic(self.revision.as_deref()))
+            .map(|value| {
+                if value.starts_with("refs/") {
+                    value
+                } else {
+                    format!("refs/heads/{value}")
+                }
+            })
+    }
+}
+
+fn is_object_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn directive_children(
+    node: roxmltree::Node<'_, '_>,
+) -> (Vec<DirectiveDeclaration>, Vec<DirectiveDeclaration>) {
+    let mut copyfiles = Vec::new();
+    let mut linkfiles = Vec::new();
+    for child in node.children().filter(|child| child.is_element()) {
+        let directive = DirectiveDeclaration {
+            src: child.attribute("src").map(str::to_owned),
+            dest: child.attribute("dest").map(str::to_owned),
+        };
+        match child.tag_name().name() {
+            "copyfile" => copyfiles.push(directive),
+            "linkfile" => linkfiles.push(directive),
+            _ => {}
+        }
+    }
+    (copyfiles, linkfiles)
 }
 
 pub fn parse_snapshot(
@@ -54,6 +150,14 @@ pub fn parse_snapshot(
     let mut copyfiles = Vec::new();
     let mut linkfiles = Vec::new();
     let mut malformed_clone_depth = Vec::new();
+    let mut defaults = ManifestDefaults::default();
+    for node in document
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+    {
+        defaults.absorb(node);
+    }
 
     for node in document
         .descendants()
@@ -74,6 +178,8 @@ pub fn parse_snapshot(
         if malformed {
             malformed_clone_depth.push(path.to_string());
         }
+        let remote = defaults.remote_for(node);
+        let upstream = defaults.upstream_for(node, remote.as_deref());
         let mut project = ProjectMeta {
             path: path.to_string(),
             name: name.to_string(),
@@ -85,6 +191,9 @@ pub fn parse_snapshot(
             clone_depth,
             strategy: None,
             est_bytes: None,
+            remote,
+            upstream,
+            populate_ms: None,
         };
         let path_safe = path_is_safe_relative(Path::new(path));
         if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -124,6 +233,41 @@ pub fn parse_snapshot(
         projects.push(project);
     }
 
+    for node in document
+        .root_element()
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "extend-project")
+    {
+        let Some(name) = node.attribute("name") else {
+            continue;
+        };
+        let only_path = node.attribute("path");
+        let (extra_copies, extra_links) = directive_children(node);
+        for project in projects.iter_mut().filter(|project| {
+            project.name == name && only_path.map_or(true, |path| project.path == path)
+        }) {
+            if let Some(upstream) = node
+                .attribute("dest-branch")
+                .or_else(|| node.attribute("upstream"))
+                .filter(|value| !is_object_id(value))
+            {
+                project.upstream = Some(if upstream.starts_with("refs/") {
+                    upstream.to_string()
+                } else {
+                    format!("refs/heads/{upstream}")
+                });
+            }
+            if let Some(remote) = node.attribute("remote") {
+                project.remote = Some(remote.to_string());
+            }
+            if project.state != "pending" {
+                continue;
+            }
+            append_declared_directives(&mut copyfiles, &project.path, &extra_copies);
+            append_declared_directives(&mut linkfiles, &project.path, &extra_links);
+        }
+    }
+
     let mut supplemented_checkouts = project_list
         .difference(&in_snapshot)
         .cloned()
@@ -152,6 +296,9 @@ pub fn parse_snapshot(
                 clone_depth,
                 strategy: None,
                 est_bytes: None,
+                remote: declaration.and_then(|declaration| declaration.remote.clone()),
+                upstream: declaration.and_then(|declaration| declaration.upstream.clone()),
+                populate_ms: None,
             });
             if path_safe {
                 let Some(declaration) = declaration else {
@@ -238,15 +385,23 @@ fn load_active_manifest_declarations(
     let manifests_root = repo_dir.join("manifests");
     let mut declarations = HashMap::new();
     let mut visited = HashSet::new();
+    let mut defaults = ManifestDefaults::default();
     let manifest = repo_dir.join("manifest.xml");
     let default_manifest = manifests_root.join("default.xml");
     if manifest.exists() {
-        parse_manifest_source(&manifest, &manifests_root, &mut declarations, &mut visited)?;
+        parse_manifest_source(
+            &manifest,
+            &manifests_root,
+            &mut declarations,
+            &mut defaults,
+            &mut visited,
+        )?;
     } else if default_manifest.exists() {
         parse_manifest_source(
             &default_manifest,
             &manifests_root,
             &mut declarations,
+            &mut defaults,
             &mut visited,
         )?;
     }
@@ -272,6 +427,7 @@ fn load_active_manifest_declarations(
             &local_manifest,
             &manifests_root,
             &mut declarations,
+            &mut defaults,
             &mut visited,
         )?;
     }
@@ -282,6 +438,7 @@ fn parse_manifest_source(
     path: &Path,
     manifests_root: &Path,
     declarations: &mut HashMap<String, ProjectDeclaration>,
+    defaults: &mut ManifestDefaults,
     visited: &mut HashSet<PathBuf>,
 ) -> AppResult<()> {
     let canonical = fs::canonicalize(path).unwrap_or_else(|_| normalize(path));
@@ -322,8 +479,9 @@ fn parse_manifest_source(
                 } else {
                     manifests_root.join(relative)
                 };
-                parse_manifest_source(&include, manifests_root, declarations, visited)?;
+                parse_manifest_source(&include, manifests_root, declarations, defaults, visited)?;
             }
+            "default" | "remote" => defaults.absorb(node),
             "project" => {
                 let name = node.attribute("name").ok_or_else(|| {
                     AppError::operational(
@@ -332,26 +490,49 @@ fn parse_manifest_source(
                     )
                 })?;
                 let path = node.attribute("path").unwrap_or(name);
-                let mut declaration = ProjectDeclaration {
+                let (copyfiles, linkfiles) = directive_children(node);
+                let remote = defaults.remote_for(node);
+                let upstream = defaults.upstream_for(node, remote.as_deref());
+                let declaration = ProjectDeclaration {
                     name: name.to_string(),
                     path: path.to_string(),
                     clone_depth: parse_clone_depth(node.attribute("clone-depth")).0,
                     malformed_clone_depth: parse_clone_depth(node.attribute("clone-depth")).1,
-                    copyfiles: Vec::new(),
-                    linkfiles: Vec::new(),
+                    remote,
+                    upstream,
+                    copyfiles,
+                    linkfiles,
                 };
-                for child in node.children().filter(|child| child.is_element()) {
-                    let directive = DirectiveDeclaration {
-                        src: child.attribute("src").map(str::to_owned),
-                        dest: child.attribute("dest").map(str::to_owned),
-                    };
-                    match child.tag_name().name() {
-                        "copyfile" => declaration.copyfiles.push(directive),
-                        "linkfile" => declaration.linkfiles.push(directive),
-                        _ => {}
-                    }
-                }
                 declarations.insert(declaration.path.clone(), declaration);
+            }
+            "extend-project" => {
+                let Some(name) = node.attribute("name") else {
+                    continue;
+                };
+                let only_path = node.attribute("path");
+                let (copyfiles, linkfiles) = directive_children(node);
+                let matching = declarations
+                    .iter()
+                    .filter(|(path, declaration)| {
+                        declaration.name == name
+                            && only_path.map_or(true, |only| only == path.as_str())
+                    })
+                    .map(|(path, _)| path.clone())
+                    .collect::<Vec<_>>();
+                for path in matching {
+                    let Some(mut declaration) = declarations.remove(&path) else {
+                        continue;
+                    };
+                    declaration.copyfiles.extend(copyfiles.iter().cloned());
+                    declaration.linkfiles.extend(linkfiles.iter().cloned());
+                    if let Some(remote) = node.attribute("remote") {
+                        declaration.remote = Some(remote.to_string());
+                    }
+                    if let Some(dest_path) = node.attribute("dest-path") {
+                        declaration.path = dest_path.to_string();
+                    }
+                    declarations.insert(declaration.path.clone(), declaration);
+                }
             }
             "remove-project" => {
                 let path = node.attribute("path");
@@ -403,6 +584,14 @@ fn augment_snapshot(xml: &str, parsed: &ParsedManifest) -> AppResult<String> {
         if let Some(clone_depth) = project.clone_depth {
             additions.push_str("\" clone-depth=\"");
             additions.push_str(&clone_depth.to_string());
+        }
+        if let Some(remote) = &project.remote {
+            additions.push_str("\" remote=\"");
+            additions.push_str(&escape_xml(remote));
+        }
+        if let Some(upstream) = &project.upstream {
+            additions.push_str("\" upstream=\"");
+            additions.push_str(&escape_xml(upstream));
         }
         if copyfiles.is_empty() && linkfiles.is_empty() {
             additions.push_str("\" />");
@@ -665,6 +854,71 @@ mod tests {
         assert_eq!(parsed.projects.len(), 1);
         assert_eq!(parsed.copyfiles[0].dest, "y");
         assert_eq!(parsed.linkfiles[0].dest, "l");
+    }
+
+    #[test]
+    fn records_remote_and_tracking_upstream_like_repo_start() {
+        let temp = tempfile::tempdir().unwrap();
+        for path in ["a", "b", "c"] {
+            fs::create_dir_all(temp.path().join(format!(".repo/projects/{path}.git"))).unwrap();
+        }
+        let xml = format!(
+            r#"<manifest><remote name="goog" fetch=".."/><remote name="aosp" fetch=".." revision="aosp-main"/><default remote="goog" revision="studio-main"/>
+<project name="a" revision="{sha}" upstream="studio-main"/>
+<project name="b" revision="{sha}" remote="aosp" dest-branch="refs/heads/release"/>
+<project name="c" revision="{sha}" remote="aosp"/></manifest>"#,
+            sha = sha()
+        );
+        let parsed = parse_snapshot(&xml, temp.path(), "a\nb\nc\n", 2).unwrap();
+        let by_path = |path: &str| {
+            parsed
+                .projects
+                .iter()
+                .find(|p| p.path == path)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(by_path("a").remote.as_deref(), Some("goog"));
+        assert_eq!(
+            by_path("a").upstream.as_deref(),
+            Some("refs/heads/studio-main")
+        );
+        assert_eq!(by_path("b").remote.as_deref(), Some("aosp"));
+        assert_eq!(by_path("b").upstream.as_deref(), Some("refs/heads/release"));
+        assert_eq!(
+            by_path("c").upstream.as_deref(),
+            Some("refs/heads/aosp-main")
+        );
+    }
+
+    #[test]
+    fn extend_project_directives_attach_to_the_base_project() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".repo/projects/a.git")).unwrap();
+        let xml = format!(
+            r#"<manifest><project name="p" path="a" revision="{}"/><extend-project name="p"><linkfile src="x" dest="X"/><copyfile src="y" dest="Y"/></extend-project></manifest>"#,
+            sha()
+        );
+        let parsed = parse_snapshot(&xml, temp.path(), "a\n", 2).unwrap();
+        assert_eq!(parsed.linkfiles[0].project, "a");
+        assert_eq!(parsed.linkfiles[0].dest, "X");
+        assert_eq!(parsed.copyfiles[0].dest, "Y");
+    }
+
+    #[test]
+    fn supplemented_declarations_honor_extend_project() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".repo/manifests")).unwrap();
+        fs::write(
+            temp.path().join(".repo/manifest.xml"),
+            r#"<manifest><default remote="r" revision="main"/><project name="tools/p" path="p"/><extend-project name="tools/p"><linkfile src="a" dest="b"/></extend-project></manifest>"#,
+        )
+        .unwrap();
+        let declarations = load_active_manifest_declarations(temp.path()).unwrap();
+        let declaration = &declarations["p"];
+        assert_eq!(declaration.linkfiles.len(), 1);
+        assert_eq!(declaration.remote.as_deref(), Some("r"));
+        assert_eq!(declaration.upstream.as_deref(), Some("refs/heads/main"));
     }
 
     #[test]

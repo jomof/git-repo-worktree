@@ -1,6 +1,8 @@
 # git-repo-worktree — Fast default `add` (Spec Addendum)
 
-**Status:** Normative addendum to `spec.md` v1.0-draft.
+**Status:** Normative addendum to `spec.md` v1.0-draft. `spec-v2.md` adds the
+`pool` and `overlay` defaults and project path resolution, raises the format
+version to 3, and makes `materialize` idempotent for worktree projects.
 
 This addendum makes the common `add` path fast on clients dominated by large,
 fixed-depth prebuilts. A project explicitly carrying a positive

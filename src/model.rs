@@ -3,7 +3,15 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
+
+pub const MODE_WORKTREE: &str = "worktree";
+pub const MODE_SHARED: &str = "symlink-shared";
+pub const MODE_OVERLAY: &str = "overlay";
+
+/// Projects tracking more than this many bytes are "heavy": throttled during
+/// population and pooled by default.
+pub const HEAVY_PROJECT_BYTES: u64 = 500 * 1024 * 1024;
 
 pub fn default_heavy_jobs() -> usize {
     3
@@ -42,6 +50,33 @@ pub struct ProjectMeta {
     pub strategy: Option<String>,
     #[serde(default)]
     pub est_bytes: Option<u64>,
+    #[serde(default)]
+    pub remote: Option<String>,
+    #[serde(default)]
+    pub upstream: Option<String>,
+    /// Wall-clock milliseconds the last successful population took.
+    #[serde(default)]
+    pub populate_ms: Option<u64>,
+}
+
+impl ProjectMeta {
+    /// Whether the tree owns an isolated Git worktree registration for this project.
+    pub fn has_worktree(&self) -> bool {
+        self.mode == MODE_WORKTREE || self.mode == MODE_OVERLAY
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BridgeMeta {
+    /// Common Git directory of the source manifest repository when the tree has
+    /// its own linked manifest checkout.
+    pub manifests_git_dir: Option<String>,
+    /// Branch the tree's manifest checkout is on; repo derives the manifest
+    /// revision from its tracking configuration.
+    #[serde(default)]
+    pub manifests_branch: Option<String>,
+    pub state: String,
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,6 +99,10 @@ pub struct TreeMeta {
     pub created_at: String,
     pub state: String,
     pub branch: Option<String>,
+    /// Projects that receive `branch`; `None` with a branch means every project
+    /// (trees created before branch scoping).
+    #[serde(default)]
+    pub branch_projects: Option<Vec<String>>,
     pub submodules: bool,
     #[serde(default)]
     pub full: bool,
@@ -73,10 +112,15 @@ pub struct TreeMeta {
     pub default_modes: BTreeMap<String, String>,
     #[serde(default)]
     pub no_reflink: bool,
+    #[serde(default)]
+    pub no_overlay: bool,
     #[serde(default = "default_heavy_jobs")]
     pub heavy_jobs: usize,
     pub locked: Option<LockMeta>,
     pub moving: Option<MovingMeta>,
+    /// Present when the tree carries a synthesized `.repo` bridge.
+    #[serde(default)]
+    pub repo_bridge: Option<BridgeMeta>,
     pub projects: Vec<ProjectMeta>,
     pub copyfiles: Vec<DirectiveMeta>,
     pub linkfiles: Vec<DirectiveMeta>,
@@ -115,8 +159,32 @@ impl TreeMeta {
     pub fn shared_count(&self) -> usize {
         self.projects
             .iter()
-            .filter(|project| project.mode == "symlink-shared")
+            .filter(|project| project.mode == MODE_SHARED)
             .count()
+    }
+
+    /// Whether a project uses the spare-worktree pool: an explicit `pool`
+    /// default, or, with no default, a heavy project without `clone-depth`.
+    pub fn uses_pool(&self, project: &ProjectMeta) -> bool {
+        match self.default_modes.get(&project.path).map(String::as_str) {
+            Some("pool") => true,
+            Some(_) => false,
+            None => {
+                project.clone_depth.is_none()
+                    && project.est_bytes.unwrap_or(0) > HEAVY_PROJECT_BYTES
+            }
+        }
+    }
+
+    pub fn branch_for(&self, project: &str) -> Option<&str> {
+        let branch = self.branch.as_deref()?;
+        match &self.branch_projects {
+            None => Some(branch),
+            Some(projects) => projects
+                .iter()
+                .any(|path| path == project)
+                .then_some(branch),
+        }
     }
 
     pub fn done_count(&self) -> usize {
@@ -139,6 +207,9 @@ impl TreeMeta {
                 .iter()
                 .chain(self.linkfiles.iter())
                 .all(|d| d.state == "done")
+            && self.repo_bridge.as_ref().map_or(true, |bridge| {
+                bridge.state == "done" || bridge.state == "unsupported"
+            })
     }
 
     pub fn contains_project_dir(&self, root: &Path) -> bool {

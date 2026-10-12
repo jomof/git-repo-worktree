@@ -97,6 +97,7 @@ fn command(fixture: &Fixture) -> Command {
     command
         .env("PATH", &fixture.path_env)
         .env("GRW_TEST_SNAPSHOT", &fixture.snapshot)
+        .env("GIT_REPO_WORKTREE_NO_OVERLAY", "1")
         .env("HOME", fixture.temp.path())
         .arg("-C")
         .arg(&fixture.client);
@@ -157,6 +158,7 @@ fn happy_path_list_move_lock_unlock_and_remove() {
         added["result"]["projects"][0]["strategy"].as_str(),
         Some("reflink" | "checkout")
     ));
+    assert!(added["result"]["projects"][0]["populate_ms"].is_u64());
     assert_eq!(
         fs::read_to_string(fixture.destination.join("copied.txt")).unwrap(),
         "snapshot\n"
@@ -223,7 +225,14 @@ fn branch_collision_is_resumable_without_repinning() {
     git(&fixture.client.join("p"), &["branch", "topic/test"]);
     let partial = output_json(
         command(&fixture)
-            .args(["add", "-b", "topic/test", "--name", "branch-tree"])
+            .args([
+                "add",
+                "-b",
+                "topic/test",
+                "--all-projects",
+                "--name",
+                "branch-tree",
+            ])
             .arg(&fixture.destination)
             .arg("--json")
             .assert()
@@ -366,7 +375,7 @@ fn newer_registry_format_is_rejected() {
         .success();
     let path = fixture.client.join(".repo/repo-worktrees/tree/meta.json");
     let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    value["format_version"] = Value::from(3);
+    value["format_version"] = Value::from(4);
     fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
     let output = output_json(command(&fixture).args(["list", "--json"]).assert().code(1));
     assert_eq!(output["error"]["code"], "E_FORMAT_TOO_NEW");
@@ -666,7 +675,7 @@ fn full_controls_and_client_wide_guardrail_materialize_instead() {
                 add.args(["--full-project", "p"]);
             }
             "branch" => {
-                add.args(["-b", "topic/share-test"]);
+                add.args(["-b", "topic/share-test", "-p", "p"]);
             }
             "all-fixed-depth" => {}
             _ => unreachable!(),
@@ -730,13 +739,24 @@ fn materialize_converts_shared_project_and_preserves_tree_lock() {
     );
     assert!(worktrees.contains(&fixture.destination.join("p").display().to_string()));
     assert!(worktrees.contains("locked"));
-    let not_shared = output_json(
+    let again = output_json(
         command(&fixture)
-            .args(["materialize", "tree", "q", "--json"])
+            .args(["materialize", "tree", "q", "p/sub/dir", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        again["result"]["already_materialized"],
+        serde_json::json!(["q", "p"])
+    );
+    assert_eq!(again["result"]["materialized"], serde_json::json!([]));
+    let unknown = output_json(
+        command(&fixture)
+            .args(["materialize", "tree", "nope", "--json"])
             .assert()
             .code(1),
     );
-    assert_eq!(not_shared["error"]["code"], "E_NOT_SHARED");
+    assert_eq!(unknown["error"]["code"], "E_UNKNOWN_PROJECT");
 
     fs::write(fixture.destination.join("p/tree-only.txt"), "isolated\n").unwrap();
     assert!(!fixture.client.join("p/tree-only.txt").exists());
@@ -1285,4 +1305,718 @@ fn projects_missing_from_repo_snapshot_are_pinned_from_disk_with_directives() {
         .find(|project| project["path"] == "prebuilts/ndk")
         .unwrap();
     assert_eq!(resumed_supplemental["sha"], supplemental_sha);
+}
+
+fn two_project_snapshot(fixture: &Fixture) {
+    let p_sha = git(&fixture.client.join("p"), &["rev-parse", "HEAD"]);
+    let q_sha = init_project(&fixture.client, "q", &[("q.txt", "ordinary\n")]);
+    fs::write(fixture.client.join(".repo/project.list"), "p\nq\n").unwrap();
+    fs::write(
+        &fixture.snapshot,
+        format!(
+            r#"<manifest><remote name="origin" fetch="."/><default remote="origin" revision="main"/><project name="platform/p" path="p" revision="{p_sha}" upstream="release"/><project name="platform/q" path="q" revision="{q_sha}"/></manifest>"#
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn remove_reports_structured_dirty_details_including_stranded_commits() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let project = fixture.destination.join("p");
+    fs::write(project.join("source.txt"), "edited\n").unwrap();
+    git(&project, &["commit", "-qam", "detached work"]);
+    fs::write(project.join("scratch.txt"), "untracked\n").unwrap();
+
+    let status = output_json(
+        command(&fixture)
+            .args(["status", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(status["result"]["dirty"], true);
+    let inspected = &status["result"]["projects"][0];
+    assert_eq!(inspected["unbranched_commits"], 1);
+    assert_eq!(inspected["untracked"], 1);
+    assert_eq!(inspected["branch"], Value::Null);
+
+    let refused = output_json(
+        command(&fixture)
+            .args(["remove", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .code(1),
+    );
+    assert_eq!(refused["error"]["code"], "E_DIRTY");
+    let dirty = &refused["error"]["details"]["dirty_projects"][0];
+    assert_eq!(dirty["path"], "p");
+    assert_eq!(
+        dirty["reasons"],
+        serde_json::json!(["untracked", "unbranched-commits"])
+    );
+    assert!(refused["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("unbranched-commits"));
+
+    fs::remove_file(project.join("scratch.txt")).unwrap();
+    git(&project, &["branch", "keep"]);
+    command(&fixture)
+        .arg("remove")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    assert_eq!(
+        git(
+            &fixture.client.join("p"),
+            &["log", "-1", "--format=%s", "keep"]
+        ),
+        "detached work"
+    );
+}
+
+#[test]
+fn branch_scope_creates_tracking_branches_only_in_named_projects() {
+    let fixture = fixture();
+    two_project_snapshot(&fixture);
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "-b", "topic", "-p", "p/some/subdir", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success()
+            .stderr(predicates::str::contains(
+                "resolved --project p/some/subdir to project p",
+            )),
+    );
+    assert_eq!(added["result"]["branch_projects"], serde_json::json!(["p"]));
+    let p = fixture.destination.join("p");
+    let q = fixture.destination.join("q");
+    assert_eq!(git(&p, &["rev-parse", "--abbrev-ref", "HEAD"]), "topic");
+    assert_eq!(git(&p, &["config", "branch.topic.remote"]), "origin");
+    assert_eq!(
+        git(&p, &["config", "branch.topic.merge"]),
+        "refs/heads/release"
+    );
+    assert_eq!(git(&q, &["rev-parse", "--abbrev-ref", "HEAD"]), "HEAD");
+    assert_eq!(
+        git(&fixture.client.join("q"), &["branch", "--list", "topic"]),
+        ""
+    );
+
+    let listed = output_json(
+        command(&fixture)
+            .args(["list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        listed["result"]["trees"][0]["checked_out_branches"],
+        serde_json::json!([{"project": "p", "branch": "topic"}])
+    );
+
+    let blocked = StdCommand::new("git")
+        .current_dir(fixture.client.join("p"))
+        .args(["checkout", "topic"])
+        .output()
+        .unwrap();
+    assert!(!blocked.status.success());
+    let dry = output_json(
+        command(&fixture)
+            .args(["detach", "--branch", "topic", "--dry-run", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(dry["result"]["detached"][0]["location"], "tree");
+    assert_eq!(git(&p, &["rev-parse", "--abbrev-ref", "HEAD"]), "topic");
+    let detached = output_json(
+        command(&fixture)
+            .args(["detach", "--branch", "topic", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(detached["result"]["detached"][0]["project"], "p");
+    assert_eq!(git(&p, &["rev-parse", "--abbrev-ref", "HEAD"]), "HEAD");
+    git(&fixture.client.join("p"), &["checkout", "-q", "topic"]);
+    let from_source = output_json(
+        command(&fixture)
+            .args(["detach", "--source", "-p", "p", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(from_source["result"]["detached"][0]["location"], "source");
+    command(&fixture)
+        .args(["remove", "tree"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn branch_without_scope_is_a_usage_error() {
+    let fixture = fixture();
+    let refused = output_json(
+        command(&fixture)
+            .args(["add", "-b", "topic", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .code(2),
+    );
+    assert_eq!(refused["error"]["code"], "E_BRANCH_NEEDS_PROJECT_SCOPE");
+    assert!(!fixture.destination.exists());
+}
+
+#[test]
+fn subpaths_resolve_to_their_project_for_full_project_and_defaults() {
+    let fixture = fixture();
+    enable_clone_depth_sharing(&fixture, false);
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--full-project", "p/deep/file.txt", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    assert_eq!(added["result"]["full_projects"], serde_json::json!(["p"]));
+    let unknown = output_json(
+        command(&fixture)
+            .args(["add", "--full-project", "nope", "--json"])
+            .arg(fixture.temp.path().join("other"))
+            .assert()
+            .code(2),
+    );
+    assert_eq!(unknown["error"]["code"], "E_UNKNOWN_PROJECT");
+    let defaults = output_json(
+        command(&fixture)
+            .args(["defaults", "worktree", "p/deep/file.txt", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        defaults["result"]["projects"],
+        serde_json::json!({"p": "worktree"})
+    );
+    command(&fixture)
+        .args(["remove", "tree"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn pool_projects_reuse_spares_and_clean_projects_return_on_remove() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    let first = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    assert_ne!(first["result"]["projects"][0]["strategy"], "pool");
+    fs::write(fixture.client.join("p/.git/info/exclude"), "build-out/\n").unwrap();
+    fs::create_dir(fixture.destination.join("p/build-out")).unwrap();
+    fs::write(fixture.destination.join("p/build-out/artifact"), "stale\n").unwrap();
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        removed["result"]["returned_to_pool"],
+        serde_json::json!(["p"])
+    );
+    let spares = output_json(
+        command(&fixture)
+            .args(["pool", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(spares["result"]["spares"].as_array().unwrap().len(), 1);
+
+    let second_path = fixture.temp.path().join("second");
+    let second = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&second_path)
+            .assert()
+            .success(),
+    );
+    assert_eq!(second["result"]["projects"][0]["strategy"], "pool");
+    let p = second_path.join("p");
+    assert_eq!(git(&p, &["status", "--porcelain"]), "");
+    assert!(!p.join("build-out").exists());
+    assert_eq!(
+        git(&p, &["rev-parse", "HEAD"]),
+        second["result"]["projects"][0]["sha"].as_str().unwrap()
+    );
+    let worktrees = git(
+        &fixture.client.join("p"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert!(worktrees.contains(p.to_str().unwrap()), "{worktrees}");
+    let spares = output_json(
+        command(&fixture)
+            .args(["pool", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(spares["result"]["spares"].as_array().unwrap().is_empty());
+
+    fs::write(p.join("dirty.txt"), "keep me\n").unwrap();
+    command(&fixture)
+        .args(["remove", "--force", "--no-pool", "second"])
+        .assert()
+        .success();
+    let spares = output_json(
+        command(&fixture)
+            .args(["pool", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(spares["result"]["spares"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn pool_fill_creates_spares_and_clear_removes_their_registrations() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    let filled = output_json(
+        command(&fixture)
+            .args(["pool", "fill", "--count", "2", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(filled["result"]["filled"].as_array().unwrap().len(), 2);
+    let worktrees = git(
+        &fixture.client.join("p"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert_eq!(worktrees.matches(".pool").count(), 2, "{worktrees}");
+    command(&fixture).args(["pool", "clear"]).assert().success();
+    let worktrees = git(
+        &fixture.client.join("p"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert!(!worktrees.contains(".pool"), "{worktrees}");
+}
+
+#[test]
+fn tree_names_reserved_for_the_registry_are_rejected() {
+    let fixture = fixture();
+    let refused = output_json(
+        command(&fixture)
+            .args(["add", "--name", ".pool", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .code(1),
+    );
+    assert_eq!(refused["error"]["code"], "E_BAD_NAME");
+}
+
+#[cfg(target_os = "linux")]
+mod overlay_mode {
+    use super::*;
+
+    fn overlay_usable() -> bool {
+        let usable = ["fuse-overlayfs", "fusermount3"].iter().all(|program| {
+            StdCommand::new("sh")
+                .args(["-c", &format!("command -v {program}")])
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        }) && Path::new("/dev/fuse").exists();
+        if !usable {
+            assert!(
+                std::env::var_os("GRW_TEST_REQUIRE_OVERLAY").is_none(),
+                "GRW_TEST_REQUIRE_OVERLAY is set but fuse-overlayfs is unusable"
+            );
+            eprintln!("skipping: fuse-overlayfs is not usable here");
+        }
+        usable
+    }
+
+    fn mounted(path: &Path) -> bool {
+        fs::read_to_string("/proc/self/mountinfo")
+            .unwrap()
+            .lines()
+            .any(|line| line.split(' ').nth(4) == Some(path.to_str().unwrap()))
+    }
+
+    fn overlay_fixture() -> Fixture {
+        let fixture = fixture();
+        two_project_snapshot(&fixture);
+        command(&fixture)
+            .args(["defaults", "overlay", "p"])
+            .assert()
+            .success();
+        fixture
+    }
+
+    fn command(fixture: &Fixture) -> Command {
+        let mut command = super::command(fixture);
+        command.env_remove("GIT_REPO_WORKTREE_NO_OVERLAY");
+        command
+    }
+
+    #[test]
+    fn fixed_depth_projects_become_overlays_by_default() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = fixture();
+        enable_clone_depth_sharing(&fixture, false);
+        let added = output_json(
+            command(&fixture)
+                .args(["add", "--json"])
+                .arg(&fixture.destination)
+                .assert()
+                .success(),
+        );
+        let mode = |path: &str| {
+            added["result"]["projects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|project| project["path"] == path)
+                .unwrap()["mode"]
+                .clone()
+        };
+        assert_eq!(mode("p"), "overlay");
+        assert_eq!(mode("q"), "worktree");
+        assert!(mounted(&fixture.destination.join("p")));
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+
+        let opted_out = output_json(
+            command(&fixture)
+                .args(["add", "--no-overlay", "--json"])
+                .arg(&fixture.destination)
+                .assert()
+                .success(),
+        );
+        assert_eq!(opted_out["result"]["no_overlay"], true);
+        assert_eq!(opted_out["result"]["projects"][0]["mode"], "symlink-shared");
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn overlay_projects_are_isolated_copy_on_write_worktrees() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        let added = output_json(
+            command(&fixture)
+                .args(["add", "--json"])
+                .arg(&fixture.destination)
+                .assert()
+                .success(),
+        );
+        let project = &added["result"]["projects"][0];
+        assert_eq!(project["path"], "p");
+        assert_eq!(project["mode"], "overlay");
+        let p = fixture.destination.join("p");
+        assert!(mounted(&p));
+        assert_eq!(
+            fs::canonicalize(p.join("source.txt")).unwrap(),
+            p.join("source.txt")
+        );
+        assert_eq!(git(&p, &["status", "--porcelain"]), "");
+        let worktrees = git(
+            &fixture.client.join("p"),
+            &["worktree", "list", "--porcelain"],
+        );
+        assert!(worktrees.contains(p.to_str().unwrap()), "{worktrees}");
+
+        fs::write(p.join("source.txt"), "tree edit\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(fixture.client.join("p/source.txt")).unwrap(),
+            "snapshot\n"
+        );
+        let status = output_json(
+            command(&fixture)
+                .args(["status", "tree", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(status["result"]["projects"][0]["modified"], 1);
+        assert_eq!(status["result"]["projects"][0]["mounted"], true);
+        command(&fixture).arg("remove").arg("tree").assert().code(1);
+
+        let source = fixture.client.join("p");
+        let source_head = git(&source, &["rev-parse", "HEAD"]);
+        git(&p, &["switch", "-q", "-c", "overlay-topic"]);
+        git(&p, &["commit", "-qam", "overlay commit"]);
+        assert_eq!(git(&source, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+        assert_eq!(git(&source, &["rev-parse", "HEAD"]), source_head);
+        assert_eq!(git(&source, &["status", "--porcelain"]), "");
+        let clean = output_json(
+            command(&fixture)
+                .args(["status", "tree", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(clean["result"]["dirty"], false);
+
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+        assert!(!mounted(&p));
+        assert!(!fixture.destination.exists());
+        let worktrees = git(
+            &fixture.client.join("p"),
+            &["worktree", "list", "--porcelain"],
+        );
+        assert!(!worktrees.contains(p.to_str().unwrap()), "{worktrees}");
+        assert_eq!(
+            git(
+                &fixture.client.join("p"),
+                &["log", "-1", "--format=%s", "overlay-topic"]
+            ),
+            "overlay commit"
+        );
+    }
+
+    #[test]
+    fn untouched_overlays_are_clean_and_repair_remounts_them() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        command(&fixture)
+            .arg("add")
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+        let p = fixture.destination.join("p");
+        let upper = fixture
+            .client
+            .join(".repo/repo-worktrees/tree/overlays/p/upper");
+        assert_eq!(
+            fs::read_dir(&upper)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>(),
+            vec![std::ffi::OsString::from(".git")]
+        );
+        assert!(StdCommand::new("fusermount3")
+            .arg("-u")
+            .arg(&p)
+            .status()
+            .unwrap()
+            .success());
+        let status = output_json(
+            command(&fixture)
+                .args(["status", "tree", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(status["result"]["projects"][0]["mounted"], false);
+        assert_eq!(status["result"]["dirty"], false);
+        command(&fixture)
+            .args(["repair", "tree"])
+            .assert()
+            .success();
+        assert!(mounted(&p));
+        assert_eq!(
+            fs::read_to_string(p.join("source.txt")).unwrap(),
+            "snapshot\n"
+        );
+
+        let moved = fixture.temp.path().join("moved");
+        command(&fixture)
+            .arg("move")
+            .arg("tree")
+            .arg(&moved)
+            .assert()
+            .success();
+        assert!(mounted(&moved.join("p")));
+        assert_eq!(git(&moved.join("p"), &["status", "--porcelain"]), "");
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+        assert!(!moved.exists());
+    }
+
+    #[test]
+    fn materialize_converts_a_clean_overlay_into_a_checkout() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        command(&fixture)
+            .arg("add")
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+        let p = fixture.destination.join("p");
+        fs::write(p.join("scratch.txt"), "untracked\n").unwrap();
+        command(&fixture)
+            .args(["materialize", "tree", "p"])
+            .assert()
+            .code(3);
+        assert!(mounted(&p));
+        fs::remove_file(p.join("scratch.txt")).unwrap();
+        let converted = output_json(
+            command(&fixture)
+                .args(["materialize", "tree", "p", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(
+            converted["result"]["materialized"],
+            serde_json::json!(["p"])
+        );
+        assert_eq!(converted["result"]["projects"][0]["mode"], "worktree");
+        assert!(!mounted(&p));
+        assert_eq!(
+            fs::read_to_string(p.join("source.txt")).unwrap(),
+            "snapshot\n"
+        );
+        assert_eq!(git(&p, &["status", "--porcelain"]), "");
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn overlay_falls_back_to_a_worktree_when_the_source_is_dirty() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        fs::write(fixture.client.join("p/source.txt"), "dirty source\n").unwrap();
+        let added = output_json(
+            command(&fixture)
+                .args(["add", "--json"])
+                .arg(&fixture.destination)
+                .assert()
+                .success(),
+        );
+        assert_eq!(added["result"]["projects"][0]["mode"], "worktree");
+        assert_eq!(
+            fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+            "snapshot\n"
+        );
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn history_records_invocations_and_report_summarizes_them() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    let tagged = |fixture: &Fixture| {
+        let mut command = command(fixture);
+        command.env("GIT_REPO_WORKTREE_SESSION", "scenario-1");
+        command
+    };
+    tagged(&fixture)
+        .args(["add", "--name", "secret-name"])
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    fs::write(fixture.destination.join("p/scratch"), "x").unwrap();
+    tagged(&fixture)
+        .args(["remove", "secret-name"])
+        .assert()
+        .code(1);
+    fs::remove_file(fixture.destination.join("p/scratch")).unwrap();
+    tagged(&fixture)
+        .args(["remove", "secret-name"])
+        .assert()
+        .success();
+    tagged(&fixture)
+        .args(["add", "-b", "topic"])
+        .arg(fixture.temp.path().join("other"))
+        .assert()
+        .code(2);
+    tagged(&fixture)
+        .args(["add", "--full-all"])
+        .arg(fixture.temp.path().join("other"))
+        .assert()
+        .code(2);
+    tagged(&fixture)
+        .arg("add")
+        .arg(fixture.temp.path().join("second"))
+        .assert()
+        .success();
+    command(&fixture)
+        .env("GIT_REPO_WORKTREE_NO_HISTORY", "1")
+        .args(["status", "second"])
+        .assert()
+        .success();
+
+    let history =
+        fs::read_to_string(fixture.client.join(".repo/repo-worktrees/history.jsonl")).unwrap();
+    assert!(!history.contains(fixture.destination.to_str().unwrap()));
+    assert!(!history.contains("\"status\""));
+    let add = history
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .find(|event| event["command"] == "add")
+        .unwrap();
+    assert_eq!(add["args"], serde_json::json!(["-C", "add", "--name"]));
+    assert_eq!(add["session"], "scenario-1");
+    assert!(add["phases"]["projects"].is_u64());
+    assert!(add["projects"][0]["ms"].is_u64());
+    assert!(add["environment"]["os"].is_string());
+
+    let report = output_json(
+        command(&fixture)
+            .args(["report", "--session", "scenario-1", "--json"])
+            .assert()
+            .success(),
+    );
+    let result = &report["result"];
+    assert_eq!(result["events"], 6);
+    assert_eq!(result["commands"]["add"]["latency"]["count"], 4);
+    assert_eq!(result["commands"]["remove"]["errors"]["E_DIRTY"], 1);
+    assert_eq!(result["remove"]["dirty_reasons"]["untracked"], 1);
+    assert_eq!(result["remove"]["returned_to_pool"], 1);
+    assert_eq!(
+        result["add"]["pool"],
+        serde_json::json!({"hits": 1, "misses": 1})
+    );
+    let usage = result["usage_errors"].as_object().unwrap();
+    assert!(
+        usage.contains_key("-C add -b [E_BRANCH_NEEDS_PROJECT_SCOPE]"),
+        "{usage:?}"
+    );
+    assert!(
+        usage.contains_key("-C add --full-all [E_USAGE]"),
+        "{usage:?}"
+    );
+    assert_eq!(result["live_trees"]["count"], 1);
+    command(&fixture)
+        .arg("report")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("slowest projects to populate"));
 }

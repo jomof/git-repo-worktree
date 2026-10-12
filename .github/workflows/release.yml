@@ -72,8 +72,8 @@ jobs:
           cp "target/${{ matrix.target }}/release/git-repo-worktree" "$package/"
           cp LICENSE README.md skill/SKILL.md "$package/"
           cp git-repo-worktree.bash _git-repo-worktree git-repo-worktree.fish "$package/"
-          manpage="$(find target -path '*/out/man/git-repo-worktree.1' -print -quit)"
-          cp "$manpage" "$package/"
+          manpage="$(find "target/${{ matrix.target }}/release" -path '*/out/man/git-repo-worktree.1' -print -quit)"
+          cp "$(dirname "$manpage")"/git-repo-worktree*.1 "$package/"
           tar -czf "$package.tar.gz" "$package"
           "target/${{ matrix.target }}/release/git-repo-worktree" version
       - name: Smoke-test installer asset

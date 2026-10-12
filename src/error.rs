@@ -6,6 +6,8 @@ use std::fmt;
 pub struct ErrorBody {
     pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -14,6 +16,7 @@ pub struct AppError {
     pub message: String,
     pub exit_code: i32,
     pub result: Value,
+    pub details: Option<Value>,
 }
 
 impl AppError {
@@ -23,15 +26,21 @@ impl AppError {
             message: message.into(),
             exit_code: 1,
             result: Value::Null,
+            details: None,
         }
     }
 
     pub fn usage(message: impl Into<String>) -> Self {
+        Self::usage_code("E_USAGE", message)
+    }
+
+    pub fn usage_code(code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            code: "E_USAGE",
+            code,
             message: message.into(),
             exit_code: 2,
             result: Value::Null,
+            details: None,
         }
     }
 
@@ -41,6 +50,7 @@ impl AppError {
             message: message.into(),
             exit_code: 4,
             result: Value::Null,
+            details: None,
         }
     }
 
@@ -50,6 +60,7 @@ impl AppError {
             message: "operation completed with one or more failures".into(),
             exit_code: 3,
             result,
+            details: None,
         }
     }
 
@@ -59,6 +70,11 @@ impl AppError {
 
     pub fn with_result(mut self, result: Value) -> Self {
         self.result = result;
+        self
+    }
+
+    pub fn with_details(mut self, details: Value) -> Self {
+        self.details = Some(details);
         self
     }
 }
@@ -104,6 +120,7 @@ impl Envelope {
             error: Some(ErrorBody {
                 code: error.code.to_string(),
                 message: error.message.clone(),
+                details: error.details.clone(),
             }),
             result: error.result.clone(),
         }
