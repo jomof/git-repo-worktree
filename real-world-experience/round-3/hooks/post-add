@@ -1,0 +1,3 @@
+#!/bin/sh
+# Give each tree its own env.bazelrc (remote cache, per-tree output_base).
+exec ./build/bazel/env/setup

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stop this tree's Bazel server, if one is running, without starting one.
+ob=$(sed -n 's/^startup --output_base=//p' env.bazelrc 2>/dev/null | tail -n 1)
+[ -n "$ob" ] && [ -f "$ob/server/server.pid.txt" ] || exit 0
+exec bazel shutdown

@@ -1,0 +1,25 @@
+=== git repo-worktree version -v ===
+git-repo-worktree 2.0.0 (f5bd402c18ae)
+git git version 2.56.0.385.gd3acb90ef8-goog
+repo repo version v2.68.1
+
+=== which -a git-repo-worktree ===
+/usr/local/google/home/jomof/.local/bin/git-repo-worktree
+
+=== git repo-worktree hooks list ===
+post-add    installed  /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/hooks/post-add
+pre-remove  installed  /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/hooks/pre-remove
+
+=== uname -a ===
+Linux jomof-specialist.c.googlers.com 7.1.6-1rodete1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 7.1.6-1rodete1 (2026-08-05) x86_64 GNU/Linux
+
+=== fuse-overlayfs --version ===
+fusermount3 version: 3.18.2
+fuse-overlayfs: version 1.13-dev
+FUSE library version 3.18.2
+using FUSE kernel interface version 7.45
+
+=== df -T ~ /usr/local/google/home/jomof/projects ===
+Filesystem                Type  1K-blocks       Used  Available Use% Mounted on
+/dev/glinux_20230721/root ext4 7984166836 6380130156 1241775672  84% /
+/dev/glinux_20230721/root ext4 7984166836 6380130156 1241775672  84% /
