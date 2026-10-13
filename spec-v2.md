@@ -349,6 +349,38 @@ Before populating projects, unless `--no-reflink`, `add` reflinks one 4 KiB file
 from the registry entry to the tree root. Failure marks the source/tree
 filesystem pair unsupported for the run, so projects skip reflink attempts.
 
+## 10.3 Site hooks
+
+Hooks are files named `post-add` and `pre-remove` in
+`.repo/repo-worktrees/hooks/` of the source client. They are skipped with the
+global `--no-hooks` flag or `GIT_REPO_WORKTREE_NO_HOOKS` set to a non-empty value
+other than `0`.
+
+* `post-add` runs when a tree is complete: in `add` and `add --continue` after
+  the bridge phase and before locking, and in `repair`. It does not run again
+  once its recorded status is `ok`. `add` journals `hook-post-add` with the
+  status.
+* `pre-remove` runs in `remove` after the dirty and lock checks pass and before
+  any overlay is unmounted or worktree removed, unless the tree is already in
+  state `removing`. It also runs with `--force`.
+
+A hook runs with the tree root as working directory, stdin from `/dev/null`,
+stdout redirected to the tool's stderr, and environment `GIT_REPO_WORKTREE_EVENT`,
+`GIT_REPO_WORKTREE_TREE`, `GIT_REPO_WORKTREE_NAME`, and
+`GIT_REPO_WORKTREE_SOURCE`, in its own process group. After
+`GIT_REPO_WORKTREE_HOOK_TIMEOUT` seconds (default 600) the group receives
+`SIGTERM`, then `SIGKILL` 200 ms later. A non-executable file fails with a
+reason suggesting `chmod +x`.
+
+The result is recorded in tree metadata `hooks.<event>`
+(`status`: `ok` | `failed` | `timeout`, `exit_code`, `ms`, `at`, `reason`),
+returned in `add`, `repair`, and `remove` results, printed as a line on
+stderr, and pushed to the history record as `hooks[]`. `report` summarizes
+statuses and latency per event. Hook results never change exit codes.
+
+`git repo-worktree hooks list` reports `directory`, `disabled`, and per event
+`path`, `installed`, and `executable`.
+
 ## 11. Installation and help
 
 Release archives contain `git-repo-worktree.1` and one

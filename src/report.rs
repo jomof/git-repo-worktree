@@ -216,6 +216,28 @@ fn summarize(events: &[Value], trees: &[crate::model::TreeMeta]) -> Value {
     slow_inspections.sort_by_key(|entry| std::cmp::Reverse(entry["p50_ms"].as_u64().unwrap_or(0)));
     slow_inspections.truncate(10);
 
+    let mut hooks: BTreeMap<String, (BTreeMap<String, u64>, Vec<u64>)> = BTreeMap::new();
+    for event in events {
+        for hook in event["hooks"].as_array().into_iter().flatten() {
+            let entry = hooks
+                .entry(hook["event"].as_str().unwrap_or("?").to_string())
+                .or_default();
+            increment(&mut entry.0, hook["status"].as_str().unwrap_or("?"));
+            if let Some(ms) = hook["ms"].as_u64() {
+                entry.1.push(ms);
+            }
+        }
+    }
+    let hooks = hooks
+        .into_iter()
+        .map(|(event, (statuses, durations))| {
+            (
+                event,
+                json!({"statuses": statuses, "latency": latency(durations)}),
+            )
+        })
+        .collect::<Map<_, _>>();
+
     let mut tree_states = BTreeMap::new();
     let mut tree_modes = BTreeMap::new();
     for tree in trees {
@@ -249,6 +271,7 @@ fn summarize(events: &[Value], trees: &[crate::model::TreeMeta]) -> Value {
             "dirty_reasons": dirty_reasons,
         },
         "slow_inspections": slow_inspections,
+        "hooks": hooks,
         "live_trees": {
             "count": trees.len(),
             "states": tree_states,
@@ -340,6 +363,14 @@ fn print_human(report: &Value) {
         "dirty refusals (remove)",
         &report["remove"]["dirty_reasons"],
     );
+    for (event, summary) in report["hooks"].as_object().into_iter().flatten() {
+        println!(
+            "\nhook {event}: p50 {} ms, p90 {} ms, statuses {}",
+            text(&summary["latency"]["p50_ms"]),
+            text(&summary["latency"]["p90_ms"]),
+            summary["statuses"]
+        );
+    }
     println!(
         "\npool: {} hit(s), {} miss(es); {} project(s) returned on remove",
         report["add"]["pool"]["hits"],

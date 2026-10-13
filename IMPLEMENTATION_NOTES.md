@@ -91,3 +91,8 @@ machine interface deterministic:
 - `remove` reports processes still using the tree instead of stopping them:
   only the user knows whether a server or editor should keep running, and the
   tool must not know about specific build systems.
+- Hooks are local files in the source client rather than manifest-provided
+  `<repo-hooks>`: they encode one machine's setup, need no approval because the
+  owner installed them, and studio-main has no manifest hook to extend. Hook
+  failures are reported but never fail `add`: the tree itself is complete, and
+  `repair` retries the hook.

@@ -30,6 +30,8 @@ It is intended for an engineering/review agent auditing the entire `git-repo-wor
 
 8. **[`round-2-blindfold-test-plan.md`](round-2-blindfold-test-plan.md)**: plan for a blindfold subagent test run of the v2 build (`spec-v2.md`): scenarios that probe each round-1 rough edge, source-integrity checks, a studio-main performance matrix for the new pool and overlay defaults, and the deliverables for `round-2/`.
 
+9. **[`round-3-blindfold-hooks-plan.md`](round-3-blindfold-hooks-plan.md)**: blindfold rerun after the round-2 fixes, adding site hooks (`post-add` runs `./build/bazel/env/setup`, `pre-remove` stops the tree's Bazel server) and testing hook failure, parallel agents without lock contention, and warm-pool timing.
+
 ## Addendum
 
 7. **[`addendum-env-bazelrc-and-cartfs.md`](addendum-env-bazelrc-and-cartfs.md)** — **Addendum: How `env.bazelrc` and CartFS `output_base` Are Generated in `studio-main`**

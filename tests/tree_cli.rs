@@ -2262,3 +2262,156 @@ fn version_reports_the_build_commit() {
         assert!(version["result"]["commit"].is_string());
     }
 }
+
+fn install_hook(fixture: &Fixture, event: &str, body: &str, executable: bool) {
+    let directory = fixture.client.join(".repo/repo-worktrees/hooks");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join(event);
+    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let mode = if executable { 0o755 } else { 0o644 };
+    fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[test]
+fn site_hooks_run_after_add_and_before_remove_without_changing_outcomes() {
+    let fixture = fixture();
+    install_hook(
+        &fixture,
+        "post-add",
+        r#"echo "hook says hello"
+printf '%s|%s|%s|%s|%s\n' "$PWD" "$GIT_REPO_WORKTREE_TREE" "$GIT_REPO_WORKTREE_NAME" "$GIT_REPO_WORKTREE_EVENT" "$GIT_REPO_WORKTREE_SOURCE" > site-env.txt"#,
+        true,
+    );
+    let marker = fixture.temp.path().join("pre-remove-saw");
+    install_hook(
+        &fixture,
+        "pre-remove",
+        &format!(
+            r#"test -f site-env.txt && echo "$GIT_REPO_WORKTREE_EVENT" > '{}'"#,
+            marker.display()
+        ),
+        true,
+    );
+    let listed = output_json(
+        command(&fixture)
+            .args(["hooks", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(listed["result"]["hooks"][0]["event"], "post-add");
+    assert_eq!(listed["result"]["hooks"][0]["executable"], true);
+
+    let assert = command(&fixture)
+        .args(["add", "--json"])
+        .arg(&fixture.destination)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("hook says hello"))
+        .stderr(predicates::str::contains("ran post-add hook"));
+    let added = output_json(assert);
+    assert_eq!(added["result"]["hooks"]["post-add"]["status"], "ok");
+    let root = fs::canonicalize(&fixture.destination).unwrap();
+    let source = fs::canonicalize(&fixture.client).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("site-env.txt"))
+            .unwrap()
+            .trim(),
+        format!(
+            "{}|{}|tree|post-add|{}",
+            root.display(),
+            root.display(),
+            source.display()
+        )
+    );
+
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--force", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["hooks"]["pre-remove"]["status"], "ok");
+    assert_eq!(fs::read_to_string(&marker).unwrap().trim(), "pre-remove");
+
+    let report = output_json(
+        command(&fixture)
+            .args(["report", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(report["result"]["hooks"]["post-add"]["statuses"]["ok"], 1);
+    assert_eq!(report["result"]["hooks"]["pre-remove"]["statuses"]["ok"], 1);
+}
+
+#[test]
+fn failing_and_slow_hooks_are_recorded_and_repair_retries_post_add() {
+    let fixture = fixture();
+    install_hook(&fixture, "post-add", "echo broken >&2\nexit 3", true);
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success()
+            .stderr(predicates::str::contains("warning: post-add hook failed")),
+    );
+    assert_eq!(added["result"]["state"], "complete");
+    assert_eq!(added["result"]["hooks"]["post-add"]["status"], "failed");
+    assert_eq!(added["result"]["hooks"]["post-add"]["exit_code"], 3);
+
+    install_hook(&fixture, "post-add", "touch fixed", true);
+    let repaired = output_json(
+        command(&fixture)
+            .args(["repair", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(repaired["result"]["hooks"]["post-add"]["status"], "ok");
+    assert!(fixture.destination.join("fixed").exists());
+    fs::remove_file(fixture.destination.join("fixed")).unwrap();
+    command(&fixture)
+        .args(["repair", "tree"])
+        .assert()
+        .success();
+    assert!(!fixture.destination.join("fixed").exists());
+
+    install_hook(&fixture, "post-add", "sleep 10", true);
+    let second = fixture.temp.path().join("slow");
+    let started = std::time::Instant::now();
+    let slow = output_json(
+        command(&fixture)
+            .env("GIT_REPO_WORKTREE_HOOK_TIMEOUT", "1")
+            .args(["add", "--json"])
+            .arg(&second)
+            .assert()
+            .success(),
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(8));
+    assert_eq!(slow["result"]["hooks"]["post-add"]["status"], "timeout");
+
+    install_hook(&fixture, "post-add", "true", false);
+    let third = fixture.temp.path().join("plain");
+    let plain = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&third)
+            .assert()
+            .success(),
+    );
+    assert!(plain["result"]["hooks"]["post-add"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("chmod +x"));
+
+    install_hook(&fixture, "post-add", "touch ran", true);
+    let skipped_path = fixture.temp.path().join("skipped");
+    let skipped = output_json(
+        command(&fixture)
+            .args(["add", "--no-hooks", "--json"])
+            .arg(&skipped_path)
+            .assert()
+            .success(),
+    );
+    assert!(skipped["result"].get("hooks").is_none());
+    assert!(!skipped_path.join("ran").exists());
+}

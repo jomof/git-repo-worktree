@@ -8,6 +8,7 @@ mod cli;
 mod defaults;
 mod discovery;
 mod error;
+mod hooks;
 mod inspect;
 mod manifest;
 mod metrics;
@@ -23,7 +24,9 @@ mod tree;
 mod util;
 
 use clap::{error::ErrorKind, CommandFactory, Parser};
-use cli::{Cli, Command, CompletionShell, DefaultsCommand, PoolCommand, SkillCommand};
+use cli::{
+    Cli, Command, CompletionShell, DefaultsCommand, HooksCommand, PoolCommand, SkillCommand,
+};
 use error::{AppError, AppResult, Envelope};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -65,6 +68,9 @@ fn command_name(command: &Command) -> &'static str {
             DefaultsCommand::Auto(_) => "defaults auto",
         },
         Command::Report(_) => "report",
+        Command::Hooks(args) => match &args.command {
+            HooksCommand::List => "hooks list",
+        },
         Command::Pool(args) => match &args.command {
             PoolCommand::List => "pool list",
             PoolCommand::Size(_) => "pool size",
@@ -109,6 +115,9 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
         Command::Defaults(args) => defaults::run(&args.command, cwd, cli.json, cli.quiet),
         Command::Pool(args) => pool::run(&args.command, cwd, cli.json, cli.quiet),
         Command::Report(args) => report::run(args, cwd, cli.json),
+        Command::Hooks(args) => match &args.command {
+            HooksCommand::List => hooks::list(cwd, cli.json),
+        },
         Command::Version => version(cli.verbose, cli.json),
         Command::Completions(args) => completions(args.shell, cli.json),
         Command::Skill(args) => skill::run(&args.command, cwd, cli.json, cli.quiet),
@@ -199,6 +208,7 @@ const SUBCOMMANDS: &[&str] = &[
     "fill",
     "clear",
     "size",
+    "hooks",
 ];
 
 fn argument_shape(raw_args: &[std::ffi::OsString]) -> Vec<String> {
@@ -279,6 +289,9 @@ fn main() -> ExitCode {
         cli.lock_timeout.map(std::time::Duration::from_secs),
         command,
     );
+    if cli.no_hooks {
+        hooks::disable();
+    }
     let mut result = cwd(&cli).and_then(|cwd| {
         let result = execute(&cli, &cwd);
         if result.is_err() {
@@ -342,6 +355,12 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
             return format!("skill {subcommand}");
         }
         return "skill".into();
+    }
+    if let Some(index) = values.iter().position(|value| *value == "hooks") {
+        if let Some(subcommand) = values.get(index + 1) {
+            return format!("hooks {subcommand}");
+        }
+        return "hooks".into();
     }
     if let Some(index) = values.iter().position(|value| *value == "pool") {
         if let Some(subcommand) = values.get(index + 1) {

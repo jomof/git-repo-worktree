@@ -303,6 +303,43 @@ Installed copies carry ownership and version sentinels. Foreign files are never
 overwritten or removed without `--force`; `skill sync` updates every sentinel-bearing
 copy after a tool upgrade.
 
+## Site hooks
+
+Per-client setup that every new tree needs, such as generating machine-local
+build configuration, belongs in hooks rather than in each user's or agent's
+instructions. Hooks are executables in the source client:
+
+```text
+.repo/repo-worktrees/hooks/post-add     # after a tree is complete
+.repo/repo-worktrees/hooks/pre-remove   # before a tree is deleted
+```
+
+Each runs in the tree root with `GIT_REPO_WORKTREE_EVENT`,
+`GIT_REPO_WORKTREE_TREE`, `GIT_REPO_WORKTREE_NAME`, and
+`GIT_REPO_WORKTREE_SOURCE` set. Output goes to stderr. A failing or timed-out
+hook (`GIT_REPO_WORKTREE_HOOK_TIMEOUT`, default 600 s; the hook's whole process
+group is stopped) prints a warning and is recorded under the tree's `hooks`, but
+never fails the command. `add --continue` and `repair` rerun `post-add` until it
+succeeds, so installing a hook and running `repair` applies it to existing
+trees. `git repo-worktree hooks list` shows what is installed; `--no-hooks` or
+`GIT_REPO_WORKTREE_NO_HOOKS=1` skips them. Hooks must not leave background
+processes attached to their output.
+
+For example, a client whose Bazel setup script writes a per-workspace
+`env.bazelrc` might use:
+
+```sh
+#!/bin/sh
+# post-add
+exec ./build/bazel/env/setup
+```
+
+```sh
+#!/bin/sh
+# pre-remove
+[ -f env.bazelrc ] && bazel shutdown || true
+```
+
 ## Usage history and `report`
 
 Every invocation appends one JSON line to `.repo/repo-worktrees/history.jsonl` in

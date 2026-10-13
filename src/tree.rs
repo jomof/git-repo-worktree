@@ -236,6 +236,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             }),
             moving: None,
             repo_bridge: (!args.git_only).then(bridge::new_meta),
+            hooks: Default::default(),
             projects: Vec::new(),
             copyfiles: Vec::new(),
             linkfiles: Vec::new(),
@@ -682,6 +683,15 @@ fn run_add_phases(
             .unwrap_or_default();
         append_journal(&entry, "repo-bridge", &state, None, None, None)?;
         phase_done(quiet, verbose, "repo-bridge", bridge_started, Some(&state));
+    }
+    if meta.is_complete() {
+        let hook_started = Instant::now();
+        if crate::hooks::run_post_add(meta, quiet) {
+            let status = meta.hooks[crate::hooks::POST_ADD].status.clone();
+            append_journal(&entry, "hook-post-add", &status, None, None, None)?;
+            write_meta(meta)?;
+            phase_done(quiet, verbose, "hook-post-add", hook_started, Some(&status));
+        }
     }
     if meta.locked.is_some() {
         let lock_started = Instant::now();
@@ -2285,6 +2295,13 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     }
                 }
             }
+            if meta.state != "removing" {
+                let step = Instant::now();
+                if let Some(record) = crate::hooks::run(crate::hooks::PRE_REMOVE, &meta, quiet) {
+                    crate::metrics::phase("hook-pre-remove", crate::metrics::elapsed_ms(step));
+                    meta.hooks.insert(crate::hooks::PRE_REMOVE.into(), record);
+                }
+            }
             let step = Instant::now();
             release_overlays(&meta, args.force > 0)?;
             crate::metrics::phase("unmount", crate::metrics::elapsed_ms(step));
@@ -2412,6 +2429,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 "removed": true,
                 "returned_to_pool": returned,
                 "lingering_processes": lingering,
+                "hooks": meta.hooks,
             }))
         },
     )
@@ -3151,6 +3169,9 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             }
             repair_directives(meta, jobs, quiet)?;
             bridge::synthesize(meta, quiet)?;
+            if meta.is_complete() && crate::hooks::run_post_add(meta, quiet) {
+                write_meta(meta)?;
+            }
             meta.state = if meta.is_complete() {
                 "complete".into()
             } else {
@@ -3532,6 +3553,7 @@ mod tests {
             locked: None,
             moving: None,
             repo_bridge: None,
+            hooks: Default::default(),
             projects: vec![],
             copyfiles: vec![],
             linkfiles: vec![],

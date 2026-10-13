@@ -119,6 +119,17 @@ manifest upstream like `repo start`, so `repo upload` works. Later, inside the
 tree, `repo start <branch> <project>` or `git switch -c <branch>` in a project
 does the same job.
 
+### Site hooks
+
+The client's owner may install hooks that run automatically: `post-add` after
+a tree is complete (for example to generate local build configuration) and
+`pre-remove` before deletion (for example to stop build servers). Check
+`.result.hooks` in the `add` and `remove` output, or run
+`git repo-worktree hooks list --json`. When `hooks.post-add.status` is `"ok"`,
+do not repeat that setup by hand. When it is `"failed"` or `"timeout"`, read
+the warning on stderr, fix the cause, and run `git repo-worktree repair <tree>`
+to retry it.
+
 ### Work inside the tree
 
 Before editing a project, run `status --json <tree>` (or `list -v --json`) and

@@ -74,6 +74,16 @@ impl ProjectMeta {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HookRecord {
+    /// `ok`, `failed`, or `timeout`.
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub ms: u64,
+    pub at: String,
+    pub reason: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BridgeMeta {
     /// Common Git directory of the source manifest repository when the tree has
@@ -129,6 +139,9 @@ pub struct TreeMeta {
     /// Present when the tree carries a synthesized `.repo` bridge.
     #[serde(default)]
     pub repo_bridge: Option<BridgeMeta>,
+    /// Results of site hooks run for this tree, by event.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hooks: BTreeMap<String, HookRecord>,
     pub projects: Vec<ProjectMeta>,
     pub copyfiles: Vec<DirectiveMeta>,
     pub linkfiles: Vec<DirectiveMeta>,

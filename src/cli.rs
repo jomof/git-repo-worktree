@@ -39,6 +39,11 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "SECONDS")]
     pub lock_timeout: Option<u64>,
 
+    /// Do not run site hooks from .repo/repo-worktrees/hooks
+    /// (also set by GIT_REPO_WORKTREE_NO_HOOKS=1).
+    #[arg(long, global = true)]
+    pub no_hooks: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -73,6 +78,9 @@ pub enum Command {
     Defaults(DefaultsArgs),
     /// Manage pre-populated spare worktrees for pool-mode projects.
     Pool(PoolArgs),
+    /// Show the site hooks that run after add and before remove.
+    #[command(long_about = HOOKS_LONG_ABOUT)]
+    Hooks(HooksArgs),
     /// Summarize this client's local usage history and timings.
     #[command(long_about = REPORT_LONG_ABOUT)]
     Report(ReportArgs),
@@ -179,6 +187,28 @@ command and flag names (never values), duration, outcome, phase timings, and, \
 for commands that populate projects, per-project modes and timings. The file \
 stays on this machine and is capped at 8 MiB. Set GIT_REPO_WORKTREE_SESSION to \
 tag events with a label, or GIT_REPO_WORKTREE_NO_HISTORY=1 to stop recording.";
+
+const HOOKS_LONG_ABOUT: &str = "Show the site hooks that run after add and before remove.\n\n\
+Hooks are executables in .repo/repo-worktrees/hooks of the source client. \
+`post-add` runs once a tree is complete (and again from `add --continue` or \
+`repair` until it succeeds); `pre-remove` runs before a tree is deleted. Each \
+runs in the tree root with GIT_REPO_WORKTREE_EVENT, GIT_REPO_WORKTREE_TREE, \
+GIT_REPO_WORKTREE_NAME, and GIT_REPO_WORKTREE_SOURCE set. Output goes to \
+stderr. A failing hook is reported and recorded but never fails the command. \
+GIT_REPO_WORKTREE_HOOK_TIMEOUT (seconds, default 600) bounds each run; \
+--no-hooks or GIT_REPO_WORKTREE_NO_HOOKS=1 skips them.";
+
+#[derive(Debug, Args)]
+pub struct HooksArgs {
+    #[command(subcommand)]
+    pub command: HooksCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HooksCommand {
+    /// List hook events and whether each is installed.
+    List,
+}
 
 #[derive(Debug, Args)]
 pub struct ReportArgs {
