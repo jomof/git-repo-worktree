@@ -143,6 +143,7 @@ pub fn finish(
     event.insert("v".into(), json!(RECORD_VERSION));
     event.insert("ts".into(), json!(crate::util::now()));
     event.insert("tool_version".into(), json!(env!("CARGO_PKG_VERSION")));
+    event.insert("commit".into(), json!(option_env!("GRW_COMMIT")));
     event.insert("command".into(), json!(command));
     event.insert("args".into(), json!(arguments));
     event.insert("ms".into(), json!(milliseconds));

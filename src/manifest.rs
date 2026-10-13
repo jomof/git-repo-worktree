@@ -191,6 +191,7 @@ pub fn parse_snapshot(
             clone_depth,
             strategy: None,
             est_bytes: None,
+            est_files: None,
             remote,
             upstream,
             populate_ms: None,
@@ -296,6 +297,7 @@ pub fn parse_snapshot(
                 clone_depth,
                 strategy: None,
                 est_bytes: None,
+                est_files: None,
                 remote: declaration.and_then(|declaration| declaration.remote.clone()),
                 upstream: declaration.and_then(|declaration| declaration.upstream.clone()),
                 populate_ms: None,
@@ -708,12 +710,14 @@ fn resolve_git_common_dirs(
             .collect::<Vec<_>>()
     });
     for (index, estimate) in estimates {
-        projects[index].est_bytes = estimate;
+        projects[index].est_bytes = estimate.map(|(bytes, _)| bytes);
+        projects[index].est_files = estimate.map(|(_, files)| files);
     }
     Ok(())
 }
 
-fn estimate_tracked_bytes(git_common_dir: &Path, sha: &str) -> Option<u64> {
+/// Total size and number of tracked blobs at `sha`.
+fn estimate_tracked_bytes(git_common_dir: &Path, sha: &str) -> Option<(u64, u64)> {
     let output = Command::new("git")
         .arg(format!("--git-dir={}", git_common_dir.display()))
         .args(["ls-tree", "-rlz", sha])
@@ -725,7 +729,7 @@ fn estimate_tracked_bytes(git_common_dir: &Path, sha: &str) -> Option<u64> {
         .then(|| parse_tracked_bytes(&output.stdout))
 }
 
-fn parse_tracked_bytes(output: &[u8]) -> u64 {
+fn parse_tracked_bytes(output: &[u8]) -> (u64, u64) {
     output
         .split(|byte| *byte == 0)
         .filter_map(|record| {
@@ -739,7 +743,9 @@ fn parse_tracked_bytes(output: &[u8]) -> u64 {
             let size = fields.next()?;
             std::str::from_utf8(size).ok()?.parse::<u64>().ok()
         })
-        .fold(0u64, u64::saturating_add)
+        .fold((0u64, 0u64), |(bytes, files), size| {
+            (bytes.saturating_add(size), files + 1)
+        })
 }
 
 fn resolve_git_state(
@@ -1011,7 +1017,7 @@ mod tests {
 040000 tree c -\tdir\0\
 160000 commit d -\tsubmodule\0\
 100644 blob e malformed\tbad\0";
-        assert_eq!(parse_tracked_bytes(records), 46);
+        assert_eq!(parse_tracked_bytes(records), (46, 2));
     }
 
     #[test]
@@ -1021,6 +1027,6 @@ mod tests {
 100644 blob b 1\ttwo\0",
             u64::MAX
         );
-        assert_eq!(parse_tracked_bytes(records.as_bytes()), u64::MAX);
+        assert_eq!(parse_tracked_bytes(records.as_bytes()), (u64::MAX, 2));
     }
 }

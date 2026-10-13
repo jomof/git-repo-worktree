@@ -1,19 +1,140 @@
 use crate::error::{AppError, AppResult};
 use crate::model::TreeMeta;
 use crate::util::{absolutize, canonicalize_missing, read_meta};
-use fd_lock::RwLock;
+use fd_lock::{RwLock, RwLockWriteGuard};
 use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
+/// `Shared` operations only read metadata, which is always replaced
+/// atomically, so they take no lock. `Exclusive` operations wait for the
+/// registry-wide lock, which is held only for short cross-tree steps.
 #[derive(Clone, Copy, Debug)]
 pub enum LockMode {
     Shared,
     Exclusive,
 }
 
+const DEFAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
+static LOCK_TIMEOUT: OnceLock<Duration> = OnceLock::new();
+static COMMAND: OnceLock<String> = OnceLock::new();
+
+/// Sets how long writers wait for a lock and the command name recorded for
+/// other waiters. The first call wins.
+pub fn configure(timeout: Option<Duration>, command: &str) {
+    let timeout = timeout
+        .or_else(|| {
+            std::env::var("GIT_REPO_WORKTREE_LOCK_TIMEOUT")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(Duration::from_secs)
+        })
+        .unwrap_or(DEFAULT_LOCK_TIMEOUT);
+    let _ = LOCK_TIMEOUT.set(timeout);
+    let _ = COMMAND.set(command.to_string());
+}
+
+fn lock_timeout() -> Duration {
+    *LOCK_TIMEOUT.get().unwrap_or(&DEFAULT_LOCK_TIMEOUT)
+}
+
 pub fn registry_path(source_root: &Path) -> PathBuf {
     source_root.join(".repo/repo-worktrees")
+}
+
+/// An exclusive advisory lock, released when dropped.
+pub struct Held {
+    _guard: RwLockWriteGuard<'static, File>,
+}
+
+/// Acquires the exclusive lock on `path`, waiting up to the configured
+/// timeout. Prints who holds it while waiting unless `quiet`.
+pub fn acquire(path: &Path, what: &str, quiet: bool) -> AppResult<Held> {
+    acquire_within(path, what, quiet, lock_timeout())
+}
+
+pub fn try_acquire(path: &Path, what: &str) -> AppResult<Option<Held>> {
+    match acquire_within(path, what, true, Duration::ZERO) {
+        Ok(held) => Ok(Some(held)),
+        Err(error) if error.code == "E_LOCKED" => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn acquire_within(path: &Path, what: &str, quiet: bool, timeout: Duration) -> AppResult<Held> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o644)
+        .open(path)
+        .map_err(|error| AppError::io(format!("open lock {}", path.display()), error))?;
+    let started = Instant::now();
+    let mut next_notice = Duration::from_secs(1);
+    loop {
+        let attempt = file
+            .try_clone()
+            .map_err(|error| AppError::io(format!("open lock {}", path.display()), error))?;
+        let lock: &'static mut RwLock<File> = Box::leak(Box::new(RwLock::new(attempt)));
+        match lock.try_write() {
+            Ok(mut guard) => {
+                let waited = crate::metrics::elapsed_ms(started);
+                if waited > 0 {
+                    crate::metrics::phase("lock-wait", waited);
+                }
+                let holder = serde_json::json!({
+                    "pid": std::process::id(),
+                    "command": COMMAND.get().map(String::as_str).unwrap_or("?"),
+                    "since": crate::util::now(),
+                });
+                let _ = guard.set_len(0);
+                let _ = guard.seek(SeekFrom::Start(0));
+                let _ = guard.write_all(holder.to_string().as_bytes());
+                return Ok(Held { _guard: guard });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(AppError::io(format!("lock {}", path.display()), error)),
+        }
+        let waited = started.elapsed();
+        if waited >= timeout {
+            return Err(AppError::locked(
+                "E_LOCKED",
+                format!(
+                    "timed out after {}s waiting for {what}{}; retry later or raise --lock-timeout",
+                    waited.as_secs(),
+                    describe_holder(path)
+                ),
+            ));
+        }
+        if !quiet && waited >= next_notice {
+            eprintln!("waiting for {what}{}", describe_holder(path));
+            next_notice = waited + Duration::from_secs(30);
+        }
+        std::thread::sleep(Duration::from_millis(100).min(timeout - waited));
+    }
+}
+
+fn describe_holder(path: &Path) -> String {
+    let mut contents = String::new();
+    if File::open(path)
+        .and_then(|mut file| file.read_to_string(&mut contents))
+        .is_err()
+    {
+        return String::new();
+    }
+    let Ok(holder) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return String::new();
+    };
+    format!(
+        " (held by pid {}: {} since {})",
+        holder["pid"],
+        holder["command"].as_str().unwrap_or("?"),
+        holder["since"].as_str().unwrap_or("?")
+    )
 }
 
 pub fn with_registry_lock<T>(
@@ -23,6 +144,9 @@ pub fn with_registry_lock<T>(
     operation: impl FnOnce(&Path) -> AppResult<T>,
 ) -> AppResult<T> {
     let registry = registry_path(source_root);
+    if matches!(mode, LockMode::Shared) {
+        return operation(&registry);
+    }
     if !registry.exists() {
         if !create {
             return operation(&registry);
@@ -32,38 +156,41 @@ pub fn with_registry_lock<T>(
         fs::set_permissions(&registry, fs::Permissions::from_mode(0o755))
             .map_err(|error| AppError::io(format!("chmod {}", registry.display()), error))?;
     }
-    let lock_path = registry.join("lock");
-    let file = open_lock_file(&lock_path, create)?;
-    let mut lock = RwLock::new(file);
-    match mode {
-        LockMode::Shared => {
-            let _guard = lock.try_read().map_err(lock_error)?;
-            operation(&registry)
-        }
-        LockMode::Exclusive => {
-            let _guard = lock.try_write().map_err(lock_error)?;
-            operation(&registry)
-        }
-    }
+    let _held = acquire(&registry.join("lock"), "the registry lock", false)?;
+    operation(&registry)
 }
 
-fn open_lock_file(path: &Path, create: bool) -> AppResult<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(create).mode(0o644);
-    options
-        .open(path)
-        .map_err(|error| AppError::io(format!("open registry lock {}", path.display()), error))
+pub fn tree_lock_path(entry: &Path) -> PathBuf {
+    entry.join("lock")
 }
 
-fn lock_error(error: std::io::Error) -> AppError {
-    if error.kind() == std::io::ErrorKind::WouldBlock {
-        AppError::locked(
-            "E_LOCKED",
-            "another git-repo-worktree process holds the registry lock; retry shortly",
+/// Selects a tree, waits for its own lock, and runs `operation` with freshly
+/// read metadata. Operations on different trees run concurrently.
+pub fn with_tree_lock<T>(
+    source_root: &Path,
+    selector: &str,
+    cwd: &Path,
+    quiet: bool,
+    operation: impl FnOnce(&Path, TreeMeta) -> AppResult<T>,
+) -> AppResult<T> {
+    let registry = registry_path(source_root);
+    let selected = select_tree(&registry, selector, cwd)?;
+    let entry = selected.registry_entry();
+    let _held = acquire(
+        &tree_lock_path(&entry),
+        &format!("tree {}", selected.name),
+        quiet,
+    )?;
+    let fresh = read_meta(&entry.join("meta.json")).map_err(|_| {
+        AppError::operational(
+            "E_NO_SUCH_TREE",
+            format!(
+                "tree {} was removed while waiting for its lock",
+                selected.name
+            ),
         )
-    } else {
-        AppError::io("acquire registry lock", error)
-    }
+    })?;
+    operation(&registry, fresh)
 }
 
 pub fn load_all(registry: &Path) -> AppResult<Vec<TreeMeta>> {
@@ -88,7 +215,15 @@ pub fn load_all(registry: &Path) -> AppResult<Vec<TreeMeta>> {
         }
     }
     paths.sort();
-    paths.iter().map(|path| read_meta(path)).collect()
+    let mut trees = Vec::with_capacity(paths.len());
+    for path in paths {
+        match read_meta(&path) {
+            Ok(tree) => trees.push(tree),
+            Err(_) if !path.exists() => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(trees)
 }
 
 /// Selects a tree by name or path, or the tree containing `cwd` when no

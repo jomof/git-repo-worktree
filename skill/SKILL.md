@@ -65,11 +65,21 @@ opens the manual page, which exists only when the installer placed it on
 
 Always pass `--json` when you are an agent: stdout becomes exactly one JSON
 document with `ok`, `exit_code`, `error` (`code`, `message`, optional
-`details`), and a full `result` object; human progress goes to stderr. Parse
-JSON — do not scrape the human output. The payload is under `.result`, for
-example `.result.trees[]`. Before creating anything, inspect `result.trees`:
-reuse a suitable `complete` tree, resume a `creating` or `incomplete` tree, or
-choose a unique name and destination.
+`details`), and a `result` object; human progress goes to stderr. Parse JSON —
+do not scrape the human output. `result` is `null` when a command fails.
+
+Result shapes:
+
+- `list --json`: `.result.trees[]`, one summary per tree (`name`, `path`,
+  `state`, `project_counts`, `failed_projects`, `checked_out_branches`). Add
+  `-v` for full per-project records.
+- `status --json <tree>`, `add --json`, `materialize --json`: `.result` is the
+  tree itself, with `.result.projects[]`. Example:
+  `jq '.result.projects[] | select(.dirty) | {path, reasons}'`.
+
+Before creating anything, inspect `list --json`: reuse a suitable `complete`
+tree, resume a `creating` or `incomplete` tree, or choose a unique name and
+destination.
 
 ### Create a parallel tree
 
@@ -111,8 +121,9 @@ does the same job.
 
 ### Work inside the tree
 
-Before editing a project, find the tree in `list --json` and inspect its
-`projects[]` entry. If `"mode"` is `"symlink-shared"`, materialize it first:
+Before editing a project, run `status --json <tree>` (or `list -v --json`) and
+check that project's `"mode"`. If it is `"symlink-shared"`, materialize it
+first:
 
 ```bash
 git repo-worktree materialize --json <tree> <project-path>
@@ -183,7 +194,9 @@ git repo-worktree remove --force mywork            # discard dirty work knowingl
 ```
 
 A refusal is `E_DIRTY` with every dirty project, and why, in
-`error.details.dirty_projects`. Use `--force` only after explicit confirmation
+`error.details.dirty_projects`. After removing, read `lingering_processes`:
+programs you started in the tree (build servers, watchers) keep running until
+you stop them. Use `--force` only after explicit confirmation
 that the listed work may be discarded. Locked trees need `--force --force` and
 the same explicit confirmation. If a tree was deleted with `rm -rf` instead,
 run `git repo-worktree prune` to reap the stale registration.
@@ -195,7 +208,7 @@ git repo-worktree list --json
 git repo-worktree lock --reason "keep for release diffing" <tree>
 git repo-worktree move <tree> <new-path>        # same filesystem only
 git repo-worktree defaults list --json
-git repo-worktree pool list --json
+git repo-worktree pool list --json             # alias: pool status
 git repo-worktree repair [<tree>...]            # registrations, links, directives, overlays, .repo bridge
 ```
 
@@ -225,7 +238,7 @@ running commands and use `report --session <label>`.
 | 1 | operational failure | read `error.code`/`error.message`/`error.details`, diagnose |
 | 2 | CLI usage error | fix the command line |
 | 3 | partial success, tree `incomplete` | `add --continue` (or `repair`) |
-| 4 | lock contention or active `repo sync` detected | retry with backoff; use `--force` only after confirming sync detection is stale or a false positive |
+| 4 | a lock stayed busy past `--lock-timeout` (default 300 s), or an active `repo sync` was detected | retry later; the message names the process holding the lock; use `--force` only after confirming sync detection is stale or a false positive |
 
 Common error codes: `E_NO_REPO_CLIENT`, `E_NO_SUCH_TREE`, `E_NAME_EXISTS`,
 `E_DEST_NOT_EMPTY`, `E_DIRTY`, `E_TREE_LOCKED`, `E_LOCKED`, `E_SYNC_ACTIVE`,

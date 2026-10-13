@@ -74,9 +74,18 @@ git repo-worktree list --json
 ```
 
 Every command accepts `--json`, `-q`, `-v`, and `-C`. JSON mode emits exactly one
-versioned envelope on stdout. Exit code 3 means a usable but incomplete `add` or
-`repair`; exit code 4 means lock contention or a detected concurrent repo sync and
-is suitable for retry with backoff.
+versioned envelope on stdout. `list --json` summarizes each tree
+(`project_counts` by mode, `failed_projects`, `checked_out_branches`); add `-v` for
+every project record, or use `status --json <tree>`, whose `.result` is the tree
+itself. Exit code 3 means a usable but incomplete `add` or `repair`; exit code 4
+means a lock stayed busy past `--lock-timeout` or a concurrent repo sync was
+detected, and is suitable for retry.
+
+Several agents can work in one client at once. Read-only commands (`list`,
+`status`, `report`, `defaults list`, `pool list`) never wait. Commands that change
+a tree wait for that tree only, printing who holds it, for up to
+`--lock-timeout` seconds (default 300, or `GIT_REPO_WORKTREE_LOCK_TIMEOUT`).
+Creating or removing different trees proceeds in parallel.
 
 ## Create and resume
 
@@ -159,9 +168,11 @@ A `symlink` default makes the project a sharing candidate even without
 `clone-depth`; it does not bypass any safety fallback. A `worktree` default
 suppresses clone-depth sharing. `auto` returns to manifest-driven behavior.
 
-Without a default, source projects over 500 MiB of tracked files (and no
-`clone-depth`) use `pool`, and fixed-depth projects use `overlay` where
-available. `defaults worktree <project>` opts a project out of both.
+Without a default, projects that are slow to check out (at least 30,000 tracked
+files or 2 GiB) use `pool`, and fixed-depth projects use `overlay` where
+available. A fixed-depth project whose source checkout is too dirty to share
+falls back to a pooled worktree. `defaults worktree <project>` opts a project
+out of both.
 
 Two modes keep large projects fast without sharing the source's files:
 
@@ -169,11 +180,12 @@ Two modes keep large projects fast without sharing the source's files:
   pre-populated spares when one is available. `add` moves a spare into the tree
   with `git worktree move` and checks out the pinned commit, which rewrites only
   files that differ. `remove` returns a clean pool project to the pool (after
-  `git clean -ffdx`) instead of deleting it, keeping one spare per project.
-  The first tree pays the full checkout; `git repo-worktree pool fill` creates
-  spares ahead of time, and `pool list` and `pool clear` manage them. Spares
-  must be on the same filesystem as the tree and cost a full checkout of disk
-  each.
+  `git clean -ffdx`) instead of deleting it, keeping up to `pool size` spares
+  per project (default 2). Branched projects use spares too. The first tree pays
+  the full checkout; `git repo-worktree pool fill` creates spares ahead of time
+  for every pooled project, and `pool list` (alias `pool status`) and
+  `pool clear` manage them. Spares must be on the same filesystem as the tree
+  and cost a full checkout of disk each.
 * `overlay` (Linux, requires `fuse-overlayfs`): the project is a real linked
   worktree whose files are a copy-on-write view of the clean source checkout.
   Creation takes well under a second regardless of size, writes never reach the
@@ -238,6 +250,10 @@ lost with the tree's reflog. Normal removal refuses dirty projects and returns
 the full list under `error.details.dirty_projects` in JSON mode. One `--force`
 deliberately discards dirty work. A locked tree is protected from prune and
 requires `--force --force` for removal.
+
+On Linux, `remove` warns about processes that still use the tree (working
+directory inside it, or arguments naming it), such as a build server started
+there, and lists them under `lingering_processes`. It does not stop them.
 
 Git lets a branch be checked out in only one worktree per project. `detach`
 releases branches in place (keeping the working tree and index): name a tree,

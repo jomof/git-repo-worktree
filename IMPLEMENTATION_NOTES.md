@@ -75,3 +75,19 @@ machine interface deterministic:
   appends, and the file is capped. Flag values are never recorded because they
   carry paths and branch names; flag names are enough to see which invocations
   agents get wrong.
+
+## Round 2 changes
+
+- Locks: round 2 recorded 28 `E_LOCKED` failures among three parallel agents
+  because `add` and `remove` held the registry lock for their whole 30–40 s run
+  and every lock attempt failed immediately. Readers now take no lock, writers
+  wait, and tree operations lock only their tree. `fd-lock` guards borrow their
+  lock, so each waiting attempt leaks one small boxed lock to obtain a
+  `'static` guard; a process makes at most a few thousand attempts.
+- Pool selection counts tracked files: checkout costs about 70 microseconds per
+  file on ext4 at studio-main scale, so file count predicts cost far better
+  than bytes (`external/jetbrains/kotlin`, 290 MB, took 6.5 s; `external/dexter`,
+  460 MB, took 1.6 s).
+- `remove` reports processes still using the tree instead of stopping them:
+  only the user knows whether a server or editor should keep running, and the
+  tool must not know about specific build systems.

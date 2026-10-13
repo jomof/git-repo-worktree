@@ -127,6 +127,32 @@ projects to the tree's pinned revisions and must leave shared projects, their
 the tree's manifest checkout, keeps projects pinned, and, as in any client, sets
 each project's shared `refs/remotes/m/<branch>` to the revision it synced.
 
+## 3.6 Locking (supersedes `spec.md` §3 lock rules)
+
+Metadata files are always replaced atomically, so read-only commands (`list`,
+`status`, `report`, `defaults list`, `pool list`, `detach`) take no lock and
+skip entries that disappear while being read.
+
+Writers wait for advisory `flock` locks, polling every 100 ms up to the timeout
+given by global `--lock-timeout <seconds>`, else
+`GIT_REPO_WORKTREE_LOCK_TIMEOUT`, else 300; `0` fails immediately. After one
+second of waiting they print, unless `-q`, which lock they wait for and the
+holder recorded in the lock file (pid, command, start time), repeating every
+30 s. A timeout fails with `E_LOCKED` (exit 4) naming the holder. Waiting time
+is recorded as history phase `lock-wait`.
+
+* Per-tree lock `<entry>/lock`: held for the whole operation by `add`
+  (after reservation), `add --continue`, `remove`, `lock`, `unlock`, `move`,
+  `materialize`, and `repair` (each selected tree). Metadata is re-read after
+  acquiring it; a tree removed meanwhile fails with `E_NO_SUCH_TREE`. `prune`
+  skips trees whose lock is busy.
+* Registry lock `.repo/repo-worktrees/lock`: held only by `add`'s reservation
+  step (quiescence check, destination validation, name check, entry creation,
+  and acquiring the new tree's lock), by `defaults` changes, and by
+  `pool size N`.
+* Pool locks `.repo/repo-worktrees/.pool/<encoded-path>.lock`: held while a
+  spare is selected and moved, returned, published by `fill`, or cleared.
+
 ## 4. Scoped branches
 
 `-b <branch>` requires `-p/--project <path>` (repeatable) or `--all-projects`;
@@ -136,8 +162,9 @@ other. Branch projects are resolved (§5) at pin time and recorded in
 `branch_projects`.
 
 Only branch projects receive the branch and are forced to mode `worktree`; all
-other projects are detached and keep their normal mode selection. Pool spares
-are not used for branch projects.
+other projects are detached and keep their normal mode selection. A branch
+project may take a pool spare: fail with `branch-exists` before claiming one if
+the branch exists, then `git checkout -q -b <branch> <pin>` in the spare.
 
 After creating the branch, set `branch.<name>.remote` to the project's remote
 and `branch.<name>.merge` to its upstream, both computed at pin time:
@@ -194,7 +221,10 @@ directory) prints dirty or branched projects (all with `-v`) and returns
 with `E_DIRTY`, a message listing up to ten projects with their reasons, and
 `error.details.dirty_projects` holding every dirty inspection.
 
-`list --json` adds `checked_out_branches: [{"project", "branch"}]` per tree,
+`list --json` reports each tree without `projects`, `copyfiles`, and
+`linkfiles`, adding `project_counts` (non-skipped projects by mode), `skipped`,
+and `failed_projects` (`path`, `reason`); with `-v` it reports full tree
+metadata. Either way it adds `checked_out_branches: [{"project", "branch"}]` per tree,
 read from each worktree's `HEAD` without spawning Git (falling back to
 `git symbolic-ref` for reftable's placeholder `HEAD`).
 
@@ -226,16 +256,19 @@ Git are discarded. A refused overlay stays mounted and `done`. The result adds
 
 ## 9. Pool mode
 
-A project uses the pool when its default is `pool`, or when it has no default,
-no `clone-depth`, and `est_bytes` above 500 MiB (the heavy threshold of
-`spec-fast-add.md` §8.1). Any other explicit default disables pooling. Pool use
-keeps the project in mode `worktree` and adds strategy `pool`.
+A project whose final mode is `worktree` uses the pool when its default is
+`pool`, or when it has no default and is slow to check out: `est_files` (tracked
+blobs, counted with `est_bytes`) of at least 30,000, or `est_bytes` of at least
+2 GiB. Metadata without `est_files` falls back to `est_bytes` above 500 MiB.
+`clone-depth` does not exclude a project: a fixed-depth project becomes a
+worktree when its source is too dirty to share or overlay. Any other explicit
+default disables pooling. Pool use adds strategy `pool`.
 Spares are detached linked worktrees under
 `.repo/repo-worktrees/.pool/<encoded-path>/<unique>`, where the encoding
 replaces `%` with `%25` and `/` with `%2F`. The tree name `.pool` is reserved
 (`E_BAD_NAME`).
 
-On `add`, for a non-branch pool project, take a spare on the same filesystem as
+On `add`, for a pool project, take a spare on the same filesystem as
 the destination's parent, `git worktree move` it to the destination, and
 `git checkout -q --detach <pin>` with parallel checkout. If no spare is usable
 or the move fails, populate normally. A failed checkout after the move fails the
@@ -243,13 +276,17 @@ project; resume repairs it with `reset --hard`.
 
 On `remove` (without `--no-pool`), a pool project that is a `done` worktree,
 contains no other project, and is not dirty returns to the pool when it has
-fewer than one spare: convert a bridge `.git` to a gitfile, unlock it,
+fewer spares than the pool size (`pool size [N]`, stored as `pool_spares` in
+`defaults.json`, default 2): convert a bridge `.git` to a gitfile, unlock it,
 `git worktree move` it into the pool, `git checkout -q --detach`, and
 `git clean -ffdxq`. Failures are warnings; the project is then removed
 normally. The result adds `returned_to_pool`.
 
-`pool list`, `pool fill [<path>...] [--count N]` (default: pool-default projects,
-one spare each), and `pool clear [<path>...]`. `fill` creates spares at the
+`pool list` (alias `pool status`), `pool size [N]`,
+`pool fill [<path>...] [--count N]`, and `pool clear [<path>...]`. With no
+paths, `fill` covers explicit `pool` defaults, projects that already have spares,
+and projects pooled in any registered tree; `--count` defaults to the pool
+size. `fill` creates spares at the
 source checkout's `HEAD` under a `.filling-` name without holding the registry
 lock and publishes each with `git worktree move` under the lock, retrying lock
 contention.
@@ -297,6 +334,21 @@ upper directory has a `.git`; a failed remount marks the project `failed`
 operations on an unmounted overlay act on `upper/.git`, resolving its relative
 link against the mount point.
 
+## 10.1 Processes using a removed tree
+
+On Linux, after removing worktrees and before deleting the tree directory,
+`remove` scans `/proc` for other processes whose working directory is inside the
+tree or with an argument equal to, ending with, or containing the tree path plus
+`/`. Up to 20 are reported as `lingering_processes: [{pid, command, reason}]`
+(`reason` is `cwd` or `arguments`, `command` the first 120 bytes of the
+arguments) and in a warning on stderr. They are never signalled.
+
+## 10.2 Reflink probe
+
+Before populating projects, unless `--no-reflink`, `add` reflinks one 4 KiB file
+from the registry entry to the tree root. Failure marks the source/tree
+filesystem pair unsupported for the run, so projects skip reflink attempts.
+
 ## 11. Installation and help
 
 Release archives contain `git-repo-worktree.1` and one
@@ -304,8 +356,12 @@ Release archives contain `git-repo-worktree.1` and one
 into `--man-dir` (default: `<prefix>/share/man` when the install directory is
 `<prefix>/bin`, else `~/.local/share/man`), skips them with `--no-man`, and
 suggests `MANPATH` when `man -w` cannot find the page. After installing, it
-warns when another `git-repo-worktree` earlier on `PATH` reports a different
-version, because Git prefers `PATH` commands over aliases.
+warns when the `git-repo-worktree` found on `PATH` is a different file whose
+contents differ (`cmp`), because Git prefers `PATH` commands over aliases.
+
+`version` prints `git-repo-worktree <version> (<commit>)` when built from a Git
+checkout (the build script exports the 12-character commit as `GRW_COMMIT`);
+`version --json` and history records include `commit`.
 
 `add`'s help (and its manual page) states the starting-revision rule: projects
 start detached at the source checkout's current commits, never at remote tips.

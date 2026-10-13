@@ -67,6 +67,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Report(_) => "report",
         Command::Pool(args) => match &args.command {
             PoolCommand::List => "pool list",
+            PoolCommand::Size(_) => "pool size",
             PoolCommand::Fill(_) => "pool fill",
             PoolCommand::Clear(_) => "pool clear",
         },
@@ -115,7 +116,12 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
 }
 
 fn version(verbose: u8, json_output: bool) -> AppResult<Value> {
+    let commit = option_env!("GRW_COMMIT");
     let version = env!("CARGO_PKG_VERSION").to_string();
+    let display = match commit {
+        Some(commit) => format!("{version} ({commit})"),
+        None => version.clone(),
+    };
     let git = discovery::program_version("git", &["version"]).ok();
     let repo = discovery::program_version("repo", &["--version"])
         .ok()
@@ -127,15 +133,13 @@ fn version(verbose: u8, json_output: bool) -> AppResult<Value> {
                 .map(|version| format!("launcher {version}"))
         });
     if !json_output {
+        println!("git-repo-worktree {display}");
         if verbose > 0 {
-            println!("git-repo-worktree {version}");
             println!("git {}", git.as_deref().unwrap_or("not found"));
             println!("repo {}", repo.as_deref().unwrap_or("not found"));
-        } else {
-            println!("git-repo-worktree {version}");
         }
     }
-    Ok(json!({"version": version, "git": git, "repo": repo}))
+    Ok(json!({"version": version, "commit": commit, "git": git, "repo": repo}))
 }
 
 fn completions(shell: CompletionShell, json_output: bool) -> AppResult<Value> {
@@ -194,6 +198,7 @@ const SUBCOMMANDS: &[&str] = &[
     "sync",
     "fill",
     "clear",
+    "size",
 ];
 
 fn argument_shape(raw_args: &[std::ffi::OsString]) -> Vec<String> {
@@ -270,6 +275,10 @@ fn main() -> ExitCode {
         }
     };
     let command = command_name(&cli.command);
+    registry::configure(
+        cli.lock_timeout.map(std::time::Duration::from_secs),
+        command,
+    );
     let mut result = cwd(&cli).and_then(|cwd| {
         let result = execute(&cli, &cwd);
         if result.is_err() {

@@ -16,6 +16,9 @@ const DEFAULTS_FORMAT_VERSION: u32 = 1;
 pub struct ProjectDefaults {
     pub format_version: u32,
     pub projects: BTreeMap<String, String>,
+    /// Spares kept per pooled project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_spares: Option<usize>,
 }
 
 impl Default for ProjectDefaults {
@@ -23,6 +26,7 @@ impl Default for ProjectDefaults {
         Self {
             format_version: DEFAULTS_FORMAT_VERSION,
             projects: BTreeMap::new(),
+            pool_spares: None,
         }
     }
 }

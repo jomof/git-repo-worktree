@@ -446,7 +446,12 @@ fn overlay_projects_work_with_repo_commands() {
         .arg(&tree)
         .assert()
         .success();
-    let listed = json(tool(&client).args(["list", "--json"]).assert().success());
+    let listed = json(
+        tool(&client)
+            .args(["list", "-v", "--json"])
+            .assert()
+            .success(),
+    );
     let mode = |path: &str| {
         listed["result"]["trees"][0]["projects"]
             .as_array()

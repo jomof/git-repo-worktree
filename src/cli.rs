@@ -34,6 +34,11 @@ pub struct Cli {
     #[arg(short = 'C', global = true, value_name = "DIR")]
     pub directory: Option<PathBuf>,
 
+    /// Seconds to wait for a busy tree or registry lock before exiting with
+    /// code 4 (default 300; 0 fails immediately).
+    #[arg(long, global = true, value_name = "SECONDS")]
+    pub lock_timeout: Option<u64>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -43,7 +48,7 @@ pub enum Command {
     /// Create a whole-tree worktree or resume an interrupted creation.
     #[command(long_about = ADD_LONG_ABOUT)]
     Add(AddArgs),
-    /// List registered whole-tree worktrees.
+    /// List registered whole-tree worktrees (add -v for per-project detail).
     List(ListArgs),
     /// Show per-project HEAD, branch, and dirtiness for one tree.
     Status(StatusArgs),
@@ -311,7 +316,10 @@ pub struct PoolArgs {
 #[derive(Debug, Subcommand)]
 pub enum PoolCommand {
     /// List spare worktrees.
+    #[command(visible_alias = "status")]
     List,
+    /// Show or set how many spares each pooled project keeps (default 2).
+    Size(PoolSizeArgs),
     /// Create spare worktrees at the source checkout's current HEAD.
     Fill(PoolFillArgs),
     /// Delete spare worktrees.
@@ -319,12 +327,19 @@ pub enum PoolCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct PoolSizeArgs {
+    /// New number of spares per project.
+    #[arg(value_parser = parse_jobs)]
+    pub spares: Option<usize>,
+}
+
+#[derive(Debug, Args)]
 pub struct PoolFillArgs {
-    /// Projects to fill (default: every project with a pool default).
+    /// Projects to fill (default: every pooled project).
     pub projects: Vec<String>,
-    /// Spares to keep per project.
-    #[arg(long, default_value_t = 1, value_parser = parse_jobs)]
-    pub count: usize,
+    /// Spares to keep per project (default: the pool size).
+    #[arg(long, value_parser = parse_jobs)]
+    pub count: Option<usize>,
     #[arg(short = 'j', long, value_parser = parse_jobs)]
     pub jobs: Option<usize>,
 }

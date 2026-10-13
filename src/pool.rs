@@ -11,7 +11,7 @@ use crate::cli::PoolCommand;
 use crate::defaults;
 use crate::discovery::discover_client;
 use crate::error::{AppError, AppResult};
-use crate::registry::{with_registry_lock, LockMode};
+use crate::registry::{acquire, load_all, with_registry_lock, Held, LockMode};
 use crate::resolve::resolve_projects;
 use crate::util::{default_jobs, exit_reason};
 use rayon::prelude::*;
@@ -84,41 +84,84 @@ fn git_worktree_move(git_common_dir: &str, from: &Path, to: &Path) -> Result<(),
     }
 }
 
-/// Moves a spare into `checkout` and checks out `sha`. Returns `Ok(false)` when
-/// no usable spare exists, leaving the caller to populate normally.
+pub const DEFAULT_SPARES: usize = 2;
+
+/// Spares each pooled project keeps, from `pool size` or the default.
+pub fn capacity(registry: &Path) -> usize {
+    defaults::load(registry)
+        .ok()
+        .and_then(|defaults| defaults.pool_spares)
+        .unwrap_or(DEFAULT_SPARES)
+}
+
+/// Serializes spare claims and returns for one project across processes.
+fn lock_project(registry: &Path, project_path: &str) -> Result<Held, String> {
+    let directory = registry.join(DIR_NAME);
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    let path = project_dir(registry, project_path).with_extension("lock");
+    acquire(&path, &format!("the {project_path} pool"), true).map_err(|error| error.message)
+}
+
+fn branch_exists(git_common_dir: &str, branch: &str) -> bool {
+    Command::new("git")
+        .arg(format!("--git-dir={git_common_dir}"))
+        .args([
+            "rev-parse",
+            "-q",
+            "--verify",
+            &format!("refs/heads/{branch}"),
+        ])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Moves a spare into `checkout` and checks out `sha`, creating `branch` there
+/// when given. Returns `Ok(false)` when no usable spare exists, leaving the
+/// caller to populate normally.
 pub fn take(
     registry: &Path,
     project_path: &str,
     git_common_dir: &str,
     checkout: &Path,
     sha: &str,
+    branch: Option<&str>,
 ) -> Result<bool, String> {
+    if branch.is_some_and(|branch| branch_exists(git_common_dir, branch)) {
+        return Err("branch-exists".into());
+    }
     let Some(parent) = checkout.parent() else {
         return Ok(false);
     };
     fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
-    let Some(spare) = slots(registry, project_path)
-        .into_iter()
-        .find(|spare| same_device(spare, parent))
-    else {
-        return Ok(false);
-    };
-    if git_worktree_move(git_common_dir, &spare, checkout).is_err() {
-        return Ok(false);
+    {
+        let _held = lock_project(registry, project_path)?;
+        let Some(spare) = slots(registry, project_path)
+            .into_iter()
+            .find(|spare| same_device(spare, parent))
+        else {
+            return Ok(false);
+        };
+        if git_worktree_move(git_common_dir, &spare, checkout).is_err() {
+            return Ok(false);
+        }
     }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(checkout)
-        .args([
-            "-c",
-            "checkout.workers=8",
-            "-c",
-            "checkout.thresholdForParallelism=100",
-            "checkout",
-            "-q",
-            "--detach",
-            sha,
-        ])
+    let mut command = Command::new("git");
+    command.arg("-C").arg(checkout).args([
+        "-c",
+        "checkout.workers=8",
+        "-c",
+        "checkout.thresholdForParallelism=100",
+        "checkout",
+        "-q",
+    ]);
+    match branch {
+        Some(branch) => command.arg("-b").arg(branch),
+        None => command.arg("--detach"),
+    };
+    let output = command
+        .arg(sha)
         .output()
         .map_err(|error| format!("run git checkout: {error}"))?;
     if output.status.success() {
@@ -136,6 +179,7 @@ pub fn give_back(
     checkout: &Path,
     capacity: usize,
 ) -> Result<bool, String> {
+    let _held = lock_project(registry, project_path)?;
     if slots(registry, project_path).len() >= capacity {
         return Ok(false);
     }
@@ -213,6 +257,7 @@ fn pooled_projects(registry: &Path) -> Vec<String> {
         .map(|entries| {
             entries
                 .filter_map(Result::ok)
+                .filter(|entry| entry.path().is_dir())
                 .map(|entry| {
                     entry
                         .file_name()
@@ -308,27 +353,56 @@ pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) ->
             }
             Ok(json!({"spares": spares}))
         }),
+        PoolCommand::Size(args) => {
+            let registry = crate::registry::registry_path(&source);
+            if let Some(spares) = args.spares {
+                with_registry_lock(&source, LockMode::Exclusive, true, |registry| {
+                    let mut defaults = defaults::load(registry)?;
+                    defaults.pool_spares = Some(spares);
+                    let bytes = serde_json::to_vec_pretty(&defaults)
+                        .map_err(|error| AppError::io("serialize defaults.json", error))?;
+                    crate::util::write_atomic(&defaults::path(registry), &bytes, 0o644)
+                })?;
+            }
+            let spares = capacity(&registry);
+            if !json_output {
+                println!("{spares} spare(s) per pooled project");
+            }
+            Ok(json!({"spares": spares, "default": DEFAULT_SPARES}))
+        }
         PoolCommand::Fill(args) => {
             let registry = crate::registry::registry_path(&source);
-            let configured = with_registry_lock(&source, LockMode::Shared, false, |registry| {
-                Ok(defaults::load(registry)?
-                    .projects
-                    .into_iter()
-                    .filter(|(_, mode)| mode == "pool")
-                    .map(|(project, _)| project)
-                    .collect::<Vec<_>>())
-            })?;
-            let projects = select(&source, cwd, &args.projects, configured)?;
+            let mut pooled = defaults::load(&registry)?
+                .projects
+                .into_iter()
+                .filter(|(_, mode)| mode == "pool")
+                .map(|(project, _)| project)
+                .collect::<Vec<_>>();
+            pooled.extend(pooled_projects(&registry));
+            for tree in load_all(&registry)? {
+                pooled.extend(
+                    tree.projects
+                        .iter()
+                        .filter(|project| {
+                            project.mode == crate::model::MODE_WORKTREE && tree.uses_pool(project)
+                        })
+                        .map(|project| project.path.clone()),
+                );
+            }
+            pooled.sort();
+            pooled.dedup();
+            let projects = select(&source, cwd, &args.projects, pooled)?;
             if projects.is_empty() {
                 return Err(AppError::operational(
                     "E_NO_POOL_PROJECTS",
-                    "no projects have a pool default; run `defaults pool <project>` or name projects",
+                    "no pooled projects yet: create a tree first, run `defaults pool <project>`, or name projects",
                 ));
             }
+            let count = args.count.unwrap_or_else(|| capacity(&registry));
             let mut work = Vec::new();
             for project in &projects {
                 let existing = slots(&registry, project).len();
-                for _ in existing..args.count {
+                for _ in existing..count {
                     work.push(project.clone());
                 }
             }
@@ -377,10 +451,12 @@ pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) ->
             }
         }
         PoolCommand::Clear(args) => {
-            with_registry_lock(&source, LockMode::Exclusive, false, |registry| {
+            with_registry_lock(&source, LockMode::Shared, false, |registry| {
                 let projects = select(&source, cwd, &args.projects, pooled_projects(registry))?;
                 let mut cleared = Vec::new();
                 for project in projects {
+                    let _held = lock_project(registry, &project)
+                        .map_err(|reason| AppError::locked("E_LOCKED", reason))?;
                     let directory = project_dir(registry, &project);
                     let Ok(common) = common_dir(&source, &project) else {
                         let _ = fs::remove_dir_all(&directory);
@@ -439,25 +515,13 @@ fn fill_one(source: &Path, registry: &Path, project: &str) -> Result<PathBuf, St
         return Err(exit_reason(&output));
     }
     let slot = directory.join(&name);
-    let mut attempts = 0;
-    let published = loop {
-        let result = with_registry_lock(source, LockMode::Exclusive, false, |_| {
-            git_worktree_move(&common, &staging, &slot)
-                .map_err(|reason| AppError::operational("E_IO", reason))
-        });
-        match result {
-            Err(error) if error.exit_code == 4 && attempts < 600 => {
-                attempts += 1;
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-            other => break other,
-        }
-    };
+    let published = lock_project(registry, project)
+        .and_then(|_held| git_worktree_move(&common, &staging, &slot));
     match published {
         Ok(()) => Ok(slot),
         Err(error) => {
             let _ = remove_slot(&common, &staging);
-            Err(error.message)
+            Err(error)
         }
     }
 }

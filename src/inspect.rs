@@ -243,6 +243,61 @@ fn count_unbranched(
         .map_err(|_| "could not parse git rev-list output".to_string())
 }
 
+/// Processes whose working directory is inside `root` or whose arguments name
+/// it, such as build servers started from a tree. Linux only; elsewhere empty.
+pub fn processes_referencing(root: &Path) -> Vec<serde_json::Value> {
+    if !cfg!(target_os = "linux") {
+        return Vec::new();
+    }
+    let me = std::process::id();
+    let root_text = root.to_string_lossy().into_owned();
+    let nested = format!("{root_text}/");
+    let mentions = |argument: &str| argument.ends_with(&root_text) || argument.contains(&nested);
+    let mut found = Vec::new();
+    for entry in fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == me {
+            continue;
+        }
+        let cwd_inside = fs::read_link(entry.path().join("cwd"))
+            .map(|cwd| cwd.starts_with(root))
+            .unwrap_or(false);
+        let arguments = fs::read(entry.path().join("cmdline"))
+            .unwrap_or_default()
+            .split(|byte| *byte == 0)
+            .filter(|argument| !argument.is_empty())
+            .map(|argument| String::from_utf8_lossy(argument).into_owned())
+            .collect::<Vec<_>>();
+        let named = arguments.iter().any(|argument| mentions(argument));
+        if !cwd_inside && !named {
+            continue;
+        }
+        let mut command = arguments.join(" ");
+        if command.len() > 120 {
+            let mut end = 120;
+            while !command.is_char_boundary(end) {
+                end -= 1;
+            }
+            command.truncate(end);
+        }
+        found.push(serde_json::json!({
+            "pid": pid,
+            "command": command,
+            "reason": if cwd_inside { "cwd" } else { "arguments" },
+        }));
+        if found.len() == 20 {
+            break;
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

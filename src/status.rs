@@ -114,7 +114,7 @@ fn tree_location(meta: &TreeMeta) -> Location {
 pub fn detach(args: &DetachArgs, cwd: &Path, json_output: bool, quiet: bool) -> AppResult<Value> {
     let client = discover_client(cwd, true)?;
     let source_root = client.root.clone();
-    with_registry_lock(&client.root, LockMode::Exclusive, false, |registry| {
+    with_registry_lock(&client.root, LockMode::Shared, false, |registry| {
         let source = || -> AppResult<Location> {
             Ok(Location {
                 label: "source".into(),

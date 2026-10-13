@@ -9,9 +9,15 @@ pub const MODE_WORKTREE: &str = "worktree";
 pub const MODE_SHARED: &str = "symlink-shared";
 pub const MODE_OVERLAY: &str = "overlay";
 
-/// Projects tracking more than this many bytes are "heavy": throttled during
-/// population and pooled by default.
+/// Projects tracking more than this many bytes are "heavy" and throttled
+/// during population.
 pub const HEAVY_PROJECT_BYTES: u64 = 500 * 1024 * 1024;
+
+/// Checkout cost grows with file count (about 70 microseconds per file on
+/// ext4), so projects with this many tracked files are pooled by default.
+pub const POOL_MIN_FILES: u64 = 30_000;
+/// Projects this large are pooled by default even with few files.
+pub const POOL_MIN_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 pub fn default_heavy_jobs() -> usize {
     3
@@ -50,6 +56,8 @@ pub struct ProjectMeta {
     pub strategy: Option<String>,
     #[serde(default)]
     pub est_bytes: Option<u64>,
+    #[serde(default)]
+    pub est_files: Option<u64>,
     #[serde(default)]
     pub remote: Option<String>,
     #[serde(default)]
@@ -163,16 +171,20 @@ impl TreeMeta {
             .count()
     }
 
-    /// Whether a project uses the spare-worktree pool: an explicit `pool`
-    /// default, or, with no default, a heavy project without `clone-depth`.
+    /// Whether a project that ends up as a worktree uses the spare-worktree
+    /// pool: an explicit `pool` default, or, with no default, a project slow to
+    /// check out. Fixed-depth projects qualify too, because they become
+    /// worktrees when their source checkout is too dirty to share.
     pub fn uses_pool(&self, project: &ProjectMeta) -> bool {
         match self.default_modes.get(&project.path).map(String::as_str) {
             Some("pool") => true,
             Some(_) => false,
-            None => {
-                project.clone_depth.is_none()
-                    && project.est_bytes.unwrap_or(0) > HEAVY_PROJECT_BYTES
-            }
+            None => match project.est_files {
+                Some(files) => {
+                    files >= POOL_MIN_FILES || project.est_bytes.unwrap_or(0) >= POOL_MIN_BYTES
+                }
+                None => project.est_bytes.unwrap_or(0) > HEAVY_PROJECT_BYTES,
+            },
         }
     }
 

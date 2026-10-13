@@ -107,7 +107,7 @@ done
 [ -n "$install_dir" ] ||
     fail "HOME is unset; provide an install directory with --install-dir"
 
-for command_name in curl tar git awk sed tr mkdir cp chmod mv uname mktemp; do
+for command_name in curl tar git awk sed tr mkdir cp chmod mv uname mktemp cmp; do
     command -v "$command_name" >/dev/null 2>&1 ||
         fail "required command not found: $command_name"
 done
@@ -368,7 +368,7 @@ else
     git_version=$installed_version
 fi
 if [ -n "$found_binary" ] && [ "$found_binary" != "$destination" ] &&
-    [ "$("$found_binary" version 2>/dev/null || true)" != "$installed_version" ]; then
+    ! cmp -s "$found_binary" "$destination"; then
     warn "another git-repo-worktree at $found_binary shadows $destination"
     warn "git runs commands found on PATH before aliases, so 'git repo-worktree' uses the other copy"
     warn "remove it (for example: cargo uninstall git-repo-worktree) or put $install_dir earlier on PATH"

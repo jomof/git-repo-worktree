@@ -477,6 +477,23 @@ fn persistent_defaults_are_symmetric_and_affect_only_future_trees() {
         .iter()
         .find(|tree| tree["name"] == "shared-default")
         .unwrap();
+    assert_eq!(
+        original["project_counts"],
+        serde_json::json!({"symlink-shared": 1})
+    );
+    assert!(original.get("projects").is_none());
+    let detailed = output_json(
+        command(&fixture)
+            .args(["list", "-v", "--json"])
+            .assert()
+            .success(),
+    );
+    let original = detailed["result"]["trees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tree| tree["name"] == "shared-default")
+        .unwrap();
     assert_eq!(original["projects"][0]["mode"], "symlink-shared");
     assert_eq!(original["default_modes"]["p"], "symlink");
 
@@ -1717,6 +1734,39 @@ mod overlay_mode {
     }
 
     #[test]
+    fn remove_warns_about_processes_still_using_the_tree_and_reflink_is_probed_once() {
+        let fixture = fixture();
+        command(&fixture)
+            .arg("add")
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+        let mut sleeper = StdCommand::new("sleep")
+            .arg("60")
+            .current_dir(fixture.destination.join("p"))
+            .spawn()
+            .unwrap();
+        let removed = output_json(
+            command(&fixture)
+                .args(["remove", "--force", "--json", "tree"])
+                .assert()
+                .success(),
+        );
+        let lingering = removed["result"]["lingering_processes"].as_array().unwrap();
+        assert!(
+            lingering
+                .iter()
+                .any(|process| process["pid"] == sleeper.id() && process["reason"] == "cwd"),
+            "{lingering:?}"
+        );
+        sleeper.kill().unwrap();
+        let _ = sleeper.wait();
+        let history =
+            fs::read_to_string(fixture.client.join(".repo/repo-worktrees/history.jsonl")).unwrap();
+        assert!(!history.contains("reflink fallback: reflink"), "{history}");
+    }
+
+    #[test]
     fn overlay_projects_are_isolated_copy_on_write_worktrees() {
         if !overlay_usable() {
             return;
@@ -2023,4 +2073,192 @@ fn history_records_invocations_and_report_summarizes_them() {
         .assert()
         .success()
         .stdout(predicates::str::contains("slowest projects to populate"));
+}
+
+fn hold_lock(path: &Path) -> &'static mut fd_lock::RwLock<fs::File> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .unwrap();
+    Box::leak(Box::new(fd_lock::RwLock::new(file)))
+}
+
+#[test]
+fn readers_never_block_and_writers_wait_for_busy_trees() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let tree_lock = hold_lock(&fixture.client.join(".repo/repo-worktrees/tree/lock"));
+    let registry_lock = hold_lock(&fixture.client.join(".repo/repo-worktrees/lock"));
+    let tree_guard = tree_lock.try_write().unwrap();
+    let registry_guard = registry_lock.try_write().unwrap();
+
+    command(&fixture)
+        .args(["list", "--json"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["status", "tree", "--json"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["report", "--json"])
+        .assert()
+        .success();
+    let started = std::time::Instant::now();
+    let refused = output_json(
+        command(&fixture)
+            .args(["lock", "tree", "--lock-timeout", "1", "--json"])
+            .assert()
+            .code(4),
+    );
+    assert_eq!(refused["error"]["code"], "E_LOCKED");
+    assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+    drop(registry_guard);
+    let other = fixture.temp.path().join("other");
+    command(&fixture)
+        .arg("add")
+        .arg(&other)
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .success();
+
+    let mut waiting = command(&fixture);
+    waiting.args(["lock", "tree", "--reason", "waited"]);
+    let handle = std::thread::spawn(move || waiting.assert().success());
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    drop(tree_guard);
+    handle
+        .join()
+        .unwrap()
+        .stderr(predicates::str::contains("waiting for tree tree"));
+    let listed = output_json(
+        command(&fixture)
+            .args(["list", "--json"])
+            .assert()
+            .success(),
+    );
+    let tree = listed["result"]["trees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tree| tree["name"] == "tree")
+        .unwrap()
+        .clone();
+    assert_eq!(tree["locked"]["reason"], "waited");
+}
+
+#[test]
+fn branched_projects_use_the_pool_and_spares_follow_the_pool_size() {
+    let fixture = fixture();
+    two_project_snapshot(&fixture);
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    let first = fixture.temp.path().join("first");
+    let second = fixture.temp.path().join("second");
+    for path in [&first, &second] {
+        command(&fixture).arg("add").arg(path).assert().success();
+    }
+    for name in ["first", "second"] {
+        command(&fixture).args(["remove", name]).assert().success();
+    }
+    let size = output_json(
+        command(&fixture)
+            .args(["pool", "size", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(size["result"]["spares"], 2);
+    let spares = output_json(
+        command(&fixture)
+            .args(["pool", "status", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(spares["result"]["spares"].as_array().unwrap().len(), 2);
+
+    let branched = output_json(
+        command(&fixture)
+            .args(["add", "-b", "topic", "-p", "p", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    let p = &branched["result"]["projects"][0];
+    assert_eq!(p["path"], "p");
+    assert_eq!(p["strategy"], "pool");
+    let checkout = fixture.destination.join("p");
+    assert_eq!(
+        git(&checkout, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "topic"
+    );
+    assert_eq!(
+        git(&checkout, &["config", "branch.topic.merge"]),
+        "refs/heads/release"
+    );
+    command(&fixture)
+        .args(["remove", "tree"])
+        .assert()
+        .success();
+    assert_eq!(
+        git(&fixture.client.join("p"), &["branch", "--list", "topic"]),
+        "topic"
+    );
+
+    command(&fixture)
+        .args(["pool", "size", "1"])
+        .assert()
+        .success();
+    command(&fixture).args(["pool", "clear"]).assert().success();
+    command(&fixture)
+        .args(["defaults", "auto", "p"])
+        .assert()
+        .success();
+    let unknown = output_json(
+        command(&fixture)
+            .args(["pool", "fill", "--json"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(unknown["error"]["code"], "E_NO_POOL_PROJECTS");
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture).arg("add").arg(&first).assert().success();
+    command(&fixture)
+        .args(["defaults", "auto", "p"])
+        .assert()
+        .success();
+    let filled = output_json(
+        command(&fixture)
+            .args(["pool", "fill", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(filled["result"]["filled"].as_array().unwrap().len(), 1);
+    assert_eq!(filled["result"]["filled"][0]["project"], "p");
+}
+
+#[test]
+fn version_reports_the_build_commit() {
+    let fixture = fixture();
+    let version = output_json(
+        command(&fixture)
+            .args(["version", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(version["result"]["version"], env!("CARGO_PKG_VERSION"));
+    if Path::new(env!("CARGO_MANIFEST_DIR")).join(".git").exists() {
+        assert!(version["result"]["commit"].is_string());
+    }
 }

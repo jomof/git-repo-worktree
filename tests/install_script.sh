@@ -110,12 +110,21 @@ test -f "$default_home/.local/share/man/man1/git-repo-worktree-add.1"
 shadow_home="$temporary_dir/shadow-home"
 shadow_bin="$temporary_dir/shadow-bin"
 mkdir "$shadow_home" "$shadow_bin"
-printf '%s\n' '#!/bin/sh' "printf 'git-repo-worktree stale\\n'" >"$shadow_bin/git-repo-worktree"
+# A stale copy that reports the same version string must still be noticed.
+printf '%s\n' '#!/bin/sh' '# older build' "printf 'git-repo-worktree test\\n'" >"$shadow_bin/git-repo-worktree"
 chmod +x "$shadow_bin/git-repo-worktree"
 HOME="$shadow_home" PATH="$shadow_bin:$PATH" "$installer_shell" "$project_root/install.sh" \
     --version v9.9.9 --no-man >"$temporary_dir/shadow-output" 2>&1
 grep -q "shadows .*shadow-home/.local/bin/git-repo-worktree" "$temporary_dir/shadow-output"
 test ! -e "$shadow_home/.local/share/man/man1/git-repo-worktree.1"
+
+cp "$shadow_home/.local/bin/git-repo-worktree" "$shadow_bin/git-repo-worktree"
+HOME="$shadow_home" PATH="$shadow_bin:$PATH" "$installer_shell" "$project_root/install.sh" \
+    --version v9.9.9 --no-man >"$temporary_dir/identical-output" 2>&1
+if grep -q "shadows" "$temporary_dir/identical-output"; then
+    printf 'installer warned about an identical copy\n' >&2
+    exit 1
+fi
 
 no_alias_home="$temporary_dir/no-alias-home"
 no_alias_dir="$temporary_dir/no-alias-bin"
