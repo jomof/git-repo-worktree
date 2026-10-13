@@ -1,0 +1,41 @@
+=== git repo-worktree version -v (inside ~/projects/studio-main) ===
+git-repo-worktree 1.0.0
+git git version 2.56.0.385.gd3acb90ef8-goog
+repo repo version v2.68.1
+
+=== git repo-worktree version --json (inside ~/projects/studio-main) ===
+{"format_version":1,"command":"version","ok":true,"exit_code":0,"error":null,"result":{"git":"git version 2.56.0.385.gd3acb90ef8-goog","repo":"repo version v2.68.1","version":"1.0.0"}}
+
+=== Binary provenance ===
+Active binary: /usr/local/google/home/jomof/.local/bin/git-repo-worktree
+Git commit: 6ff9e5e ("Do not assume the default branch name in the overlay test")
+SHA-256 (v2 local build): 80b500dd8f0a4f5d26e1674bf059b1e847cacb5fd6ba8ba99eafd3304e3c6f65 (3,101,480 bytes)
+SHA-256 (round-1 v1.0.0 binary backed up from ~/.cargo/bin): 5b1d614525eb75ae7b8cf2496ec6e5b990b86352cad298134374d6176a1fb295 (2,536,288 bytes)
+
+=== which -a git-repo-worktree (before PATH shadow fix) ===
+/usr/local/google/home/jomof/.cargo/bin/git-repo-worktree
+/usr/local/google/home/jomof/.local/bin/git-repo-worktree
+
+=== which -a git-repo-worktree (after PATH shadow fix) ===
+/usr/local/google/home/jomof/.local/bin/git-repo-worktree
+
+=== man -w git-repo-worktree ===
+/usr/local/google/home/jomof/.local/share/man/man1/git-repo-worktree.1
+(18 man pages installed under /usr/local/google/home/jomof/.local/share/man/man1/git-repo-worktree*.1)
+
+=== uname -a ===
+Linux jomof-specialist.c.googlers.com 7.1.6-1rodete1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 7.1.6-1rodete1 (2026-06-11) x86_64 GNU/Linux
+
+=== CPU count ===
+96 logical CPUs (x86_64)
+
+=== fuse-overlayfs --version ===
+fuse-overlayfs: version 1.13
+FUSE library version 3.17.4
+using FUSE kernel interface version 7.40
+fusermount3 version: 3.17.4
+
+=== df -T /usr/local/google/home/jomof /usr/local/google/home/jomof/projects ===
+Filesystem                       Type  1K-blocks       Used Available Use% Mounted on
+/dev/mapper/glinux_20250410-root ext4 1909033944 1025689816 786327616  57% /
+/dev/mapper/glinux_20250410-root ext4 1909033944 1025689816 786327616  57% /
