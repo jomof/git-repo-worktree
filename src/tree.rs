@@ -650,9 +650,7 @@ fn run_add_phases(
     if INTERRUPTED.load(Ordering::SeqCst) {
         meta.state = "incomplete".into();
         write_meta(meta)?;
-        return Err(AppError::partial(
-            serde_json::to_value(&*meta).expect("tree metadata serializes"),
-        ));
+        return Err(AppError::partial(tree_json(meta, verbose)));
     }
 
     let directive_started = Instant::now();
@@ -735,7 +733,7 @@ fn run_add_phases(
     }
     phase_done(quiet, verbose, "total", operation_started, None);
     record_tree_metrics(meta);
-    let result = serde_json::to_value(&*meta).expect("tree metadata serializes");
+    let result = tree_json(meta, verbose);
     if meta.state == "incomplete" {
         Err(AppError::partial(result))
     } else {
@@ -2151,39 +2149,52 @@ pub fn list(args: &ListArgs, cwd: &Path, json_output: bool, verbose: u8) -> AppR
         }
         let trees = trees
             .iter()
-            .map(|tree| {
-                let mut value = serde_json::to_value(tree).expect("tree metadata serializes");
-                value["checked_out_branches"] =
-                    Value::Array(crate::status::checked_out_branches(tree));
-                if verbose == 0 {
-                    let mut counts = std::collections::BTreeMap::new();
-                    for project in tree
-                        .projects
-                        .iter()
-                        .filter(|project| project.state != "skipped")
-                    {
-                        *counts.entry(project.mode.clone()).or_insert(0usize) += 1;
-                    }
-                    let failed = tree
-                        .projects
-                        .iter()
-                        .filter(|project| project.state == "failed")
-                        .map(|project| json!({"path": project.path, "reason": project.reason}))
-                        .collect::<Vec<_>>();
-                    if let Value::Object(object) = &mut value {
-                        object.remove("projects");
-                        object.remove("copyfiles");
-                        object.remove("linkfiles");
-                        object.insert("project_counts".into(), json!(counts));
-                        object.insert("skipped".into(), json!(tree.skipped_count()));
-                        object.insert("failed_projects".into(), Value::Array(failed));
-                    }
-                }
-                value
-            })
+            .map(|tree| tree_json(tree, verbose))
             .collect::<Vec<_>>();
         Ok(json!({"trees": trees}))
     })
+}
+
+/// A tree as reported in JSON results. Without `-v`, per-project and
+/// per-directive records are replaced by counts and failures, which keeps
+/// results small enough for agents' tool output.
+pub fn tree_json(tree: &TreeMeta, verbose: u8) -> Value {
+    let mut value = serde_json::to_value(tree).expect("tree metadata serializes");
+    value["checked_out_branches"] = Value::Array(crate::status::checked_out_branches(tree));
+    if verbose > 0 {
+        return value;
+    }
+    let mut counts = std::collections::BTreeMap::new();
+    for project in tree
+        .projects
+        .iter()
+        .filter(|project| project.state != "skipped")
+    {
+        *counts.entry(project.mode.clone()).or_insert(0usize) += 1;
+    }
+    let failed = tree
+        .projects
+        .iter()
+        .filter(|project| project.state == "failed")
+        .map(|project| json!({"path": project.path, "reason": project.reason}))
+        .collect::<Vec<_>>();
+    let failed_directives = tree
+        .copyfiles
+        .iter()
+        .chain(tree.linkfiles.iter())
+        .filter(|directive| directive.state == "failed")
+        .map(|directive| json!({"dest": directive.dest, "reason": directive.reason}))
+        .collect::<Vec<_>>();
+    if let Value::Object(object) = &mut value {
+        object.remove("projects");
+        object.remove("copyfiles");
+        object.remove("linkfiles");
+        object.insert("project_counts".into(), json!(counts));
+        object.insert("skipped".into(), json!(tree.skipped_count()));
+        object.insert("failed_projects".into(), Value::Array(failed));
+        object.insert("failed_directives".into(), Value::Array(failed_directives));
+    }
+    value
 }
 
 fn print_porcelain(trees: &[TreeMeta], registry: &Path, nul: bool) -> AppResult<()> {
@@ -2317,7 +2328,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             let returned = if args.no_pool {
                 Vec::new()
             } else {
-                return_projects_to_pool(&meta, registry, clean_projects.as_ref(), quiet)
+                return_projects_to_pool(&meta, registry, clean_projects.as_ref(), jobs, quiet)
             };
             crate::metrics::phase("pool-return", crate::metrics::elapsed_ms(step));
             crate::metrics::record("returned_to_pool", json!(returned.len()));
@@ -2472,6 +2483,7 @@ fn return_projects_to_pool(
     meta: &TreeMeta,
     registry: &Path,
     clean: Option<&HashSet<String>>,
+    jobs: usize,
     quiet: bool,
 ) -> Vec<String> {
     let root = meta.root();
@@ -2489,14 +2501,15 @@ fn return_projects_to_pool(
                 })
         })
         .collect::<Vec<_>>();
-    let mut returned = Vec::new();
-    for project in candidates {
+    let capacity = pool::capacity(registry);
+    let entry = meta.registry_entry();
+    let give_back = |project: &&ProjectMeta| -> Option<String> {
         let is_clean = match clean {
             Some(clean) => clean.contains(&project.path),
-            None => !crate::inspect::inspect_project(&root, &meta.registry_entry(), project).dirty,
+            None => !crate::inspect::inspect_project(&root, &entry, project).dirty,
         };
         if !is_clean {
-            continue;
+            return None;
         }
         let checkout = root.join(&project.path);
         match pool::give_back(
@@ -2504,10 +2517,10 @@ fn return_projects_to_pool(
             &project.path,
             &project.git_common_dir,
             &checkout,
-            pool::capacity(registry),
+            capacity,
         ) {
-            Ok(true) => returned.push(project.path.clone()),
-            Ok(false) => {}
+            Ok(true) => Some(project.path.clone()),
+            Ok(false) => None,
             Err(reason) => {
                 if !quiet {
                     eprintln!(
@@ -2515,9 +2528,14 @@ fn return_projects_to_pool(
                         project.path
                     );
                 }
+                None
             }
         }
-    }
+    };
+    let returned = match ThreadPoolBuilder::new().num_threads(jobs.max(1)).build() {
+        Ok(workers) => workers.install(|| candidates.par_iter().filter_map(give_back).collect()),
+        Err(_) => candidates.iter().filter_map(give_back).collect::<Vec<_>>(),
+    };
     returned
 }
 
@@ -2952,7 +2970,7 @@ pub fn materialize(
                     }
                 );
             }
-            let mut result = serde_json::to_value(&meta).expect("tree metadata serializes");
+            let mut result = tree_json(&meta, verbose);
             result["materialized"] = json!(converted);
             result["already_materialized"] = json!(already);
             result["resolved"] = json!(resolved);
@@ -3118,7 +3136,7 @@ pub fn prune(args: &PruneArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
     })
 }
 
-pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
+pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Value> {
     check_git_version()?;
     let client = discover_client(cwd, true)?;
     with_registry_lock(&client.root, LockMode::Shared, false, |registry| {
@@ -3187,9 +3205,9 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             }
         }
         let result = if trees.len() == 1 {
-            serde_json::to_value(&trees[0]).expect("tree metadata serializes")
+            tree_json(&trees[0], verbose)
         } else {
-            json!({"trees": trees})
+            json!({"trees": trees.iter().map(|tree| tree_json(tree, verbose)).collect::<Vec<_>>()})
         };
         if incomplete {
             Err(AppError::partial(result))
@@ -3459,27 +3477,30 @@ mod tests {
             "locked": null, "moving": null, "projects": [], "copyfiles": [], "linkfiles": []
         }))
         .unwrap();
-        let mut many_files = project("many-files", "done");
-        many_files.est_files = Some(crate::model::POOL_MIN_FILES);
-        many_files.est_bytes = Some(1);
-        let mut big_files = project("big-files", "done");
-        big_files.est_files = Some(10);
-        big_files.est_bytes = Some(crate::model::POOL_MIN_BYTES);
-        big_files.clone_depth = Some(1);
-        let mut small = project("small", "done");
-        small.est_files = Some(crate::model::POOL_MIN_FILES - 1);
-        small.est_bytes = Some(HEAVY_PROJECT_BYTES * 2);
+        let sized = |path: &str, files: u64, bytes: u64| {
+            let mut sized = project(path, "done");
+            sized.est_files = Some(files);
+            sized.est_bytes = Some(bytes);
+            sized
+        };
+        let base = sized("tools/base", 20_400, 926_380_995);
+        let mut sdk = sized("prebuilts/sdk", 213_697, 10_391_003_569);
+        sdk.clone_depth = Some(1);
+        let dexter = sized("external/dexter", 183, 666_000_000);
+        let emulator = sized("tools/emulator", 521, 289_000_000);
         let mut legacy = project("legacy", "done");
         legacy.est_bytes = Some(HEAVY_PROJECT_BYTES + 1);
-        assert!(meta.uses_pool(&many_files));
-        assert!(meta.uses_pool(&big_files));
-        assert!(!meta.uses_pool(&small));
+        assert!(meta.uses_pool(&base));
+        assert!(meta.uses_pool(&sdk));
+        assert!(!meta.uses_pool(&dexter));
+        assert!(!meta.uses_pool(&emulator));
         assert!(meta.uses_pool(&legacy));
         meta.default_modes
-            .insert("many-files".into(), "worktree".into());
-        meta.default_modes.insert("small".into(), "pool".into());
-        assert!(!meta.uses_pool(&many_files));
-        assert!(meta.uses_pool(&small));
+            .insert("tools/base".into(), "worktree".into());
+        meta.default_modes
+            .insert("tools/emulator".into(), "pool".into());
+        assert!(!meta.uses_pool(&base));
+        assert!(meta.uses_pool(&emulator));
     }
 
     #[test]

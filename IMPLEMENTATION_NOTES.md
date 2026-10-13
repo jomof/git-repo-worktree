@@ -96,3 +96,13 @@ machine interface deterministic:
   owner installed them, and studio-main has no manifest hook to extend. Hook
   failures are reported but never fail `add`: the tree itself is complete, and
   `repair` retries the hook.
+
+## Round 3 changes
+
+- Pooling uses an estimated checkout time (60 µs per file plus 500 MB/s, at
+  least 1.5 s) fitted to round-3 cold checkouts: it keeps the six projects
+  pooled before and adds `tools/base`, `tools/vendor/google`, and
+  `tools/vendor/intellij/cidr`, which had become the slowest projects in a
+  warm `add`, at about 1.7 GB per spare set.
+- `add`, `repair`, and `materialize` return tree summaries by default: a
+  full 56-project tree is about 25 KB, which truncated agents' tool output.

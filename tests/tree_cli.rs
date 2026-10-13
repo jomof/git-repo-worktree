@@ -141,7 +141,7 @@ fn happy_path_list_move_lock_unlock_and_remove() {
     let fixture = fixture();
     let added = output_json(
         command(&fixture)
-            .arg("add")
+            .args(["-v", "add"])
             .arg(&fixture.destination)
             .arg("--json")
             .assert()
@@ -226,6 +226,7 @@ fn branch_collision_is_resumable_without_repinning() {
     let partial = output_json(
         command(&fixture)
             .args([
+                "-v",
                 "add",
                 "-b",
                 "topic/test",
@@ -250,7 +251,7 @@ fn branch_collision_is_resumable_without_repinning() {
 
     let resumed = output_json(
         command(&fixture)
-            .args(["add", "--continue", "branch-tree", "--json"])
+            .args(["-v", "add", "--continue", "branch-tree", "--json"])
             .assert()
             .success(),
     );
@@ -354,7 +355,7 @@ fn crash_hook_leaves_a_resumable_original_snapshot() {
     assert_eq!(listed["result"]["trees"][0]["state"], "creating");
     let resumed = output_json(
         command(&fixture)
-            .args(["add", "--continue", "crashed", "--json"])
+            .args(["-v", "add", "--continue", "crashed", "--json"])
             .assert()
             .success(),
     );
@@ -386,7 +387,7 @@ fn default_add_shares_clean_fixed_depth_projects_and_remove_preserves_source() {
     let fixture = fixture();
     enable_clone_depth_sharing(&fixture, false);
     let assert = command(&fixture)
-        .args(["add", "--json"])
+        .args(["-v", "add", "--json"])
         .arg(&fixture.destination)
         .assert()
         .success();
@@ -433,7 +434,7 @@ fn persistent_defaults_are_symmetric_and_affect_only_future_trees() {
     let fixture = fixture();
     let configured = output_json(
         command(&fixture)
-            .args(["defaults", "symlink", "p", "--json"])
+            .args(["-v", "defaults", "symlink", "p", "--json"])
             .assert()
             .success(),
     );
@@ -442,7 +443,7 @@ fn persistent_defaults_are_symmetric_and_affect_only_future_trees() {
     let shared_tree = fixture.temp.path().join("shared-default");
     let shared = output_json(
         command(&fixture)
-            .args(["add", "--name", "shared-default", "--json"])
+            .args(["-v", "add", "--name", "shared-default", "--json"])
             .arg(&shared_tree)
             .assert()
             .success(),
@@ -457,7 +458,7 @@ fn persistent_defaults_are_symmetric_and_affect_only_future_trees() {
     let materialized_tree = fixture.temp.path().join("worktree-default");
     let materialized = output_json(
         command(&fixture)
-            .args(["add", "--name", "worktree-default", "--json"])
+            .args(["-v", "add", "--name", "worktree-default", "--json"])
             .arg(&materialized_tree)
             .assert()
             .success(),
@@ -499,7 +500,7 @@ fn persistent_defaults_are_symmetric_and_affect_only_future_trees() {
 
     let automatic = output_json(
         command(&fixture)
-            .args(["defaults", "auto", "p", "--json"])
+            .args(["-v", "defaults", "auto", "p", "--json"])
             .assert()
             .success(),
     );
@@ -510,7 +511,7 @@ fn persistent_defaults_are_symmetric_and_affect_only_future_trees() {
     let automatic_tree = fixture.temp.path().join("automatic-default");
     let added = output_json(
         command(&fixture)
-            .args(["add", "--name", "automatic-default", "--json"])
+            .args(["-v", "add", "--name", "automatic-default", "--json"])
             .arg(&automatic_tree)
             .assert()
             .success(),
@@ -538,7 +539,7 @@ fn persistent_defaults_override_clone_depth_candidate_inference() {
             .success();
         let added = output_json(
             command(&fixture)
-                .args(["add", "--json"])
+                .args(["-v", "add", "--json"])
                 .arg(&fixture.destination)
                 .assert()
                 .success(),
@@ -572,7 +573,7 @@ fn persistent_symlink_default_does_not_bypass_source_safety() {
     fs::write(fixture.client.join("p/untracked.txt"), "source only\n").unwrap();
     let added = output_json(
         command(&fixture)
-            .args(["add", "--json"])
+            .args(["-v", "add", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success(),
@@ -610,7 +611,7 @@ fn defaults_validate_new_preferences_but_auto_can_remove_stale_paths() {
     fs::write(fixture.client.join(".repo/project.list"), "").unwrap();
     let cleared = output_json(
         command(&fixture)
-            .args(["defaults", "auto", "p", "--json"])
+            .args(["-v", "defaults", "auto", "p", "--json"])
             .assert()
             .success(),
     );
@@ -640,7 +641,7 @@ fn interrupted_add_retains_its_captured_defaults() {
 
     let resumed = output_json(
         command(&fixture)
-            .args(["add", "--continue", "captured-default", "--json"])
+            .args(["-v", "add", "--continue", "captured-default", "--json"])
             .assert()
             .success(),
     );
@@ -660,7 +661,7 @@ fn interrupted_shared_add_replays_idempotently() {
         .failure();
     let resumed = output_json(
         command(&fixture)
-            .args(["add", "--continue", "shared-crash", "--json"])
+            .args(["-v", "add", "--continue", "shared-crash", "--json"])
             .assert()
             .success(),
     );
@@ -683,7 +684,7 @@ fn full_controls_and_client_wide_guardrail_materialize_instead() {
         let fixture = fixture();
         enable_clone_depth_sharing(&fixture, control == "all-fixed-depth");
         let mut add = command(&fixture);
-        add.arg("add").arg("--json");
+        add.args(["-v", "add", "--json"]);
         match control {
             "full" => {
                 add.arg("--full");
@@ -727,7 +728,7 @@ fn materialize_converts_shared_project_and_preserves_tree_lock() {
         .success();
     let converted = output_json(
         command(&fixture)
-            .args(["materialize", "tree", "p", "--json"])
+            .args(["-v", "materialize", "tree", "p", "--json"])
             .assert()
             .success(),
     );
@@ -807,7 +808,7 @@ fn materialize_resumes_after_the_shared_link_was_durably_unlinked() {
 
     let converted = output_json(
         command(&fixture)
-            .args(["materialize", "tree", "p", "--json"])
+            .args(["-v", "materialize", "tree", "p", "--json"])
             .assert()
             .success(),
     );
@@ -851,7 +852,7 @@ fn sharing_demotes_for_dirty_wrong_head_and_sparse_sources() {
         }
         let added = output_json(
             command(&fixture)
-                .args(["add", "--json"])
+                .args(["-v", "add", "--json"])
                 .arg(&fixture.destination)
                 .assert()
                 .success(),
@@ -903,7 +904,7 @@ fn directive_destinations_and_requested_submodules_demote_sharing() {
         )
         .unwrap();
         let mut add = command(&fixture);
-        add.args(["add", "--json"]);
+        add.args(["-v", "add", "--json"]);
         if condition == "submodules" {
             add.arg("--submodules");
         }
@@ -952,7 +953,7 @@ fn a_fixed_depth_parent_of_another_project_is_materialized() {
 
     let added = output_json(
         command(&fixture)
-            .args(["add", "--json"])
+            .args(["-v", "add", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success(),
@@ -1056,7 +1057,7 @@ fn dirty_source_content_never_enters_the_tree() {
     fs::write(fixture.client.join("p/untracked.txt"), "source only\n").unwrap();
     let added = output_json(
         command(&fixture)
-            .args(["add", "--json"])
+            .args(["-v", "add", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success(),
@@ -1089,7 +1090,7 @@ fn wrong_head_sparse_and_no_reflink_all_fall_back_to_checkout() {
             _ => unreachable!(),
         }
         let mut add = command(&fixture);
-        add.args(["add", "--json"]);
+        add.args(["-v", "add", "--json"]);
         if mode == "disabled" {
             add.args(["--no-reflink", "--heavy-jobs", "1"]);
         }
@@ -1136,7 +1137,7 @@ fn reflink_population_preserves_symlinks_modes_and_cleanliness_when_supported() 
 
     let added = output_json(
         command(&fixture)
-            .args(["add", "--json"])
+            .args(["-v", "add", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success(),
@@ -1181,7 +1182,7 @@ fn resume_resets_an_incomplete_registered_worktree_even_when_head_matches() {
 
     let resumed = output_json(
         command(&fixture)
-            .args(["add", "--continue", "tree", "--json"])
+            .args(["-v", "add", "--continue", "tree", "--json"])
             .assert()
             .success(),
     );
@@ -1311,7 +1312,7 @@ fn projects_missing_from_repo_snapshot_are_pinned_from_disk_with_directives() {
 
     let resumed = output_json(
         command(&fixture)
-            .args(["add", "--continue", "tree", "--json"])
+            .args(["-v", "add", "--continue", "tree", "--json"])
             .assert()
             .success(),
     );
@@ -1352,7 +1353,7 @@ fn remove_reports_structured_dirty_details_including_stranded_commits() {
 
     let status = output_json(
         command(&fixture)
-            .args(["status", "tree", "--json"])
+            .args(["-v", "status", "tree", "--json"])
             .assert()
             .success(),
     );
@@ -1403,7 +1404,7 @@ fn branch_scope_creates_tracking_branches_only_in_named_projects() {
     two_project_snapshot(&fixture);
     let added = output_json(
         command(&fixture)
-            .args(["add", "-b", "topic", "-p", "p/some/subdir", "--json"])
+            .args(["-v", "add", "-b", "topic", "-p", "p/some/subdir", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success()
@@ -1493,7 +1494,7 @@ fn subpaths_resolve_to_their_project_for_full_project_and_defaults() {
     enable_clone_depth_sharing(&fixture, false);
     let added = output_json(
         command(&fixture)
-            .args(["add", "--full-project", "p/deep/file.txt", "--json"])
+            .args(["-v", "add", "--full-project", "p/deep/file.txt", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success(),
@@ -1509,7 +1510,7 @@ fn subpaths_resolve_to_their_project_for_full_project_and_defaults() {
     assert_eq!(unknown["error"]["code"], "E_UNKNOWN_PROJECT");
     let defaults = output_json(
         command(&fixture)
-            .args(["defaults", "worktree", "p/deep/file.txt", "--json"])
+            .args(["-v", "defaults", "worktree", "p/deep/file.txt", "--json"])
             .assert()
             .success(),
     );
@@ -1532,7 +1533,7 @@ fn pool_projects_reuse_spares_and_clean_projects_return_on_remove() {
         .success();
     let first = output_json(
         command(&fixture)
-            .args(["add", "--json"])
+            .args(["-v", "add", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success(),
@@ -1562,7 +1563,7 @@ fn pool_projects_reuse_spares_and_clean_projects_return_on_remove() {
     let second_path = fixture.temp.path().join("second");
     let second = output_json(
         command(&fixture)
-            .args(["add", "--json"])
+            .args(["-v", "add", "--json"])
             .arg(&second_path)
             .assert()
             .success(),
@@ -1696,7 +1697,7 @@ mod overlay_mode {
         enable_clone_depth_sharing(&fixture, false);
         let added = output_json(
             command(&fixture)
-                .args(["add", "--json"])
+                .args(["-v", "add", "--json"])
                 .arg(&fixture.destination)
                 .assert()
                 .success(),
@@ -1720,7 +1721,7 @@ mod overlay_mode {
 
         let opted_out = output_json(
             command(&fixture)
-                .args(["add", "--no-overlay", "--json"])
+                .args(["-v", "add", "--no-overlay", "--json"])
                 .arg(&fixture.destination)
                 .assert()
                 .success(),
@@ -1746,13 +1747,32 @@ mod overlay_mode {
             .current_dir(fixture.destination.join("p"))
             .spawn()
             .unwrap();
-        let removed = output_json(
-            command(&fixture)
-                .args(["remove", "--force", "--json", "tree"])
-                .assert()
-                .success(),
+        let tree = fs::canonicalize(&fixture.destination).unwrap();
+        let output = StdCommand::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "'{}' -C '{}' remove --force --json tree # {}",
+                assert_cmd::cargo::cargo_bin("git-repo-worktree").display(),
+                fixture.client.display(),
+                tree.display()
+            ))
+            .env("PATH", &fixture.path_env)
+            .env("HOME", fixture.temp.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
         );
+        let removed: Value = serde_json::from_slice(&output.stdout).unwrap();
         let lingering = removed["result"]["lingering_processes"].as_array().unwrap();
+        assert!(
+            lingering
+                .iter()
+                .all(|process| !process["command"].as_str().unwrap().starts_with("sh -c")),
+            "{lingering:?}"
+        );
         assert!(
             lingering
                 .iter()
@@ -1774,7 +1794,7 @@ mod overlay_mode {
         let fixture = overlay_fixture();
         let added = output_json(
             command(&fixture)
-                .args(["add", "--json"])
+                .args(["-v", "add", "--json"])
                 .arg(&fixture.destination)
                 .assert()
                 .success(),
@@ -1802,7 +1822,7 @@ mod overlay_mode {
         );
         let status = output_json(
             command(&fixture)
-                .args(["status", "tree", "--json"])
+                .args(["-v", "status", "tree", "--json"])
                 .assert()
                 .success(),
         );
@@ -1879,7 +1899,7 @@ mod overlay_mode {
             .success());
         let status = output_json(
             command(&fixture)
-                .args(["status", "tree", "--json"])
+                .args(["-v", "status", "tree", "--json"])
                 .assert()
                 .success(),
         );
@@ -1932,7 +1952,7 @@ mod overlay_mode {
         fs::remove_file(p.join("scratch.txt")).unwrap();
         let converted = output_json(
             command(&fixture)
-                .args(["materialize", "tree", "p", "--json"])
+                .args(["-v", "materialize", "tree", "p", "--json"])
                 .assert()
                 .success(),
         );
@@ -1962,7 +1982,7 @@ mod overlay_mode {
         fs::write(fixture.client.join("p/source.txt"), "dirty source\n").unwrap();
         let added = output_json(
             command(&fixture)
-                .args(["add", "--json"])
+                .args(["-v", "add", "--json"])
                 .arg(&fixture.destination)
                 .assert()
                 .success(),
@@ -2187,7 +2207,7 @@ fn branched_projects_use_the_pool_and_spares_follow_the_pool_size() {
 
     let branched = output_json(
         command(&fixture)
-            .args(["add", "-b", "topic", "-p", "p", "--json"])
+            .args(["-v", "add", "-b", "topic", "-p", "p", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success(),
@@ -2310,6 +2330,9 @@ printf '%s|%s|%s|%s|%s\n' "$PWD" "$GIT_REPO_WORKTREE_TREE" "$GIT_REPO_WORKTREE_N
         .stderr(predicates::str::contains("ran post-add hook"));
     let added = output_json(assert);
     assert_eq!(added["result"]["hooks"]["post-add"]["status"], "ok");
+    assert!(added["result"].get("projects").is_none());
+    assert_eq!(added["result"]["project_counts"]["worktree"], 1);
+    assert_eq!(added["result"]["failed_projects"], serde_json::json!([]));
     let root = fs::canonicalize(&fixture.destination).unwrap();
     let source = fs::canonicalize(&fixture.client).unwrap();
     assert_eq!(
@@ -2349,7 +2372,7 @@ fn failing_and_slow_hooks_are_recorded_and_repair_retries_post_add() {
     install_hook(&fixture, "post-add", "echo broken >&2\nexit 3", true);
     let added = output_json(
         command(&fixture)
-            .args(["add", "--json"])
+            .args(["-v", "add", "--json"])
             .arg(&fixture.destination)
             .assert()
             .success()
@@ -2412,6 +2435,16 @@ fn failing_and_slow_hooks_are_recorded_and_repair_retries_post_add() {
             .assert()
             .success(),
     );
-    assert!(skipped["result"].get("hooks").is_none());
+    assert_eq!(skipped["result"]["hooks"]["post-add"]["status"], "skipped");
     assert!(!skipped_path.join("ran").exists());
+    let repaired = output_json(
+        command(&fixture)
+            .args(["repair", "skipped", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(repaired["result"]["hooks"]["post-add"]["status"], "ok");
+    assert!(skipped_path.join("ran").exists());
+    assert!(repaired["result"].get("projects").is_none());
+    assert!(repaired["result"]["project_counts"]["worktree"].is_u64());
 }

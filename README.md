@@ -74,10 +74,11 @@ git repo-worktree list --json
 ```
 
 Every command accepts `--json`, `-q`, `-v`, and `-C`. JSON mode emits exactly one
-versioned envelope on stdout. `list --json` summarizes each tree
-(`project_counts` by mode, `failed_projects`, `checked_out_branches`); add `-v` for
-every project record, or use `status --json <tree>`, whose `.result` is the tree
-itself. Exit code 3 means a usable but incomplete `add` or `repair`; exit code 4
+versioned envelope on stdout. Tree results (`list --json` per tree, and
+`add`, `repair`, and `materialize`) summarize each tree with `project_counts` by
+mode, `failed_projects`, `failed_directives`, `checked_out_branches`, and
+`hooks`; add `-v` for every project record, or use `status --json <tree>` for
+per-project state. Exit code 3 means a usable but incomplete `add` or `repair`; exit code 4
 means a lock stayed busy past `--lock-timeout` or a concurrent repo sync was
 detected, and is suitable for retry.
 
@@ -168,9 +169,9 @@ A `symlink` default makes the project a sharing candidate even without
 `clone-depth`; it does not bypass any safety fallback. A `worktree` default
 suppresses clone-depth sharing. `auto` returns to manifest-driven behavior.
 
-Without a default, projects that are slow to check out (at least 30,000 tracked
-files or 2 GiB) use `pool`, and fixed-depth projects use `overlay` where
-available. A fixed-depth project whose source checkout is too dirty to share
+Without a default, projects estimated to take at least 1.5 s to check out
+(60 µs per tracked file plus 500 MB/s, fitted to studio-main on ext4) use
+`pool`, and fixed-depth projects use `overlay` where available. A fixed-depth project whose source checkout is too dirty to share
 falls back to a pooled worktree. `defaults worktree <project>` opts a project
 out of both.
 
@@ -319,7 +320,8 @@ Each runs in the tree root with `GIT_REPO_WORKTREE_EVENT`,
 `GIT_REPO_WORKTREE_SOURCE` set. Output goes to stderr. A failing or timed-out
 hook (`GIT_REPO_WORKTREE_HOOK_TIMEOUT`, default 600 s; the hook's whole process
 group is stopped) prints a warning and is recorded under the tree's `hooks`, but
-never fails the command. `add --continue` and `repair` rerun `post-add` until it
+never fails the command. A hook skipped with `--no-hooks` is recorded as
+`skipped`. `add --continue` and `repair` rerun `post-add` until it
 succeeds, so installing a hook and running `repair` applies it to existing
 trees. `git repo-worktree hooks list` shows what is installed; `--no-hooks` or
 `GIT_REPO_WORKTREE_NO_HOOKS=1` skips them. Hooks must not leave background

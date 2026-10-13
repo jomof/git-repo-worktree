@@ -54,15 +54,26 @@ fn is_executable(path: &Path) -> bool {
 
 /// Runs the `event` hook for `meta` if one is installed and hooks are enabled.
 /// The hook's stdout is sent to stderr so `--json` output stays one document.
+/// A hook that is installed but disabled is recorded as `skipped`, so a later
+/// `repair` with hooks enabled still runs `post-add`.
 pub fn run(event: &str, meta: &TreeMeta, quiet: bool) -> Option<HookRecord> {
-    if disabled() {
-        return None;
-    }
     let path = hooks_dir(&meta.source().join(".repo/repo-worktrees")).join(event);
     if !path.exists() {
         return None;
     }
     let started = Instant::now();
+    if disabled() {
+        if !quiet {
+            eprintln!("skipped {event} hook (hooks are disabled)");
+        }
+        return Some(HookRecord {
+            status: "skipped".into(),
+            exit_code: None,
+            ms: 0,
+            at: now(),
+            reason: Some("hooks were disabled".into()),
+        });
+    }
     let finish = |status: &str, exit_code: Option<i32>, reason: Option<String>| {
         let record = HookRecord {
             status: status.into(),

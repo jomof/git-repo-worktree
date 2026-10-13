@@ -221,10 +221,12 @@ directory) prints dirty or branched projects (all with `-v`) and returns
 with `E_DIRTY`, a message listing up to ten projects with their reasons, and
 `error.details.dirty_projects` holding every dirty inspection.
 
-`list --json` reports each tree without `projects`, `copyfiles`, and
+Tree results — `list --json` per tree, and the results of `add`,
+`add --continue`, `repair`, and `materialize` — omit `projects`, `copyfiles`, and
 `linkfiles`, adding `project_counts` (non-skipped projects by mode), `skipped`,
-and `failed_projects` (`path`, `reason`); with `-v` it reports full tree
-metadata. Either way it adds `checked_out_branches: [{"project", "branch"}]` per tree,
+`failed_projects` (`path`, `reason`), and `failed_directives` (`dest`,
+`reason`); with `-v` they report full tree metadata. Either way they add
+`checked_out_branches: [{"project", "branch"}]`,
 read from each worktree's `HEAD` without spawning Git (falling back to
 `git symbolic-ref` for reftable's placeholder `HEAD`).
 
@@ -257,9 +259,9 @@ Git are discarded. A refused overlay stays mounted and `done`. The result adds
 ## 9. Pool mode
 
 A project whose final mode is `worktree` uses the pool when its default is
-`pool`, or when it has no default and is slow to check out: `est_files` (tracked
-blobs, counted with `est_bytes`) of at least 30,000, or `est_bytes` of at least
-2 GiB. Metadata without `est_files` falls back to `est_bytes` above 500 MiB.
+`pool`, or when it has no default and its estimated checkout time,
+`est_files × 60 µs + est_bytes ÷ 500 MB/s` (`est_files` counts tracked blobs
+alongside `est_bytes`), is at least 1.5 s. Metadata without `est_files` falls back to `est_bytes` above 500 MiB.
 `clone-depth` does not exclude a project: a fixed-depth project becomes a
 worktree when its source is too dirty to share or overlay. Any other explicit
 default disables pooling. Pool use adds strategy `pool`.
@@ -279,8 +281,8 @@ contains no other project, and is not dirty returns to the pool when it has
 fewer spares than the pool size (`pool size [N]`, stored as `pool_spares` in
 `defaults.json`, default 2): convert a bridge `.git` to a gitfile, unlock it,
 `git worktree move` it into the pool, `git checkout -q --detach`, and
-`git clean -ffdxq`. Failures are warnings; the project is then removed
-normally. The result adds `returned_to_pool`.
+`git clean -ffdxq`. Candidates are returned in parallel with `-j` workers.
+Failures are warnings; the project is then removed normally. The result adds `returned_to_pool`.
 
 `pool list` (alias `pool status`), `pool size [N]`,
 `pool fill [<path>...] [--count N]`, and `pool clear [<path>...]`. With no
@@ -339,7 +341,8 @@ link against the mount point.
 On Linux, after removing worktrees and before deleting the tree directory,
 `remove` scans `/proc` for other processes whose working directory is inside the
 tree or with an argument equal to, ending with, or containing the tree path plus
-`/`. Up to 20 are reported as `lingering_processes: [{pid, command, reason}]`
+`/`, excluding the tool itself and its ancestor processes (read from
+`/proc/<pid>/stat`), whose command lines often name the tree. Up to 20 are reported as `lingering_processes: [{pid, command, reason}]`
 (`reason` is `cwd` or `arguments`, `command` the first 120 bytes of the
 arguments) and in a warning on stderr. They are never signalled.
 
@@ -373,7 +376,9 @@ stdout redirected to the tool's stderr, and environment `GIT_REPO_WORKTREE_EVENT
 reason suggesting `chmod +x`.
 
 The result is recorded in tree metadata `hooks.<event>`
-(`status`: `ok` | `failed` | `timeout`, `exit_code`, `ms`, `at`, `reason`),
+(`status`: `ok` | `failed` | `timeout` | `skipped`, `exit_code`, `ms`, `at`,
+`reason`; `skipped` means the hook was installed but hooks were disabled, so
+`repair` runs a skipped `post-add`),
 returned in `add`, `repair`, and `remove` results, printed as a line on
 stderr, and pushed to the history record as `hooks[]`. `report` summarizes
 statuses and latency per event. Hook results never change exit codes.

@@ -110,7 +110,7 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
         Command::Unlock(args) => tree::unlock(args, cwd, cli.quiet),
         Command::Move(args) => tree::move_tree(args, cwd, cli.quiet),
         Command::Prune(args) => tree::prune(args, cwd, cli.quiet),
-        Command::Repair(args) => tree::repair(args, cwd, cli.quiet),
+        Command::Repair(args) => tree::repair(args, cwd, cli.quiet, cli.verbose),
         Command::Materialize(args) => tree::materialize(args, cwd, cli.quiet, cli.verbose),
         Command::Defaults(args) => defaults::run(&args.command, cwd, cli.json, cli.quiet),
         Command::Pool(args) => pool::run(&args.command, cwd, cli.json, cli.quiet),

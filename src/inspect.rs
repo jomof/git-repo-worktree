@@ -243,13 +243,38 @@ fn count_unbranched(
         .map_err(|_| "could not parse git rev-list output".to_string())
 }
 
+/// `pid` and its ancestors. A shell that ran this command often mentions the
+/// tree path in its own arguments, but it is not left behind by the tree.
+fn ancestors(pid: u32) -> Vec<u32> {
+    let mut chain = vec![pid];
+    let mut current = pid;
+    while current > 1 && chain.len() < 64 {
+        let Ok(stat) = fs::read_to_string(format!("/proc/{current}/stat")) else {
+            break;
+        };
+        let Some(parent) = stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+            .and_then(|field| field.parse::<u32>().ok())
+        else {
+            break;
+        };
+        if parent == 0 || chain.contains(&parent) {
+            break;
+        }
+        chain.push(parent);
+        current = parent;
+    }
+    chain
+}
+
 /// Processes whose working directory is inside `root` or whose arguments name
 /// it, such as build servers started from a tree. Linux only; elsewhere empty.
 pub fn processes_referencing(root: &Path) -> Vec<serde_json::Value> {
     if !cfg!(target_os = "linux") {
         return Vec::new();
     }
-    let me = std::process::id();
+    let excluded = ancestors(std::process::id());
     let root_text = root.to_string_lossy().into_owned();
     let nested = format!("{root_text}/");
     let mentions = |argument: &str| argument.ends_with(&root_text) || argument.contains(&nested);
@@ -262,7 +287,7 @@ pub fn processes_referencing(root: &Path) -> Vec<serde_json::Value> {
         else {
             continue;
         };
-        if pid == me {
+        if excluded.contains(&pid) {
             continue;
         }
         let cwd_inside = fs::read_link(entry.path().join("cwd"))

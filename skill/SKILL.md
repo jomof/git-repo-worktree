@@ -70,12 +70,13 @@ do not scrape the human output. `result` is `null` when a command fails.
 
 Result shapes:
 
-- `list --json`: `.result.trees[]`, one summary per tree (`name`, `path`,
-  `state`, `project_counts`, `failed_projects`, `checked_out_branches`). Add
-  `-v` for full per-project records.
-- `status --json <tree>`, `add --json`, `materialize --json`: `.result` is the
-  tree itself, with `.result.projects[]`. Example:
-  `jq '.result.projects[] | select(.dirty) | {path, reasons}'`.
+- `list --json`: `.result.trees[]`, one summary per tree.
+- `add`, `repair <tree>`, `materialize`: `.result` is one tree summary
+  (`name`, `path`, `state`, `project_counts`, `failed_projects`,
+  `failed_directives`, `checked_out_branches`, `hooks`, `repo_bridge`). Add `-v`
+  for full per-project records.
+- `status --json <tree>`: `.result.projects[]` holds per-project state.
+  Example: `jq '.result.projects[] | select(.dirty) | {path, reasons}'`.
 
 Before creating anything, inspect `list --json`: reuse a suitable `complete`
 tree, resume a `creating` or `incomplete` tree, or choose a unique name and
@@ -126,9 +127,9 @@ a tree is complete (for example to generate local build configuration) and
 `pre-remove` before deletion (for example to stop build servers). Check
 `.result.hooks` in the `add` and `remove` output, or run
 `git repo-worktree hooks list --json`. When `hooks.post-add.status` is `"ok"`,
-do not repeat that setup by hand. When it is `"failed"` or `"timeout"`, read
-the warning on stderr, fix the cause, and run `git repo-worktree repair <tree>`
-to retry it.
+do not repeat that setup by hand. When it is `"failed"`, `"timeout"`, or
+`"skipped"`, read the warning on stderr, fix the cause, and run
+`git repo-worktree repair <tree>` to run it again.
 
 ### Work inside the tree
 
@@ -141,8 +142,9 @@ git repo-worktree materialize --json <tree> <project-path>
 ```
 
 Materialization is resumable, works on locked trees, and succeeds as a no-op
-(`already_materialized`) when the project is already a worktree. Proceed only
-when the project's mode is `"worktree"` or `"overlay"`.
+(`already_materialized`) when the project is already a worktree. Proceed when
+the project is listed in `materialized` or `already_materialized` and not in
+`failed_projects`.
 
 Use Git and repo normally inside the tree. Prefer running repo commands from
 the tree root or a worktree project: a shared project is physically the source

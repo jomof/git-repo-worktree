@@ -13,11 +13,19 @@ pub const MODE_OVERLAY: &str = "overlay";
 /// during population.
 pub const HEAVY_PROJECT_BYTES: u64 = 500 * 1024 * 1024;
 
-/// Checkout cost grows with file count (about 70 microseconds per file on
-/// ext4), so projects with this many tracked files are pooled by default.
-pub const POOL_MIN_FILES: u64 = 30_000;
-/// Projects this large are pooled by default even with few files.
-pub const POOL_MIN_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Estimated checkout cost per tracked file and per byte, fitted to
+/// studio-main checkouts on ext4.
+pub const CHECKOUT_MICROS_PER_FILE: u64 = 60;
+pub const CHECKOUT_BYTES_PER_SECOND: u64 = 500 * 1000 * 1000;
+/// Projects estimated to take at least this long to check out are pooled by
+/// default.
+pub const POOL_MIN_ESTIMATED_MS: u64 = 1_500;
+
+/// Estimated checkout time in milliseconds from tracked file count and size.
+pub fn estimated_checkout_ms(files: u64, bytes: u64) -> u64 {
+    files.saturating_mul(CHECKOUT_MICROS_PER_FILE) / 1_000
+        + bytes.saturating_mul(1_000) / CHECKOUT_BYTES_PER_SECOND
+}
 
 pub fn default_heavy_jobs() -> usize {
     3
@@ -76,7 +84,7 @@ impl ProjectMeta {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HookRecord {
-    /// `ok`, `failed`, or `timeout`.
+    /// `ok`, `failed`, `timeout`, or `skipped`.
     pub status: String,
     pub exit_code: Option<i32>,
     pub ms: u64,
@@ -194,7 +202,8 @@ impl TreeMeta {
             Some(_) => false,
             None => match project.est_files {
                 Some(files) => {
-                    files >= POOL_MIN_FILES || project.est_bytes.unwrap_or(0) >= POOL_MIN_BYTES
+                    estimated_checkout_ms(files, project.est_bytes.unwrap_or(0))
+                        >= POOL_MIN_ESTIMATED_MS
                 }
                 None => project.est_bytes.unwrap_or(0) > HEAVY_PROJECT_BYTES,
             },
