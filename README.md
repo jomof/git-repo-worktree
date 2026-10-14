@@ -65,12 +65,12 @@ A Bazel build of `//tools/base/common:tools.common` in a brand-new tree took
 ## Install it
 
 ```sh
-cargo binstall git-repo-worktree
+cargo install git-repo-worktree
 ```
 
-Requires Git 2.31+ and repo 2.30+ on Linux or macOS. See
-[Installing](docs/install.md) for `cargo install`, mise, ubi, eget, and a
-standalone install script.
+Requires Git 2.31+ and repo 2.30+ on Linux or macOS, and a stable Rust
+toolchain to build. See [Installing](docs/install.md) for prebuilt binaries via
+`cargo binstall`, mise, ubi, eget, or a standalone install script.
 
 ## Hooks if you need them
 

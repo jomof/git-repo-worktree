@@ -9,12 +9,16 @@ releases. Git runs it as `git repo-worktree` once `git-repo-worktree` is on
 ## With Cargo
 
 ```sh
-cargo binstall git-repo-worktree   # prebuilt binary, via cargo-binstall
 cargo install git-repo-worktree    # build from source on crates.io
+cargo binstall git-repo-worktree   # prebuilt binary, via cargo-binstall
 ```
 
 Both install into `~/.cargo/bin`. Building from source needs a current stable
 Rust toolchain, and the result's `version` output omits the commit hash.
+`cargo binstall` is a separate Cargo plugin that downloads the release binary
+instead of compiling; install it first with `cargo install cargo-binstall` (or
+see [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) for faster
+options).
 
 ## With a tool manager
 
