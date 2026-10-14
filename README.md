@@ -4,13 +4,13 @@
 
 ```console
 $ cd ~/projects/studio-main
-$ time git repo-worktree add ../studio-feature
+$ time git repo-worktree add ~/projects/studio-feature
 note: 19 project(s) are copy-on-write overlays of the source checkout; `repair` remounts them after a reboot
 created studio-feature at /home/you/projects/studio-feature: 56 projects, 0 skipped, 0 failed
 
 real    0m6.427s
 
-$ cd ../studio-feature
+$ cd ~/projects/studio-feature
 $ bazel build //tools/base/common:tools.common
 ...
 INFO: Elapsed time: 16.337s
