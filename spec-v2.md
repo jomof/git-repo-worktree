@@ -76,10 +76,21 @@ failure records state `failed` with a reason and leaves the tree `incomplete`.
   detached. If the source has no `manifests.git`, `manifests` is a symlink to
   the source's. `manifests/.git` becomes `../manifests.git`, and
   `manifests.git` links to its admin directory.
-* `manifest.xml`: generated from the pinned snapshot (§3.3).
+* `manifest.xml`: the source client's manifest selection — a copy of
+  `<source>/.repo/manifest.xml`, or, when that is a symlink into `manifests/`,
+  an equivalent `<include name="…"/>` — so repo in the tree resolves the same
+  manifest from the tree's own manifest checkout. When the source has no
+  readable `manifest.xml`, the pinned snapshot is generated instead (§3.3).
+* `local_manifests/`: a symlink to each `*.xml` in the source's
+  `local_manifests/` (stale links are removed) plus a generated
+  `zz-git-repo-worktree.xml`, sorted last, with
+  `<remove-project name path optional="true"/>` for every snapshot project the
+  tree does not include.
 * `project.list`: sorted paths of the included projects, newline-terminated.
 
-No `local_manifests` directory is created; the snapshot already merged them.
+The tree's projects are still populated at the snapshot's pinned revisions;
+repo commands run later see the live manifest, so `repo sync` moves the tree to
+upstream like any client.
 
 Included projects are those with mode `worktree` or `overlay` in state `done`.
 Shared, skipped, and failed projects are excluded so repo never acts on them.
@@ -96,9 +107,10 @@ linked: Git stores them per worktree. `info` is never linked because
 `info/sparse-checkout` is per worktree. Existing real entries are never
 replaced.
 
-### 3.3 Generated manifest
+### 3.3 Generated manifest (fallback)
 
-Serialize the snapshot's root `<manifest>` children, dropping comments, and:
+Used only when the source has no readable `manifest.xml`. Serialize the
+snapshot's root `<manifest>` children, dropping comments, and:
 
 * keep `<project>` only for included paths (path, or name when path is absent);
 * keep `<extend-project>` and `<repo-hooks>` only when they name an included
@@ -121,11 +133,13 @@ worktree registration.
 ### 3.5 What works
 
 Inside a tree: `repo status`, `start`, `branches`, `diff`, `forall`, `info`,
-`abandon`, `checkout`, `prune`, `upload`, and `sync -l`. `repo sync -l` returns
-projects to the tree's pinned revisions and must leave shared projects, their
-`.git`, and the source untouched. A networked `repo sync` in a tree updates only
-the tree's manifest checkout, keeps projects pinned, and, as in any client, sets
-each project's shared `refs/remotes/m/<branch>` to the revision it synced.
+`abandon`, `checkout`, `prune`, `upload`, `rebase`, and `sync` with or without
+`-l`, `-n`, and `--rebase`. They behave as in an ordinary client of the same
+manifest: `repo sync` moves detached projects to upstream and rebases topic
+branches (published branches only with `--rebase`). They must leave shared
+projects, their `.git`, the source's checkouts, and the source's manifest
+checkout untouched. Projects new upstream are cloned by repo as ordinary
+projects inside the tree and are not tracked by the tool.
 
 ## 3.6 Locking (supersedes `spec.md` §3 lock rules)
 
@@ -444,6 +458,8 @@ inspections; the most recent `add` environment; and `history_path`.
 
 1. Real-repo client: `repo start`, `branches` (current only in the tree),
    `forall`, `sync -l` (links preserved, shared project and source untouched),
+   networked `repo sync` moving detached projects to upstream, `--rebase`
+   replaying a published branch,
    `move`, locked `remove --force --force`, and complete cleanup of project
    registrations, the manifest worktree, and its branch.
 2. Per-worktree refs written in a tree do not appear in the source.

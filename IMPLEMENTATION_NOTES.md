@@ -106,3 +106,13 @@ machine interface deterministic:
   warm `add`, at about 1.7 GB per spare set.
 - `add`, `repair`, and `materialize` return tree summaries by default: a
   full 56-project tree is about 25 KB, which truncated agents' tool output.
+
+## Live manifest in trees
+
+- Trees select the source's manifest (with a generated local manifest removing
+  projects they do not own) instead of a pinned snapshot manifest, so
+  `repo sync` updates a tree like any client. Field use showed trees outliving
+  their starting point: work under review needs rebasing onto upstream, and a
+  pinned manifest made `repo sync` a no-op. Creation still pins to the source's
+  checked-out commits; the snapshot remains the tool's record for resume and
+  repair.

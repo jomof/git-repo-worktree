@@ -489,3 +489,116 @@ fn overlay_projects_work_with_repo_commands() {
     tool(&client).args(["remove", "tree"]).assert().success();
     assert!(!tree.exists());
 }
+
+fn advance_upstream(client: &Client, name: &str) {
+    let work = client.base.join(format!("seed/{name}"));
+    fs::write(work.join("README"), format!("{name} upstream\n")).unwrap();
+    run(
+        &work,
+        "git",
+        &["commit", "-qam", &format!("upstream {name}")],
+    );
+    let remote = client.base.join(format!("remotes/{name}.git"));
+    run(
+        &work,
+        "git",
+        &["push", "-q", remote.to_str().unwrap(), "main"],
+    );
+}
+
+#[test]
+fn repo_sync_moves_a_tree_to_upstream_like_a_client() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    let local =
+        fs::read_to_string(tree.join(".repo/local_manifests/zz-git-repo-worktree.xml")).unwrap();
+    assert!(
+        local.contains(r#"<remove-project name="pre" path="prebuilts/pre" optional="true" />"#),
+        "{local}"
+    );
+    assert!(fs::read_to_string(tree.join(".repo/manifest.xml"))
+        .unwrap()
+        .contains("default.xml"));
+
+    run(&tree, "repo", &["start", "review", "a"]);
+    fs::write(tree.join("a/mine.txt"), "mine\n").unwrap();
+    run(&tree.join("a"), "git", &["add", "mine.txt"]);
+    run(&tree.join("a"), "git", &["commit", "-qm", "my change"]);
+    run(
+        &tree.join("a"),
+        "git",
+        &["update-ref", "refs/published/review", "HEAD"],
+    );
+    advance_upstream(&client, "a");
+    advance_upstream(&client, "b");
+    let source_a = run(&client.root.join("a"), "git", &["rev-parse", "HEAD"]);
+    let source_b = run(&client.root.join("lib/b"), "git", &["rev-parse", "HEAD"]);
+
+    let refused = StdCommand::new("repo")
+        .current_dir(&tree)
+        .args(["sync", "-q"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("published (but not merged)"));
+    assert_eq!(
+        run(&tree.join("lib/b"), "git", &["log", "-1", "--format=%s"]),
+        "upstream b"
+    );
+
+    run(&tree, "repo", &["sync", "-q", "--rebase"]);
+    assert_eq!(
+        run(
+            &tree.join("a"),
+            "git",
+            &["rev-parse", "--abbrev-ref", "HEAD"]
+        ),
+        "review"
+    );
+    assert_eq!(
+        run(&tree.join("a"), "git", &["log", "-1", "--format=%s"]),
+        "my change"
+    );
+    assert_eq!(
+        run(
+            &tree.join("a"),
+            "git",
+            &["log", "-1", "--skip=1", "--format=%s"]
+        ),
+        "upstream a"
+    );
+    assert_eq!(
+        fs::read_link(tree.join("a/.git")).unwrap(),
+        PathBuf::from("../.repo/projects/a.git")
+    );
+    assert!(fs::symlink_metadata(tree.join("prebuilts/pre"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        run(&client.root.join("a"), "git", &["rev-parse", "HEAD"]),
+        source_a
+    );
+    assert_eq!(
+        run(&client.root.join("lib/b"), "git", &["rev-parse", "HEAD"]),
+        source_b
+    );
+    assert_eq!(
+        fs::read_link(client.root.join("prebuilts/pre/.git")).unwrap(),
+        PathBuf::from("../../.repo/projects/prebuilts/pre.git")
+    );
+    tool(&client)
+        .args(["remove", "--force", "tree"])
+        .assert()
+        .success();
+    assert_eq!(
+        run(
+            &client.root.join("a"),
+            "git",
+            &["branch", "--list", "review"]
+        ),
+        "review"
+    );
+}

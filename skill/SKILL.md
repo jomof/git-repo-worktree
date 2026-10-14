@@ -30,7 +30,7 @@ Key properties to keep in mind:
   `git -C <tree>/<project> checkout --detach <remote>/<branch>` there.
 - **repo works inside a tree.** The tree has its own `.repo`, so `repo status`,
   `repo start`, `repo branches`, `repo diff`, `repo forall`, `repo upload`, and
-  `repo sync -l` act on the tree, not the source.
+  `repo sync` act on the tree, not the source.
 - Operations are **journaled and resumable** — a failed or interrupted `add`
   is resumed with `add --continue`, never by deleting and starting over.
 
@@ -148,9 +148,24 @@ the project is listed in `materialized` or `already_materialized` and not in
 
 Use Git and repo normally inside the tree. Prefer running repo commands from
 the tree root or a worktree project: a shared project is physically the source
-checkout, so a shell inside it is in the source client. `repo sync -l` returns
-projects to the tree's pinned revisions. A networked `repo sync` fetches but also
-keeps them pinned. Push or upload only when the user asks.
+checkout, so a shell inside it is in the source client. Push or upload only when
+the user asks.
+
+### Bring a tree up to date with upstream
+
+When review reports merge conflicts or the work must move to the latest
+upstream, sync the tree like any repo client, from the tree root:
+
+```bash
+repo sync                      # fetch; move detached projects; rebase unpublished branches
+repo sync --rebase             # also rebase branches already uploaded for review
+```
+
+Plain `repo sync` refuses to rewrite an uploaded branch ("published (but not
+merged)"); that message means rerun with `--rebase`. Resolve any rebase
+conflicts in the named project with Git, then `repo upload` the branch. With
+several trees, run `repo sync -n` once and `repo sync -l --rebase` in each tree.
+Shared (`symlink-shared`) projects are not synced; they follow the source.
 
 Working files and indexes are isolated, but each linked worktree shares its
 project's objects, branches, and tags with the source checkout. Branches you

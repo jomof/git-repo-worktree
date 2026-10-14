@@ -6,7 +6,7 @@ captured by `repo manifest -r`; large fixed-depth projects may be shared from
 the source checkout for speed. Manifest `copyfile` and `linkfile` directives
 are replayed into the new tree, and each tree carries a synthesized `.repo`
 directory so `repo status`, `repo start`, `repo branches`, `repo diff`,
-`repo forall`, `repo upload`, and `repo sync -l` work inside it.
+`repo forall`, `repo upload`, and `repo sync` work inside it.
 
 The source client's uncommitted work is never copied into a new worktree.
 Created trees are useful for hotfixes, reviews, parallel coding agents, and
@@ -363,20 +363,32 @@ Set `GIT_REPO_WORKTREE_NO_HISTORY=1` to stop recording.
 
 ## Repo commands inside a tree
 
-The tree's `.repo` links to the source's repo tool and object store, holds a
-generated `manifest.xml` and `project.list` describing only the tree's own
-worktree projects at their pinned revisions, and has its own manifest checkout
-(a linked worktree on a per-tree branch `repo-worktree/<tree>`). Each project's
-`.git` is a link to `.repo/projects/<path>.git`, which resolves to the project's
-Git worktree directory, so repo and Git always agree on `HEAD` and the index.
+The tree's `.repo` links to the source's repo tool and object store, selects
+the same manifest as the source client, and has its own manifest checkout (a
+linked worktree on a per-tree branch `repo-worktree/<tree>`). A generated local
+manifest, `.repo/local_manifests/zz-git-repo-worktree.xml`, removes the projects
+the tree does not own (shared, skipped, or not yet populated); the source's own
+local manifests are linked alongside it. Each project's `.git` is a link to
+`.repo/projects/<path>.git`, which resolves to the project's Git worktree
+directory, so repo and Git always agree on `HEAD` and the index.
 
-* `repo sync -l` returns projects to the tree's pinned revisions and leaves
-  shared projects and the source untouched.
-* A networked `repo sync` in a tree fetches into the shared object store and
-  updates only the tree's manifest checkout. The tree stays pinned to its
-  snapshot. Like any sync, it also points each project's shared
-  `refs/remotes/m/<branch>` pseudo-ref at the revision it synced, here the
-  tree's pin; the next sync in the source resets them.
+A tree is created at the source's checked-out commits, but afterwards repo
+treats it as an ordinary client:
+
+* `repo sync` fetches into the shared object store, moves detached projects to
+  the current upstream, rebases unpublished topic branches, and updates only the
+  tree's own manifest checkout. The source client is not touched.
+* A branch already uploaded for review is not rewritten by plain `repo sync`
+  ("published (but not merged)"); use `repo sync --rebase` (or `repo rebase`) to
+  replay it onto the new upstream, then `repo upload` the result.
+* With several trees, fetch once (`repo sync -n` in the source or any tree)
+  and run `repo sync -l --rebase` in each tree: the local half needs no network.
+* Shared (`symlink-shared`) projects are not synced; they keep following the
+  source checkout. Overlay and worktree projects are synced like any other.
+  Materialize a shared project, or sync the source, if the tree needs a newer
+  version of it.
+* A project added to the manifest upstream is cloned by `repo sync` as an
+  ordinary repo project inside the tree; the tool does not manage it.
 * Manifests with `<submanifest>` are not bridged; such trees are git-only.
 
 ## Limitations

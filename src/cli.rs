@@ -97,8 +97,8 @@ Starting revisions: every project starts on a detached HEAD at the commit that \
 project currently has checked out in the source client (`repo manifest -r`), \
 including local commits and topic branches checked out there. `add` never \
 fetches and never resets to the remote branch. To start a project from upstream \
-instead, run `git checkout --detach <remote>/<branch>` inside it (or \
-`repo sync -l` to return to the pinned revisions).\n\n\
+instead, run `git checkout --detach <remote>/<branch>` inside it, or run \
+`repo sync` in the tree to move every project to upstream as in any client.\n\n\
 Uncommitted changes in the source client are never copied.\n\n\
 Branches: `-b <branch>` creates the branch only in the projects named with \
 `-p/--project` (repeatable; any path inside a project is accepted), or in every \
