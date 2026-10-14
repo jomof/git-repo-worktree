@@ -151,6 +151,30 @@ the tree root or a worktree project: a shared project is physically the source
 checkout, so a shell inside it is in the source client. Push or upload only when
 the user asks.
 
+### repo commands in a tree
+
+These work as in any client of the same manifest: `status`, `diff`, `branches`,
+`info`, `list`, `grep`, `overview`, `forall`, `manifest`, `start`, `checkout`,
+`rebase`, `cherry-pick`, `download`, `upload`, `prune`, and `sync` (with `-n`,
+`-l`, `--rebase`).
+
+Branches are shared with the source and every other tree: `repo abandon`,
+`repo prune`, and branch deletion remove them everywhere (Git only refuses for
+a branch that is checked out somewhere).
+
+Do not run these in a tree:
+
+| Command | Why | Instead |
+|---|---|---|
+| `repo init` | rewrites the tree's `.repo` | create a new tree |
+| `repo wipe` | deletes object stores shared with the source | `git repo-worktree remove` |
+| `repo gc` | cleans object stores shared with the source | run it in the source client |
+| `repo sync --force-sync` | may delete a project's checkout and its registration | `git repo-worktree repair <tree>` |
+
+Run repo from the tree root or a worktree project. A shell inside a
+`symlink-shared` project is physically in the source client, so repo would act
+on the source.
+
 ### Bring a tree up to date with upstream
 
 When review reports merge conflicts or the work must move to the latest
@@ -277,7 +301,8 @@ Common error codes: `E_NO_REPO_CLIENT`, `E_NO_SUCH_TREE`, `E_NAME_EXISTS`,
 - Prefer letting `add` create the destination; an existing directory must be
   empty. Never place a tree inside the source client or inside another tree.
 - Never write into the source's `.repo/` or edit `.repo/repo-worktrees/` files
-  by hand; the registry is the tool's. Do not run `repo init` inside a tree.
+  by hand; the registry is the tool's. Do not run `repo init`, `repo wipe`,
+  `repo gc`, or `repo sync --force-sync` inside a tree.
 - Never re-create a failed tree from scratch when `add --continue` applies —
   recreation wastes the journal and repeats completed work.
 - Treat `"mode": "symlink-shared"` projects as read-only because their files

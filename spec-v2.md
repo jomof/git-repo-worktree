@@ -60,14 +60,23 @@ failure records state `failed` with a reason and leaves the tree `incomplete`.
 `<tree>/.repo/` is a real directory containing:
 
 * `repo` → absolute symlink to `<source>/.repo/repo`.
-* Legacy source layout: `project-objects` → `<source>/.repo/project-objects`,
-  and for every included project `projects/<path>.git` → absolute symlink to
+* Legacy source layout: `project-objects/` is a real directory with, for each
+  included project, `<name>.git` → absolute symlink to
+  `<source>/.repo/project-objects/<name>.git` (`repo gc` deletes every store in
+  this directory that the tree's manifest does not list, so exposing the
+  source's whole directory would let it delete shared projects' stores), and
+  for every included project `projects/<path>.git` → absolute symlink to
   the project's worktree admin directory
   `<git_common_dir>/worktrees/<id>`. The project's `<tree>/<path>/.git` is
   replaced, atomically, by a relative symlink to
   `<tree>/.repo/projects/<path>.git`.
-* Worktree source layout (`repo init --worktree`): `worktrees` → absolute
-  symlink to `<source>/.repo/worktrees`. Projects keep Git's gitfiles.
+* Worktree source layout (`repo init --worktree`): `worktrees/` is a real
+  directory with `<name>.git` → absolute symlink to
+  `<source>/.repo/worktrees/<name>.git` for each included project. Projects keep
+  Git's gitfiles.
+
+A whole-directory link left by an older version is replaced by the real
+directory when the bridge is rebuilt (for example by `repair`).
 * `manifests/`: a linked worktree of `<source>/.repo/manifests.git` at the
   source manifest checkout's `HEAD`, on branch `repo-worktree/<tree>` (created
   with `-B`). The branch's `remote` and `merge` are copied from the source
@@ -140,6 +149,13 @@ branches (published branches only with `--rebase`). They must leave shared
 projects, their `.git`, the source's checkouts, and the source's manifest
 checkout untouched. Projects new upstream are cloned by repo as ordinary
 projects inside the tree and are not tracked by the tool.
+
+Not supported in a tree: `repo init` (rewrites the bridge), `repo wipe` and
+`repo gc` (delete shared object stores; the per-project links above make `gc`
+ignore the source's other projects and make `wipe` fail rather than delete
+through a link), and `repo sync --force-sync` (deletes the real paths behind a
+project's gitdir and checkout when it judges them inconsistent). `--help` and
+the bundled skill list them.
 
 ## 3.6 Locking (supersedes `spec.md` §3 lock rules)
 

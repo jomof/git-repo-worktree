@@ -390,6 +390,15 @@ treats it as an ordinary client:
 * A project added to the manifest upstream is cloned by `repo sync` as an
   ordinary repo project inside the tree; the tool does not manage it.
 * Manifests with `<submanifest>` are not bridged; such trees are git-only.
+* Branches are shared with the source and every other tree, so `repo abandon`
+  and `repo prune` in a tree delete branches everywhere.
+* Avoid `repo init` (rewrites the tree's `.repo`), `repo wipe` and `repo gc`
+  (they delete object stores shared with the source), and
+  `repo sync --force-sync` (may delete a project's checkout and registration).
+  The tree's `.repo/project-objects` holds a link per tree project rather than
+  the source's whole directory, so `repo gc` cannot see the source's other
+  projects and `repo wipe` refuses to delete through a link; trees created
+  before this layout get it from `git repo-worktree repair`.
 
 ## Limitations
 

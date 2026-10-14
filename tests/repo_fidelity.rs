@@ -380,7 +380,11 @@ fn worktree_layout_sources_bridge_natively() {
         return;
     };
     let tree = add(&client, "tree");
-    assert!(fs::symlink_metadata(tree.join(".repo/worktrees"))
+    assert!(!fs::symlink_metadata(tree.join(".repo/worktrees"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(fs::symlink_metadata(tree.join(".repo/worktrees/a.git"))
         .unwrap()
         .file_type()
         .is_symlink());
@@ -601,4 +605,39 @@ fn repo_sync_moves_a_tree_to_upstream_like_a_client() {
         ),
         "review"
     );
+}
+
+#[test]
+fn repo_gc_in_a_tree_cannot_delete_the_sources_object_stores() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    let objects = tree.join(".repo/project-objects");
+    assert!(!fs::symlink_metadata(&objects)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(fs::symlink_metadata(objects.join("a.git"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(fs::symlink_metadata(objects.join("pre.git")).is_err());
+
+    run(&tree, "repo", &["gc", "--yes"]);
+    assert!(client
+        .root
+        .join(".repo/project-objects/pre.git/objects")
+        .is_dir());
+    assert!(client
+        .root
+        .join(".repo/project-objects/a.git/objects")
+        .is_dir());
+    run(
+        &client.root.join("prebuilts/pre"),
+        "git",
+        &["status", "--porcelain"],
+    );
+    run(&tree, "repo", &["status"]);
+    tool(&client).args(["remove", "tree"]).assert().success();
 }

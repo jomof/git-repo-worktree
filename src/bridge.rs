@@ -129,11 +129,15 @@ fn build(meta: &TreeMeta) -> Result<Option<Manifests>, BridgeError> {
         .map_err(|error| format!("create {}: {error}", tree_repo.display()))?;
     link(&tree_repo.join("repo"), &source_repo.join("repo"))?;
     if meta.source_layout == "worktree" {
-        link(&tree_repo.join("worktrees"), &source_repo.join("worktrees"))?;
+        link_object_stores(
+            &tree_repo.join("worktrees"),
+            &source_repo.join("worktrees"),
+            &included,
+        )?;
     } else {
         let objects = source_repo.join("project-objects");
         if objects.is_dir() {
-            link(&tree_repo.join("project-objects"), &objects)?;
+            link_object_stores(&tree_repo.join("project-objects"), &objects, &included)?;
         }
         for project in &included {
             link_project(meta, project)?;
@@ -166,6 +170,38 @@ fn build(meta: &TreeMeta) -> Result<Option<Manifests>, BridgeError> {
     write_atomic(&tree_repo.join("project.list"), list.as_bytes(), 0o644)
         .map_err(|error| error.message)?;
     Ok(manifests)
+}
+
+/// Links each included project's object store individually rather than the
+/// whole source directory. `repo gc` treats every store in this directory that
+/// the tree's manifest does not list as unused and deletes it, and `repo wipe`
+/// deletes a project's store; exposing only the tree's own stores, as links,
+/// keeps both from reaching the source's other projects.
+fn link_object_stores(
+    directory: &Path,
+    source: &Path,
+    included: &[&ProjectMeta],
+) -> Result<(), String> {
+    if fs::symlink_metadata(directory).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        fs::remove_file(directory)
+            .map_err(|error| format!("replace {}: {error}", directory.display()))?;
+    }
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    for project in included {
+        let name = format!("{}.git", project.name);
+        let target = source.join(&name);
+        if !target.is_dir() {
+            continue;
+        }
+        let path = directory.join(&name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        }
+        link_if_not_real(&path, &target)?;
+    }
+    Ok(())
 }
 
 /// Path of a project's `.git` entry as stored on disk. Overlay projects keep it

@@ -11,8 +11,12 @@ use std::path::PathBuf;
 A tree is a parallel directory with one linked Git worktree per project of the \
 source client, pinned to the commit each project currently has checked out \
 (its HEAD, as recorded by `repo manifest -r`). Trees carry a synthesized .repo \
-directory, so repo commands such as `repo status`, `repo start`, and `repo upload` \
-work inside them.\n\n\
+directory, so repo commands such as `repo status`, `repo start`, `repo upload`, \
+and `repo sync` work inside them as in any client of the same manifest.\n\n\
+In a tree, avoid `repo init`, `repo wipe`, `repo gc`, and `repo sync --force-sync`: \
+they rewrite the tree's .repo or delete data shared with the source client. Run \
+repo from the tree root or a worktree project, not from inside a symlink-shared \
+project, which is physically the source checkout.\n\n\
 Use `git-repo-worktree <command> --help` (hyphenated) or `git repo-worktree \
 <command> -h` when the manual page is not installed.",
     propagate_version = true
