@@ -15,14 +15,7 @@ INFO: 150 processes: 113 remote cache hit, 37 internal.
 INFO: Build completed successfully
 ```
 
-When you're done, clean up:
-
-```console
-$ cd ~/projects/studio-main
-$ git repo-worktree remove studio-feature   # refuses if anything is unsaved
-```
-
-In between, work in it like any repo client:
+Work in it like any repo client:
 
 ```sh
 repo start fix-lint tools/base         # branch tracks the manifest upstream
@@ -31,6 +24,13 @@ repo sync                              # fetch and move the tree to the latest u
 cd tools/base
 git rebase -i @{upstream}              # tidy up your commits
 repo upload --cbr .                    # send them for review
+```
+
+When you're done, clean up:
+
+```console
+$ cd ~/projects/studio-main
+$ git repo-worktree remove studio-feature   # refuses if anything is unsaved
 ```
 
 Branches you create outlive the tree, and your original client's files are
