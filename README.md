@@ -15,7 +15,29 @@ disposable builds.
 ## Install
 
 The runtime requires Git 2.31 or newer and, for `add` only, repo 2.30 or newer.
-Linux and macOS are supported.
+Linux and macOS (x86-64 and ARM64) are supported. Every method below installs
+the same prebuilt binary from the project's GitHub releases. Git runs it as
+`git repo-worktree` once `git-repo-worktree` is on `PATH`.
+
+### With a tool manager
+
+```sh
+mise use -g github:jomof/git-repo-worktree      # mise
+ubi --project jomof/git-repo-worktree --in ~/.local/bin
+eget jomof/git-repo-worktree --to ~/.local/bin --asset musl   # Linux
+eget jomof/git-repo-worktree --to ~/.local/bin                # macOS
+```
+
+`eget` asks which Linux archive to use unless given `--asset musl` (the static
+build) or `--asset gnu`. `mise` also accepts `ubi:jomof/git-repo-worktree`. Pin
+a release with `@<version>` (mise) or `--tag v<version>` (ubi, eget).
+
+These install only the binary. Without the manual pages,
+`git repo-worktree --help` cannot open a page; use `git repo-worktree -h` or
+`git-repo-worktree --help`, or install the pages from the release archive
+(`git-repo-worktree*.1`) into a `man1` directory on `MANPATH`.
+
+### With the install script
 
 ```sh
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsSf \
@@ -43,25 +65,19 @@ curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsSf \
 ```
 
 Use `--no-git-alias` if the chosen directory is already managed on `PATH`.
-The traditional Rust installers remain supported:
 
-```sh
-cargo binstall git-repo-worktree
-# or
-cargo install git-repo-worktree
-```
+### After installing
 
-Git dispatches `git repo-worktree` to the installed `git-repo-worktree`
-binary. An optional shorter alias is:
+An optional shorter alias is:
 
 ```sh
 git config --global alias.rwt '!git-repo-worktree'
 ```
 
 Prebuilt release archives contain the binary, license, README, `SKILL.md`,
-generated man page, and bash, zsh, and fish completions. GNU Linux archives
-retain the layout expected by `cargo-binstall`; the curl installer selects
-static musl Linux archives.
+man pages, and bash, zsh, and fish completions. Linux releases have a GNU
+archive and a static musl archive per architecture; the install script uses the
+musl build.
 
 ## Start with an inventory
 

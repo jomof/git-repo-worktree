@@ -11,6 +11,15 @@ creates a draft, uploads every asset, and publishes only after all platform
 builds and smoke tests succeed, which is the sequence required by immutable
 releases.
 
+### crates.io
+
+The `crates-io` job publishes the crate after the GitHub release is public, so
+`cargo binstall` always finds the release archives. It needs a repository secret
+`CARGO_REGISTRY_TOKEN` holding a crates.io API token with the
+`publish-new` and `publish-update` scopes; without the secret the job is skipped
+with a notice. `cargo package --locked` runs in CI to catch packaging problems
+before a release.
+
 ## Publish a release
 
 1. Update the version in `Cargo.toml`, regenerate `Cargo.lock` if needed, and
@@ -19,7 +28,8 @@ releases.
    rejects a tag that does not exactly match the Cargo package version.
 3. Watch the `Release` workflow. It builds GNU and static musl Linux archives
    plus native Intel and ARM macOS archives, smoke-tests all four installer
-   assets, creates SHA-256 checksums and attestations, then publishes the draft.
+   assets, creates SHA-256 checksums and attestations, publishes the draft, and
+   then publishes the crate to crates.io.
 4. Test the public entry point:
 
    ```sh
