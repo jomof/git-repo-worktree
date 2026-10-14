@@ -5,8 +5,7 @@
 ```console
 $ cd ~/projects/studio-main
 $ time git repo-worktree add ~/projects/studio-feature
-
-real    0m6.427s
+git repo-worktree add ~/projects/studio-feature  14.21s user 20.94s system 648% cpu 5.418 total
 
 $ cd ~/projects/studio-feature
 $ bazel build //tools/base/common:tools.common
@@ -16,7 +15,14 @@ INFO: 150 processes: 113 remote cache hit, 37 internal.
 INFO: Build completed successfully
 ```
 
-Work in it like any repo client:
+When you're done, clean up:
+
+```console
+$ cd ~/projects/studio-main
+$ git repo-worktree remove studio-feature   # refuses if anything is unsaved
+```
+
+In between, work in it like any repo client:
 
 ```sh
 repo start fix-lint tools/base         # branch tracks the manifest upstream
@@ -25,13 +31,11 @@ repo sync                              # fetch and move the tree to the latest u
 cd tools/base
 git rebase -i @{upstream}              # tidy up your commits
 repo upload --cbr .                    # send them for review
-
-cd ~/projects/studio-main
-git repo-worktree remove studio-feature   # your branch stays; the tree goes
 ```
 
-Your original client is never touched. Run one tree per hotfix, per code
-review, or per coding agent, side by side.
+Branches you create outlive the tree, and your original client's files are
+never touched. Run one tree per hotfix, per code review, or per coding agent,
+side by side.
 
 ## Android Studio, by the numbers
 
@@ -41,7 +45,7 @@ client:
 
 | | Checking out every project | `git repo-worktree add` |
 |---|---|---|
-| Create a tree | 1 min 50 s | **6.4 s** (about 15 s the very first time) |
+| Create a tree | 1 min 50 s | **5.4 s** (about 15 s the very first time) |
 | Disk per tree | 88 GB | **about 11 GB** |
 
 A Bazel build of `//tools/base/common:tools.common` in a brand-new tree took
