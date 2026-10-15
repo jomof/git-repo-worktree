@@ -2899,7 +2899,7 @@ fn lock_existing_projects(meta: &TreeMeta, jobs: usize) -> AppResult<usize> {
     let warnings = pool.install(|| {
         meta.projects
             .par_iter()
-            .filter(|project| project.has_worktree() && root.join(&project.path).exists())
+            .filter(|project| project.mode == MODE_WORKTREE && root.join(&project.path).exists())
             .filter(|project| {
                 Command::new("git")
                     .arg(format!("--git-dir={}", project.git_common_dir))
@@ -2940,7 +2940,7 @@ pub fn unlock(args: &UnlockArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             let warnings = pool.install(|| {
                 meta.projects
                     .par_iter()
-                    .filter(|project| project.has_worktree() && project.state == "done")
+                    .filter(|project| project.mode == MODE_WORKTREE && project.state == "done")
                     .filter(|project| {
                         Command::new("git")
                             .arg(format!("--git-dir={}", project.git_common_dir))

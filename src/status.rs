@@ -29,7 +29,11 @@ pub fn status(args: &StatusArgs, cwd: &Path, json_output: bool, verbose: u8) -> 
         let dirty = projects.iter().any(|project| project.dirty);
         if !json_output {
             for project in &projects {
-                if !project.dirty && project.branch.is_none() && verbose == 0 {
+                if !project.dirty
+                    && project.branch.is_none()
+                    && project.warning.is_none()
+                    && verbose == 0
+                {
                     continue;
                 }
                 let position = match (&project.branch, &project.head) {
@@ -42,7 +46,7 @@ pub fn status(args: &StatusArgs, cwd: &Path, json_output: bool, verbose: u8) -> 
                 if project.dirty {
                     line.push_str(&format!("  [{}]", project.reasons.join(", ")));
                 }
-                if let Some(error) = &project.error {
+                if let Some(error) = project.error.as_ref().or(project.warning.as_ref()) {
                     line.push_str(&format!("  ({error})"));
                 }
                 println!("{line}");

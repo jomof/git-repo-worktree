@@ -2118,6 +2118,56 @@ mod overlay_mode {
     }
 
     #[test]
+    fn unmounted_overlay_registrations_survive_git_worktree_prune() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        command(&fixture)
+            .arg("add")
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+        let p = fixture.destination.join("p");
+        let source = fixture.client.join("p");
+        assert!(git(&source, &["worktree", "list", "--porcelain"]).contains("locked"));
+        assert!(StdCommand::new("fusermount3")
+            .arg("-u")
+            .arg(&p)
+            .status()
+            .unwrap()
+            .success());
+        git(&source, &["worktree", "prune"]);
+        command(&fixture)
+            .args(["repair", "--mounts-only", "tree"])
+            .assert()
+            .success();
+        assert_eq!(git(&p, &["status", "--porcelain"]), "");
+        assert_eq!(
+            fs::read_to_string(p.join("source.txt")).unwrap(),
+            "snapshot\n"
+        );
+
+        command(&fixture)
+            .args(["materialize", "tree", "p"])
+            .assert()
+            .success();
+        let listing = git(&source, &["worktree", "list", "--porcelain"]);
+        let entry = listing
+            .split("\n\n")
+            .find(|block| block.contains(p.to_str().unwrap()))
+            .unwrap()
+            .to_string();
+        assert!(!entry.contains("locked"), "{entry}");
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+        let listing = git(&source, &["worktree", "list", "--porcelain"]);
+        assert!(!listing.contains(p.to_str().unwrap()), "{listing}");
+    }
+
+    #[test]
     fn dead_overlays_are_reported_and_mounts_only_repair_restores_them() {
         if !overlay_usable() {
             return;
@@ -2161,9 +2211,10 @@ mod overlay_mode {
         let project = &status["result"]["projects"][0];
         assert_eq!(project["mounted"], false, "{status}");
         assert!(
-            project["error"].as_str().unwrap().contains("dead"),
+            project["warning"].as_str().unwrap().contains("dead"),
             "{status}"
         );
+        assert_eq!(status["result"]["dirty"], false, "{status}");
 
         let before = fs::read(fixture.client.join(".repo/repo-worktrees/tree/meta.json")).unwrap();
         command(&fixture)
@@ -2190,6 +2241,18 @@ mod overlay_mode {
             listed["result"]["trees"][0]["overlays_unmounted"],
             serde_json::json!([])
         );
+        assert!(StdCommand::new("pkill")
+            .args(["-9", "-f"])
+            .arg(format!("fuse-overlayfs.*{}", upper.display()))
+            .status()
+            .unwrap()
+            .success());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        command(&fixture)
+            .args(["remove", "tree"])
+            .assert()
+            .success();
+        assert!(!mounted(&p));
     }
 
     #[test]

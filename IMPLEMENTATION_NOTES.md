@@ -214,3 +214,21 @@ machine interface deterministic:
   and skipped the dirty check before deletion.
 - Dead overlay mounts are detected by opening the mount root: `stat` is served
   from the kernel's attribute cache after the daemon dies.
+
+## Stateful fuzzing (`fuzz/`)
+
+- `fuzz/harness.py` drives a tiny world with real repo clients through random
+  upstream, manifest, source, tree, and failure operations (Hypothesis
+  stateful testing) and compares trees with a fresh client. It found, beyond
+  the multi-tree `repair` bug it was validated on:
+  - `add` blocked by a `repo sync` of another client, and sync detection
+    missing Homebrew's framework Python on macOS;
+  - overlay registrations prunable whenever the overlay is unmounted, so a
+    `git worktree prune` (including our own `remove` of another tree) after a
+    reboot deleted them; overlay registrations are now locked;
+  - a `linkfile` dropped from the manifest surviving `repo sync` in a tree,
+    because repo did not know the tool had created it;
+  - `remove` refusing a tree whose overlay daemon died, because its files
+    could not be read; cleanliness now comes from the upper directory.
+- Each finding became an ordinary test in `tests/`; the harness stays a tool
+  for finding the next ones, not part of the suite.

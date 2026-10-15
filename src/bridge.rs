@@ -201,6 +201,7 @@ fn build(meta: &TreeMeta) -> Result<Built, BridgeError> {
     list.push('\n');
     write_atomic(&tree_repo.join("project.list"), list.as_bytes(), 0o644)
         .map_err(|error| error.message)?;
+    record_copy_link_files(&tree_repo, meta)?;
     if let Err(reason) = self_test(&root) {
         previous.restore(&tree_repo);
         return Err(BridgeError::Failed(format!(
@@ -211,6 +212,41 @@ fn build(meta: &TreeMeta) -> Result<Built, BridgeError> {
         manifests,
         warnings,
     })
+}
+
+/// Adds the tree's created `copyfile` and `linkfile` destinations to repo's
+/// tracking file, keeping entries repo wrote itself, so a directive later
+/// dropped from the manifest is removed by `repo sync` as in any client.
+fn record_copy_link_files(tree_repo: &Path, meta: &TreeMeta) -> Result<(), String> {
+    let path = tree_repo.join("copy-link-files.json");
+    let mut tracked = fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    for (key, directives) in [("copyfile", &meta.copyfiles), ("linkfile", &meta.linkfiles)] {
+        let mut dests = tracked
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for directive in directives
+            .iter()
+            .filter(|directive| directive.state == "done")
+        {
+            if !dests.contains(&directive.dest) {
+                dests.push(directive.dest.clone());
+            }
+        }
+        tracked[key] = serde_json::json!(dests);
+    }
+    let bytes = serde_json::to_vec(&tracked)
+        .map_err(|error| format!("serialize {}: {error}", path.display()))?;
+    write_atomic(&path, &bytes, 0o644).map_err(|error| error.message)
 }
 
 /// Whether the tree's checkout of `project` is a linked worktree of the

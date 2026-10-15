@@ -240,6 +240,7 @@ pub fn populate(
         let contents = fs::read_to_string(&dot_git)
             .map_err(|error| format!("read {}: {error}", dot_git.display()))?;
         let admin = admin_from_gitfile(&contents, checkout)?;
+        protect(&admin)?;
         seed_index(source_checkout, &admin, sha)?;
         fs::write(upper.join(".git"), &contents)
             .map_err(|error| format!("write overlay .git: {error}"))?;
@@ -248,6 +249,7 @@ pub fn populate(
         fs::remove_file(checkout.join(".git"))
             .map_err(|error| format!("remove stale .git: {error}"))?;
     }
+    protect_registration(entry, project_path, checkout)?;
     if fs::read_dir(checkout)
         .map(|mut entries| entries.next().is_some())
         .unwrap_or(false)
@@ -382,12 +384,46 @@ pub fn remount(
     if fs::symlink_metadata(upper.join(".git")).is_err() {
         return Err("overlay upper directory is missing its .git".into());
     }
+    protect_registration(entry, project_path, checkout)?;
     mount(
         source_checkout,
         &upper,
         &work_dir(entry, project_path),
         checkout,
     )
+}
+
+/// Reason recorded in an overlay registration's `locked` file. An overlay's
+/// `.git` is unreachable while it is unmounted (after a reboot or a crash), so
+/// `git worktree prune` would otherwise delete the registration.
+const OVERLAY_LOCK_REASON: &str =
+    "git-repo-worktree overlay: mounted on demand; `git repo-worktree remove` unlocks it";
+
+fn protect(admin: &Path) -> Result<(), String> {
+    let locked = admin.join("locked");
+    if locked.exists() {
+        return Ok(());
+    }
+    fs::write(&locked, format!("{OVERLAY_LOCK_REASON}\n"))
+        .map_err(|error| format!("lock overlay registration: {error}"))
+}
+
+/// Locks the overlay project's worktree registration against pruning.
+pub fn protect_registration(
+    entry: &Path,
+    project_path: &str,
+    mount_point: &Path,
+) -> Result<(), String> {
+    let admin = admin_dir(&upper_dir(entry, project_path), mount_point)
+        .ok_or_else(|| "overlay registration not found".to_string())?;
+    protect(&admin)
+}
+
+fn unprotect(admin: &Path) {
+    let locked = admin.join("locked");
+    if fs::read_to_string(&locked).is_ok_and(|reason| reason.starts_with(OVERLAY_LOCK_REASON)) {
+        let _ = fs::remove_file(locked);
+    }
 }
 
 /// Unmounts an overlay project and clears any worktree lock so the
@@ -440,6 +476,9 @@ pub fn materialize(checkout: &Path, entry: &Path, project_path: &str) -> Result<
         }
         Err(_) if fs::symlink_metadata(&target).is_ok() => {}
         Err(error) => return Err(format!("overlay .git is missing: {error}")),
+    }
+    if let Some(admin) = crate::inspect::checkout_git_dir(checkout) {
+        unprotect(&admin);
     }
     let output = Command::new("git")
         .arg("-C")

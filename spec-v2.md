@@ -96,6 +96,11 @@ directory when the bridge is rebuilt (for example by `repair`).
   `<remove-project name path optional="true"/>` for every snapshot project the
   tree does not include.
 * `project.list`: sorted paths of the included projects, newline-terminated.
+* `copy-link-files.json`: repo's record of created `copyfile` and `linkfile`
+  destinations (`{"copyfile": [...], "linkfile": [...]}`, relative to the tree
+  root). The tool adds the tree's `done` directives to whatever repo already
+  recorded, so `repo sync` removes a directive later dropped from the manifest,
+  as in any client.
 
 The tree's projects are still populated at the snapshot's pinned revisions;
 repo commands run later see the live manifest, so `repo sync` moves the tree to
@@ -472,13 +477,21 @@ fails with `E_OVERLAY_BUSY` before any state changes; `materialize` reports the
 project as failed and leaves it mounted. `remove` deletes the admin directory's `locked` file
 so the registration can be pruned. `repair` and `move` remount overlays whose
 upper directory has a `.git`; a failed remount marks the project `failed`
-(reason `remount: …`), and a later successful remount clears it. A mount whose
+(reason `remount: …`), and a later successful remount clears it. Every overlay registration's admin directory has a `locked` file (reason
+`git-repo-worktree overlay: …`), written when the overlay is created and
+whenever it is remounted, because its `.git` is unreachable while the overlay
+is unmounted and `git worktree prune` would otherwise delete the registration.
+`remove` deletes the lock before pruning, `materialize` deletes it when the
+project becomes an ordinary checkout, and the tree-level `lock` and `unlock`
+leave overlay projects alone. A mount whose
 daemon has exited is *dead*: still in the mount table, but opening its root
 fails with `ENOTCONN`. Remounting lazily unmounts a dead mount first.
 `repair --mounts-only` remounts and changes nothing else. Tree summaries list
 `overlays_unmounted` (overlay projects in state `done` that are unmounted or
-dead), and `status` reports such a project with `mounted: false` and an error
-naming `repair --mounts-only`.
+dead), and `status` reports such a project with `mounted: false` and a
+`warning` naming `repair --mounts-only`. A dead or unmounted overlay is judged
+clean or dirty from its upper directory, which needs no daemon, so `remove`
+removes a tree whose overlay died unless the overlay holds changes.
 
 `status`, `detach`, `checked_out_branches`, and `remove`'s dirty check cover
 every worktree or overlay project that is not skipped and whose checkout

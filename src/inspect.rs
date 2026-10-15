@@ -72,6 +72,9 @@ pub struct ProjectInspection {
     pub reasons: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// A problem that does not make the project dirty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 impl ProjectInspection {
@@ -138,20 +141,24 @@ pub fn inspect_project(root: &Path, entry: &Path, project: &ProjectMeta) -> Proj
         inspection.mounted = Some(mounted && !dead);
         let upper = overlay::upper_dir(entry, &project.path);
         if dead {
-            inspection.error = Some(
+            inspection.warning = Some(
                 "overlay mount is dead (its daemon exited); run `git repo-worktree repair --mounts-only`"
                     .into(),
             );
         }
         if !mounted || dead {
             match overlay::upper_has_changes(&upper) {
-                Ok(true) if !dead => {
+                Ok(true) => {
                     inspection.error = Some(
-                        "overlay is not mounted; run `git repo-worktree repair --mounts-only`"
-                            .into(),
+                        if dead {
+                            "overlay mount is dead and the overlay has changes; run `git repo-worktree repair --mounts-only`"
+                        } else {
+                            "overlay is not mounted; run `git repo-worktree repair --mounts-only`"
+                        }
+                        .into(),
                     )
                 }
-                Ok(_) => {}
+                Ok(false) => {}
                 Err(error) => {
                     inspection.error.get_or_insert(error);
                 }

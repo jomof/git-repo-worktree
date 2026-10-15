@@ -854,3 +854,28 @@ fn a_bridge_repo_rejects_is_rolled_back() {
     tool(&client).args(["repair", "tree"]).assert().success();
     assert_eq!(repo_projects(&tree), "a\nb");
 }
+
+#[test]
+fn repo_sync_removes_a_linkfile_dropped_from_the_manifest() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    assert!(fs::symlink_metadata(tree.join("A_README")).is_ok());
+    let manifest = client.base.join("seed/manifest");
+    let xml = fs::read_to_string(manifest.join("default.xml")).unwrap();
+    fs::write(
+        manifest.join("default.xml"),
+        xml.replace(r#"<linkfile src="README" dest="A_README"/>"#, ""),
+    )
+    .unwrap();
+    run(&manifest, "git", &["commit", "-qam", "drop linkfile"]);
+    let remote = client.base.join("remotes/manifest.git");
+    run(
+        &manifest,
+        "git",
+        &["push", "-q", remote.to_str().unwrap(), "main"],
+    );
+    run(&tree, "repo", &["sync", "-q"]);
+    assert!(fs::symlink_metadata(tree.join("A_README")).is_err());
+}
