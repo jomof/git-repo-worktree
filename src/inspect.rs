@@ -62,6 +62,10 @@ pub struct ProjectInspection {
     pub unbranched_commits: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mounted: Option<bool>,
+    /// The tree's recorded state and reason, when the tree does not record
+    /// the project as done.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<String>,
     /// Milliseconds the inspection took.
     pub ms: u64,
     pub dirty: bool,
@@ -96,7 +100,7 @@ pub fn inspect_tree(meta: &TreeMeta, jobs: usize) -> Vec<ProjectInspection> {
     let candidates = meta
         .projects
         .iter()
-        .filter(|project| project.has_worktree() && project.state == "done")
+        .filter(|project| project.has_worktree() && project.state != "skipped")
         .filter(|project| root.join(&project.path).exists())
         .collect::<Vec<_>>();
     let inspect = || {
@@ -122,17 +126,35 @@ pub fn inspect_project(root: &Path, entry: &Path, project: &ProjectMeta) -> Proj
         path: project.path.clone(),
         mode: project.mode.clone(),
         pinned: project.sha.clone(),
+        recorded: (project.state != "done").then(|| match &project.reason {
+            Some(reason) => format!("{}: {reason}", project.state),
+            None => project.state.clone(),
+        }),
         ..Default::default()
     };
     if project.mode == MODE_OVERLAY {
         let mounted = overlay::is_mounted(&checkout);
-        inspection.mounted = Some(mounted);
+        let dead = mounted && overlay::is_dead(&checkout);
+        inspection.mounted = Some(mounted && !dead);
         let upper = overlay::upper_dir(entry, &project.path);
-        if !mounted {
+        if dead {
+            inspection.error = Some(
+                "overlay mount is dead (its daemon exited); run `git repo-worktree repair --mounts-only`"
+                    .into(),
+            );
+        }
+        if !mounted || dead {
             match overlay::upper_has_changes(&upper) {
-                Ok(true) => inspection.error = Some("overlay is not mounted; run repair".into()),
-                Ok(false) => {}
-                Err(error) => inspection.error = Some(error),
+                Ok(true) if !dead => {
+                    inspection.error = Some(
+                        "overlay is not mounted; run `git repo-worktree repair --mounts-only`"
+                            .into(),
+                    )
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    inspection.error.get_or_insert(error);
+                }
             }
             inspection.head = overlay::admin_head(&upper, &checkout);
             inspection.unbranched_commits =

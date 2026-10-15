@@ -74,7 +74,8 @@ pub enum Command {
     Move(MoveArgs),
     /// Prune registry entries for missing trees.
     Prune(PruneArgs),
-    /// Repair worktree registrations and manifest directives.
+    /// Repair worktree registrations, overlay mounts, manifest directives, and
+    /// the .repo bridge.
     Repair(RepairArgs),
     /// Convert shared projects into isolated Git worktrees.
     Materialize(MaterializeArgs),
@@ -302,6 +303,10 @@ pub struct RepairArgs {
     pub trees: Vec<String>,
     #[arg(short = 'j', long, value_parser = parse_jobs)]
     pub jobs: Option<usize>,
+    /// Only remount overlay projects whose mount is missing or dead; change
+    /// nothing else.
+    #[arg(long)]
+    pub mounts_only: bool,
 }
 
 #[derive(Debug, Args)]

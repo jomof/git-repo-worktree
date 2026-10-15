@@ -99,6 +99,20 @@ pub fn is_mounted(_path: &Path) -> bool {
     false
 }
 
+/// Whether a mounted overlay's daemon is gone, leaving a mount every access
+/// to which fails with `ENOTCONN`. Opens the directory because `stat` can be
+/// answered from the kernel's attribute cache without the daemon.
+pub fn is_dead(path: &Path) -> bool {
+    const NOT_CONNECTED: i32 = 107;
+    cfg!(target_os = "linux")
+        && fs::read_dir(path).is_err_and(|error| error.raw_os_error() == Some(NOT_CONNECTED))
+}
+
+/// Whether the overlay at `path` is mounted and serving files.
+pub fn is_live(path: &Path) -> bool {
+    is_mounted(path) && !is_dead(path)
+}
+
 /// Whether anything besides the worktree's `.git` was ever written, created,
 /// or deleted in the overlay. Answers without touching the lower directory.
 pub fn upper_has_changes(upper: &Path) -> Result<bool, String> {
@@ -356,7 +370,10 @@ pub fn remount(
     project_path: &str,
 ) -> Result<(), String> {
     if is_mounted(checkout) {
-        return Ok(());
+        if !is_dead(checkout) {
+            return Ok(());
+        }
+        unmount(checkout, true)?;
     }
     if let Some(reason) = unavailable_reason() {
         return Err(reason);

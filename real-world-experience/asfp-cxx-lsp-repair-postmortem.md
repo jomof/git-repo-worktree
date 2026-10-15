@@ -262,3 +262,21 @@ Options:
 - **Upload without `repo`:** run `pre-upload.py --project <name> <commits...>`
   in each project (this works), then
   `git push goog HEAD:refs/for/studio-main%topic=asfp-cxx-lsp`.
+
+## Fix (2.1.1)
+
+- `repair` and `move` no longer call `git worktree repair`. Git checks every
+  worktree of a repository and fails on other trees' bridge symlinks; that
+  made **every project's** repair fail whenever two or more bridged trees
+  existed, not only the manifests worktree. The tool now rewrites the tree's
+  own admin `gitdir` links and sets project state from whether `HEAD` reads.
+- The bridge includes projects by checking them on disk, refuses to drop all
+  of them, and self-tests with `repo list -n`, restoring the previous files if
+  repo rejects the result.
+- `status`, `detach`, and the checked-out-branch report see projects whatever
+  their recorded state; `status` shows the recorded state as `recorded`.
+- `list --json` reports `overlays_unmounted` (missing or dead mounts), and
+  `repair --mounts-only <tree>` remounts them without touching anything else.
+- Running `repair asfp-cxx-lsp` with 2.1.1 heals the poisoned tree: the
+  regression test `repair_heals_a_tree_poisoned_by_earlier_repairs` rebuilds
+  exactly this state.

@@ -64,8 +64,8 @@ directory, pass installer arguments after `sh -s --`:
 
 ```sh
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsSf \
-  https://github.com/jomof/git-repo-worktree/releases/download/v2.1.0/install.sh |
-  sh -s -- --version v2.1.0 --install-dir "$HOME/bin"
+  https://github.com/jomof/git-repo-worktree/releases/download/v2.1.1/install.sh |
+  sh -s -- --version v2.1.1 --install-dir "$HOME/bin"
 ```
 
 Use `--no-git-alias` if the chosen directory is already managed on `PATH`.

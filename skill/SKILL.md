@@ -175,6 +175,11 @@ Run repo from the tree root or a worktree project. A shell inside a
 `symlink-shared` project is physically in the source client, so repo would act
 on the source.
 
+If repo fails inside a tree, run `git repo-worktree repair <tree>`; do not
+work around it from the source client. `repo upload --br=<branch>` run in the
+source runs the upload hooks against the source checkout's commits, not the
+branch, so their result says nothing about what is uploaded.
+
 ### Bring a tree up to date with upstream
 
 When review reports merge conflicts or the work must move to the latest
@@ -264,7 +269,16 @@ git repo-worktree move <tree> <new-path>        # same filesystem only
 git repo-worktree defaults list --json
 git repo-worktree pool list --json             # alias: pool status; depth and orphaned spares
 git repo-worktree repair [<tree>...]            # registrations, links, directives, overlays, .repo bridge
+git repo-worktree repair --mounts-only <tree>   # only remount missing or dead overlays
 ```
+
+After a reboot or crash, overlay projects may be unmounted, or mounted but
+dead (every access fails with "Transport endpoint is not connected"). `list
+--json` names them in `overlays_unmounted`, and `status --json <tree>` shows
+`mounted: false` with the reason. Fix them with `repair --mounts-only <tree>`,
+which changes nothing else. `status` also lists projects the tree records as
+failed, with the recorded state in `recorded`, next to what the project
+actually shows.
 
 Persistent defaults are local source-client policy: `symlink`, `worktree`,
 `pool` (worktrees taken from pre-populated spares), `overlay` (Linux

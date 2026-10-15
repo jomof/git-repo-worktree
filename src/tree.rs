@@ -2382,7 +2382,15 @@ pub fn tree_json(tree: &TreeMeta, verbose: u8) -> Value {
         .filter(|directive| directive.state == "failed")
         .map(|directive| json!({"dest": directive.dest, "reason": directive.reason}))
         .collect::<Vec<_>>();
+    let overlays_down = tree
+        .projects
+        .iter()
+        .filter(|project| project.mode == MODE_OVERLAY && project.state == "done")
+        .filter(|project| !overlay::is_live(&tree.root().join(&project.path)))
+        .map(|project| project.path.clone())
+        .collect::<Vec<_>>();
     if let Value::Object(object) = &mut value {
+        object.insert("overlays_unmounted".into(), json!(overlays_down));
         object.remove("projects");
         object.remove("copyfiles");
         object.remove("linkfiles");
@@ -3459,6 +3467,11 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppRes
             if remount_failures > 0 && !quiet {
                 eprintln!("warning: {remount_failures} overlay project(s) could not be mounted");
             }
+            if args.mounts_only {
+                write_meta(meta)?;
+                incomplete |= remount_failures > 0;
+                continue;
+            }
             repair_shared_links(meta);
             repair_git_links(meta, jobs);
             if let Err(reason) = bridge::repair_manifests(meta) {
@@ -3536,6 +3549,11 @@ fn recover_move(meta: &mut TreeMeta) -> AppResult<()> {
     write_meta(meta)
 }
 
+/// Re-links each of the tree's worktree projects with its registration and
+/// sets its state from whether the project then works: a project marked
+/// failed by an earlier repair becomes done again, and a working project is
+/// never marked failed because of a command's exit status. Returns the number
+/// of projects that do not work.
 fn repair_git_links(meta: &mut TreeMeta, jobs: usize) -> usize {
     let root = meta.root();
     let pool = match ThreadPoolBuilder::new().num_threads(jobs).build() {
@@ -3553,28 +3571,53 @@ fn repair_git_links(meta: &mut TreeMeta, jobs: usize) -> usize {
             })
             .map(|(index, project)| {
                 let checkout = root.join(&project.path);
-                let dot_git = checkout.join(".git");
-                let link = bridge::to_gitfile(&dot_git).ok().flatten();
-                let success = Command::new("git")
-                    .arg(format!("--git-dir={}", project.git_common_dir))
-                    .args(["worktree", "repair"])
-                    .arg(&checkout)
-                    .output()
-                    .map(|output| output.status.success())
-                    .unwrap_or(false);
-                let restored = bridge::restore_link(&dot_git, link).is_ok();
-                (index, success && restored)
+                let result =
+                    bridge::repair_worktree_links(&checkout, Path::new(&project.git_common_dir))
+                        .and_then(|()| probe_checkout(&checkout));
+                (index, result)
             })
             .collect::<Vec<_>>()
     });
-    let failures = results.iter().filter(|(_, success)| !success).count();
-    for (index, success) in results {
-        if !success && meta.projects[index].state == "done" {
-            meta.projects[index].state = "failed".into();
-            meta.projects[index].reason = Some("repair-failed".into());
+    let mut failures = 0;
+    for (index, result) in results {
+        let project = &mut meta.projects[index];
+        match result {
+            Ok(()) => {
+                if project.state == "failed"
+                    && project
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.starts_with("repair"))
+                {
+                    project.state = "done".into();
+                    project.reason = None;
+                }
+            }
+            Err(reason) => {
+                failures += 1;
+                if project.state == "done" {
+                    project.state = "failed".into();
+                    project.reason = Some(format!("repair: {reason}"));
+                }
+            }
         }
     }
     failures
+}
+
+/// Whether Git can read the checkout's `HEAD` through its `.git`.
+fn probe_checkout(checkout: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .output()
+        .map_err(|error| format!("run git rev-parse: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("HEAD is unreadable: {}", exit_reason(&output)))
+    }
 }
 
 fn repair_shared_links(meta: &mut TreeMeta) -> usize {

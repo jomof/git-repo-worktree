@@ -706,3 +706,151 @@ fn background_removal_unregisters_bridged_projects_and_spares_the_source() {
         .is_dir());
     run(&client.root, "repo", &["status"]);
 }
+
+fn repo_projects(tree: &Path) -> String {
+    let output = std::process::Command::new("repo")
+        .current_dir(tree)
+        .args(["list", "-n"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn repair_and_move_keep_every_project_when_other_trees_are_bridged() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let first = add(&client, "first");
+    let _second = add(&client, "second");
+    let repaired = json(
+        tool(&client)
+            .args(["repair", "--json", "first"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(repaired["result"]["state"], "complete");
+    assert_eq!(repaired["result"]["failed_projects"], serde_json::json!([]));
+    assert_eq!(repo_projects(&first), "a\nb");
+
+    let moved = client.base.join("moved");
+    tool(&client)
+        .args(["move", "first"])
+        .arg(&moved)
+        .assert()
+        .success();
+    let listed = json(tool(&client).args(["list", "--json"]).assert().success());
+    let tree = listed["result"]["trees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tree| tree["name"] == "first")
+        .unwrap()
+        .clone();
+    assert_eq!(tree["state"], "complete", "{tree}");
+    assert_eq!(repo_projects(&moved), "a\nb");
+    run(&moved.join("a"), "git", &["status", "--porcelain"]);
+}
+
+#[test]
+fn repair_heals_a_tree_poisoned_by_earlier_repairs() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    run(&tree.join("a"), "git", &["checkout", "-q", "-b", "topic"]);
+    let meta_path = client.root.join(".repo/repo-worktrees/tree/meta.json");
+    let mut meta: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+    for project in meta["projects"].as_array_mut().unwrap() {
+        if project["mode"] == "worktree" {
+            project["state"] = "failed".into();
+            project["reason"] = "repair-failed".into();
+        }
+    }
+    meta["state"] = "incomplete".into();
+    fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+    fs::write(
+        tree.join(".repo/local_manifests/zz-git-repo-worktree.xml"),
+        r#"<manifest><remove-project name="a" optional="true"/><remove-project name="b" optional="true"/><remove-project name="pre" optional="true"/></manifest>"#,
+    )
+    .unwrap();
+    fs::write(tree.join(".repo/project.list"), "\n").unwrap();
+
+    let status = json(
+        tool(&client)
+            .args(["status", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    let projects = status["result"]["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 2, "{status}");
+    assert!(projects
+        .iter()
+        .all(|project| project["recorded"] == "failed: repair-failed"));
+    let listed = json(tool(&client).args(["list", "--json"]).assert().success());
+    assert_eq!(
+        listed["result"]["trees"][0]["checked_out_branches"],
+        serde_json::json!([{"project": "a", "branch": "topic"}])
+    );
+
+    let repaired = json(
+        tool(&client)
+            .args(["repair", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(repaired["result"]["state"], "complete");
+    assert_eq!(repo_projects(&tree), "a\nb");
+
+    let detached = json(
+        tool(&client)
+            .args(["detach", "--json", "--branch", "topic"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        detached["result"]["detached"][0]["project"], "a",
+        "{detached}"
+    );
+    tool(&client).args(["remove", "tree"]).assert().success();
+}
+
+#[test]
+fn a_bridge_repo_rejects_is_rolled_back() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    let project_list = fs::read_to_string(tree.join(".repo/project.list")).unwrap();
+    let broken = client.root.join(".repo/local_manifests/broken.xml");
+    fs::create_dir_all(broken.parent().unwrap()).unwrap();
+    fs::write(
+        &broken,
+        r#"<manifest><project name="missing-remote" remote="nowhere"/></manifest>"#,
+    )
+    .unwrap();
+    let repaired = json(
+        tool(&client)
+            .args(["repair", "--json", "tree"])
+            .assert()
+            .code(3),
+    );
+    let bridge = &repaired["result"]["repo_bridge"];
+    assert_eq!(bridge["state"], "failed", "{repaired}");
+    assert!(bridge["reason"]
+        .as_str()
+        .unwrap()
+        .contains("previous files were restored"));
+    assert_eq!(
+        fs::read_to_string(tree.join(".repo/project.list")).unwrap(),
+        project_list
+    );
+    fs::remove_file(&broken).unwrap();
+    tool(&client).args(["repair", "tree"]).assert().success();
+    assert_eq!(repo_projects(&tree), "a\nb");
+}

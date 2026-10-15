@@ -2075,6 +2075,81 @@ mod overlay_mode {
     }
 
     #[test]
+    fn dead_overlays_are_reported_and_mounts_only_repair_restores_them() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        command(&fixture)
+            .arg("add")
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+        let p = fixture.destination.join("p");
+        let upper = fixture
+            .client
+            .join(".repo/repo-worktrees/tree/overlays/p/upper");
+        assert!(StdCommand::new("pkill")
+            .args(["-9", "-f"])
+            .arg(format!("fuse-overlayfs.*{}", upper.display()))
+            .status()
+            .unwrap()
+            .success());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(mounted(&p), "a killed daemon leaves its mount behind");
+
+        let listed = output_json(
+            command(&fixture)
+                .args(["list", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(
+            listed["result"]["trees"][0]["overlays_unmounted"],
+            serde_json::json!(["p"]),
+            "{listed}"
+        );
+        let status = output_json(
+            command(&fixture)
+                .args(["status", "tree", "--json"])
+                .assert()
+                .success(),
+        );
+        let project = &status["result"]["projects"][0];
+        assert_eq!(project["mounted"], false, "{status}");
+        assert!(
+            project["error"].as_str().unwrap().contains("dead"),
+            "{status}"
+        );
+
+        let before = fs::read(fixture.client.join(".repo/repo-worktrees/tree/meta.json")).unwrap();
+        command(&fixture)
+            .args(["repair", "--mounts-only", "tree"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(p.join("source.txt")).unwrap(),
+            "snapshot\n"
+        );
+        let after: Value = serde_json::from_slice(
+            &fs::read(fixture.client.join(".repo/repo-worktrees/tree/meta.json")).unwrap(),
+        )
+        .unwrap();
+        let before: Value = serde_json::from_slice(&before).unwrap();
+        assert_eq!(after["projects"], before["projects"]);
+        let listed = output_json(
+            command(&fixture)
+                .args(["list", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(
+            listed["result"]["trees"][0]["overlays_unmounted"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
     fn untouched_overlays_are_clean_and_repair_remounts_them() {
         if !overlay_usable() {
             return;

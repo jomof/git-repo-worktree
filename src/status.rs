@@ -72,7 +72,7 @@ pub fn checked_out_branches(meta: &TreeMeta) -> Vec<Value> {
     let root = meta.root();
     meta.projects
         .iter()
-        .filter(|project| project.has_worktree() && project.state == "done")
+        .filter(|project| project.has_worktree() && project.state != "skipped")
         .filter_map(|project| {
             checkout_branch(&root.join(&project.path))
                 .map(|branch| json!({"project": project.path, "branch": branch}))
@@ -105,7 +105,11 @@ fn tree_location(meta: &TreeMeta) -> Location {
         projects: meta
             .projects
             .iter()
-            .filter(|project| project.has_worktree() && project.state == "done")
+            .filter(|project| {
+                project.has_worktree()
+                    && project.state != "skipped"
+                    && meta.root().join(&project.path).exists()
+            })
             .map(|project| project.path.clone())
             .collect(),
     }

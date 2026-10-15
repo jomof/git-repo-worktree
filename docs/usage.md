@@ -143,8 +143,12 @@ pass `--source`, or pass `--branch <name>` to find it anywhere. `list --json`
 reports `checked_out_branches` for every tree.
 
 `move` supports same-filesystem relocation and repairs every Git registration.
-`repair` restores registrations, shared links, and missing manifest directives
-at registered paths without replacing unexpected real data.
+`repair --mounts-only` only remounts overlay projects that are unmounted or
+whose mount died (after a reboot or crash); `list --json` names them in
+`overlays_unmounted`. `repair` restores registrations, shared links, and
+missing manifest directives at registered paths without replacing unexpected
+real data, and rebuilds the `.repo` bridge, keeping the previous one if repo
+rejects the result.
 
 ### If a tree was moved with `mv`
 

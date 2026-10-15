@@ -65,7 +65,15 @@ pub fn synthesize(meta: &mut TreeMeta, quiet: bool) -> AppResult<()> {
         return Ok(());
     };
     match build(meta) {
-        Ok(manifests) => {
+        Ok(Built {
+            manifests,
+            warnings,
+        }) => {
+            if !quiet {
+                for warning in &warnings {
+                    eprintln!("warning: left out of the .repo bridge: {warning}");
+                }
+            }
             bridge.state = STATE_DONE.into();
             bridge.reason = None;
             if let Some(manifests) = manifests {
@@ -97,7 +105,13 @@ struct Manifests {
     branch: Option<String>,
 }
 
-fn build(meta: &TreeMeta) -> Result<Option<Manifests>, BridgeError> {
+struct Built {
+    manifests: Option<Manifests>,
+    /// Projects left out of the bridge because their links could not be made.
+    warnings: Vec<String>,
+}
+
+fn build(meta: &TreeMeta) -> Result<Built, BridgeError> {
     let root = meta.root();
     let source_repo = meta.source().join(".repo");
     if !source_repo.join("repo/main.py").is_file() {
@@ -119,31 +133,49 @@ fn build(meta: &TreeMeta) -> Result<Option<Manifests>, BridgeError> {
         ));
     }
 
-    let included = meta
+    let candidates = meta
+        .projects
+        .iter()
+        .filter(|project| project.has_worktree() && project.state != "skipped")
+        .filter(|project| owns_checkout(meta, project))
+        .collect::<Vec<_>>();
+    let expected = meta
         .projects
         .iter()
         .filter(|project| project.has_worktree() && project.state == "done")
-        .collect::<Vec<_>>();
+        .count();
+    if candidates.is_empty() && expected > 0 {
+        return Err(BridgeError::Failed(format!(
+            "none of the tree's {expected} worktree projects has a usable .git; the .repo bridge was left unchanged"
+        )));
+    }
     let tree_repo = root.join(".repo");
     fs::create_dir_all(&tree_repo)
         .map_err(|error| format!("create {}: {error}", tree_repo.display()))?;
     link(&tree_repo.join("repo"), &source_repo.join("repo"))?;
+    let mut included = Vec::new();
+    let mut warnings = Vec::new();
     if meta.source_layout == "worktree" {
         link_object_stores(
             &tree_repo.join("worktrees"),
             &source_repo.join("worktrees"),
-            &included,
+            &candidates,
         )?;
+        included = candidates;
     } else {
+        for project in candidates {
+            match link_project(meta, project) {
+                Ok(()) => included.push(project),
+                Err(reason) => warnings.push(reason),
+            }
+        }
         let objects = source_repo.join("project-objects");
         if objects.is_dir() {
             link_object_stores(&tree_repo.join("project-objects"), &objects, &included)?;
         }
-        for project in &included {
-            link_project(meta, project)?;
-        }
     }
     let manifests = ensure_manifests(&root, &source_repo, &meta.name)?;
+    let previous = BridgeFiles::read(&tree_repo);
 
     let paths = included
         .iter()
@@ -169,7 +201,91 @@ fn build(meta: &TreeMeta) -> Result<Option<Manifests>, BridgeError> {
     list.push('\n');
     write_atomic(&tree_repo.join("project.list"), list.as_bytes(), 0o644)
         .map_err(|error| error.message)?;
-    Ok(manifests)
+    if let Err(reason) = self_test(&root) {
+        previous.restore(&tree_repo);
+        return Err(BridgeError::Failed(format!(
+            "repo rejected the generated .repo ({reason}); the previous files were restored"
+        )));
+    }
+    Ok(Built {
+        manifests,
+        warnings,
+    })
+}
+
+/// Whether the tree's checkout of `project` is a linked worktree of the
+/// project's repository, checked on disk rather than from recorded state.
+fn owns_checkout(meta: &TreeMeta, project: &ProjectMeta) -> bool {
+    let dot_git = dot_git_path(meta, project);
+    let checkout = meta.root().join(&project.path);
+    let admin = match fs::symlink_metadata(&dot_git) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let projects_link = meta
+                .root()
+                .join(".repo/projects")
+                .join(format!("{}.git", project.path));
+            fs::canonicalize(&projects_link).or_else(|_| fs::canonicalize(checkout.join(".git")))
+        }
+        Ok(metadata) if metadata.is_file() => {
+            gitfile_target(&dot_git, &checkout).map_err(io::Error::other)
+        }
+        _ => return false,
+    };
+    let common = fs::canonicalize(&project.git_common_dir);
+    match (admin, common) {
+        (Ok(admin), Ok(common)) => admin.parent() == Some(common.join("worktrees").as_path()),
+        _ => false,
+    }
+}
+
+const LOCAL_MANIFEST_PATH: &str = "local_manifests/zz-git-repo-worktree.xml";
+
+/// The bridge files repo parses, kept so a rejected rewrite can be undone.
+struct BridgeFiles(Vec<(&'static str, Option<Vec<u8>>)>);
+
+impl BridgeFiles {
+    fn read(tree_repo: &Path) -> Self {
+        Self(
+            ["manifest.xml", "project.list", LOCAL_MANIFEST_PATH]
+                .into_iter()
+                .map(|name| (name, fs::read(tree_repo.join(name)).ok()))
+                .collect(),
+        )
+    }
+
+    fn restore(&self, tree_repo: &Path) {
+        for (name, contents) in &self.0 {
+            let path = tree_repo.join(name);
+            match contents {
+                Some(contents) => {
+                    let _ = write_atomic(&path, contents, 0o644);
+                }
+                None => {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+    }
+}
+
+/// Runs `repo list -n` in the tree, which parses the manifest exactly as every
+/// repo command does. Skipped when repo is not on PATH.
+fn self_test(root: &Path) -> Result<(), String> {
+    let output = match Command::new("repo")
+        .current_dir(root)
+        .args(["list", "-n"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("run repo list: {error}")),
+    };
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(exit_reason(&output))
+    }
 }
 
 /// Links each included project's object store individually rather than the
@@ -544,23 +660,42 @@ pub fn repair_manifests(meta: &TreeMeta) -> Result<(), String> {
     if !checkout.is_dir() {
         return Ok(());
     }
+    repair_worktree_links(&checkout, Path::new(git_dir))
+        .map_err(|reason| format!("repair manifest worktree: {reason}"))
+}
+
+/// Points the linked worktree at `checkout` and its registration in `common`
+/// back at each other, as `git worktree repair <checkout>` does. Git's command
+/// also checks every other worktree of the repository and fails on other
+/// trees' bridge links, so this touches only `checkout`.
+pub fn repair_worktree_links(checkout: &Path, common: &Path) -> Result<(), String> {
     let dot_git = checkout.join(".git");
-    let target = to_gitfile(&dot_git)?;
-    let output = Command::new("git")
-        .arg(format!("--git-dir={git_dir}"))
-        .args(["worktree", "repair"])
-        .arg(&checkout)
-        .output()
-        .map_err(|error| format!("repair manifest worktree: {error}"))?;
-    restore_link(&dot_git, target)?;
-    if output.status.success() {
-        Ok(())
+    let metadata =
+        fs::symlink_metadata(&dot_git).map_err(|error| format!("inspect .git: {error}"))?;
+    let admin = if metadata.file_type().is_symlink() {
+        fs::canonicalize(&dot_git).map_err(|error| format!("resolve .git link: {error}"))?
+    } else if metadata.is_file() {
+        gitfile_target(&dot_git, checkout)?
     } else {
-        Err(format!(
-            "repair manifest worktree: {}",
-            exit_reason(&output)
-        ))
+        return Err(".git is a directory, not a linked worktree".into());
+    };
+    let common = fs::canonicalize(common)
+        .map_err(|error| format!("resolve {}: {error}", common.display()))?;
+    if admin.parent() != Some(common.join("worktrees").as_path()) {
+        return Err(format!(
+            "{} is not a worktree of {}",
+            admin.display(),
+            common.display()
+        ));
     }
+    let checkout = fs::canonicalize(checkout)
+        .map_err(|error| format!("resolve {}: {error}", checkout.display()))?;
+    let expected = format!("{}\n", checkout.join(".git").display());
+    let gitdir = admin.join("gitdir");
+    if fs::read_to_string(&gitdir).ok().as_deref() != Some(expected.as_str()) {
+        write_atomic(&gitdir, expected.as_bytes(), 0o644).map_err(|error| error.message)?;
+    }
+    Ok(())
 }
 
 /// The source client's manifest selection, so repo in the tree follows the

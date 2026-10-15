@@ -193,3 +193,24 @@ machine interface deterministic:
   `--one-file-system` (`-x` on macOS) so an overlay that failed to unmount is
   never descended into. The same switch that turns maintenance off restores
   foreground deletion, so a disabled maintenance never strands files.
+
+## `repair` post-mortem (asfp-cxx-lsp)
+
+- `repair` and `move` no longer run `git worktree repair`. Besides the given
+  path, Git checks every worktree of the repository and exits 1 when another
+  tree's `.git` is a bridge symlink, so with two or more bridged trees every
+  project's repair "failed". Those failures were written onto healthy
+  projects, and the bridge, built from projects recorded as `done`, removed
+  all of them, including the repo-hooks project, which made every repo
+  command in the tree fail. The tool now rewrites the one admin `gitdir` link
+  itself and sets project state from whether `HEAD` reads.
+- The bridge includes projects by checking their `.git` on disk, refuses to
+  write a bridge without any of the tree's projects, and runs `repo list -n`
+  after writing, restoring the previous files if repo rejects them. A broken
+  bridge must never be the result of a repair attempt.
+- `status`, `detach`, and `remove`'s dirty check select projects by whether
+  their checkout exists, not recorded state: a project wrongly recorded as
+  failed was invisible to `status`, kept `detach` from releasing its branch,
+  and skipped the dirty check before deletion.
+- Dead overlay mounts are detected by opening the mount root: `stat` is served
+  from the kernel's attribute cache after the daemon dies.

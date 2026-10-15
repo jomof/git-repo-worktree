@@ -101,8 +101,20 @@ The tree's projects are still populated at the snapshot's pinned revisions;
 repo commands run later see the live manifest, so `repo sync` moves the tree to
 upstream like any client.
 
-Included projects are those with mode `worktree` or `overlay` in state `done`.
-Shared, skipped, and failed projects are excluded so repo never acts on them.
+Included projects are those with mode `worktree` or `overlay`, not skipped,
+whose `.git` (in the overlay's upper directory when unmounted) resolves to an
+admin directory under the project's `<git_common_dir>/worktrees/`, checked on
+disk rather than from recorded state. A project whose links cannot be made is
+left out with a warning. Shared, skipped, and unpopulated projects are
+excluded so repo never acts on them. If no project qualifies while the tree
+records worktree projects as `done`, the bridge is `failed` and nothing is
+written.
+
+After writing, the tool runs `repo list -n` in the tree root (skipped when
+repo is not on `PATH`). If it fails, `manifest.xml`, `project.list`, and
+`local_manifests/zz-git-repo-worktree.xml` are restored to their previous
+contents (or removed if they did not exist) and the bridge is `failed` with
+repo's error.
 
 Each admin directory gets relative links that repo reads directly and Git
 ignores for linked worktrees: `config`, `objects`, `packed-refs`, `hooks`,
@@ -129,9 +141,21 @@ snapshot's root `<manifest>` children, dropping comments, and:
 
 ### 3.4 Lifecycle
 
-Git's `worktree remove`, `move`, and `repair` require a gitfile. Before those
-commands the tool rewrites a bridge `.git` symlink to `gitdir: <admin>` and,
-when the worktree still exists afterwards, restores the original link.
+Git's `worktree remove` and `move` require a gitfile. Before those commands
+the tool rewrites a bridge `.git` symlink to `gitdir: <admin>` and, when the
+worktree still exists afterwards, restores the original link.
+
+The tool never runs `git worktree repair`: it checks every worktree of the
+repository and fails on other trees' bridge links, and the post-mortem in
+`real-world-experience/asfp-cxx-lsp-repair-postmortem.md` shows that failure
+poisoning a tree. To repair a project or the manifest worktree, the tool
+resolves the admin directory from `.git` (a link, or a gitfile), requires it
+to be under `<git_common_dir>/worktrees/`, and rewrites the admin's `gitdir`
+to `<checkout>/.git`. A project is then `done` when `git rev-parse --verify
+HEAD` succeeds in it, and `failed` with reason `repair: <error>` otherwise. A
+project recorded as failed by an earlier repair (reason starting `repair`) is
+set back to `done` when it works. Command exit statuses never decide project
+state on their own.
 
 `remove` removes the manifest worktree with `--force --force`, prunes the
 manifest repository, and deletes the per-tree manifest branch. `prune` does the
@@ -448,7 +472,18 @@ fails with `E_OVERLAY_BUSY` before any state changes; `materialize` reports the
 project as failed and leaves it mounted. `remove` deletes the admin directory's `locked` file
 so the registration can be pruned. `repair` and `move` remount overlays whose
 upper directory has a `.git`; a failed remount marks the project `failed`
-(reason `remount: …`), and a later successful remount clears it. Bridge
+(reason `remount: …`), and a later successful remount clears it. A mount whose
+daemon has exited is *dead*: still in the mount table, but opening its root
+fails with `ENOTCONN`. Remounting lazily unmounts a dead mount first.
+`repair --mounts-only` remounts and changes nothing else. Tree summaries list
+`overlays_unmounted` (overlay projects in state `done` that are unmounted or
+dead), and `status` reports such a project with `mounted: false` and an error
+naming `repair --mounts-only`.
+
+`status`, `detach`, `checked_out_branches`, and `remove`'s dirty check cover
+every worktree or overlay project that is not skipped and whose checkout
+exists, whatever its recorded state; `status` adds `recorded` (state and
+reason) for projects not recorded as `done`. Bridge
 operations on an unmounted overlay act on `upper/.git`, resolving its relative
 link against the mount point.
 
