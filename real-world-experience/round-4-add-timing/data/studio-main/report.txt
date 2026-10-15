@@ -1,0 +1,75 @@
+454 event(s) from 2026-10-12T23:35:23Z to 2026-10-15T01:09:35Z
+environment: linux 7.1.6-1rodete1-amd64 (git version 2.56.0.176.g3575e65682-goog), 96 cpus, source fs ext4, tree fs ext4, overlay available
+
+command       count   ok  p50_ms  p90_ms  max_ms  errors
+add              86   75   30666   46438  144609  E_DEST_NESTEDx2 E_DEST_NOT_EMPTYx1 E_LOCKEDx7 E_PARTIALx1
+defaults list      4    4       0       0       0  
+detach            2    2     192     192     192  
+hooks             1    0       0       0       0  E_USAGEx1
+hooks list       11   11       0       1       3  
+list            104   98      47     577    2894  E_LOCKEDx6
+materialize       5    3     453   89575   89575  E_PARTIALx2
+pool --json       1    0       0       0       0  E_USAGEx1
+pool clear        9    9   25579   28928   71466  
+pool fill         4    3   13382   13667   13667  E_NO_POOL_PROJECTSx1
+pool list        14   14      75     110    6458  
+pool size         1    1       0       0       0  
+pool status       3    0       0       0       0  E_USAGEx3
+prune             1    1      93      93      93  
+remove           77   67   21476   35604  105031  E_DIRTYx4 E_LOCKEDx4 E_NO_SUCH_TREEx2
+repair           20   11     161     263    2616  E_PARTIALx9
+report           45   45       5      10      45  
+status           66   55    1723    3801   27905  E_LOCKEDx11
+
+usage errors:
+  1  hooks [E_USAGE]
+  1  pool --json [E_USAGE]
+  3  pool status --json [E_USAGE]
+
+project modes (add):
+  1311  overlay
+  57  symlink-shared
+  2832  worktree
+
+strategies (add):
+  2558  checkout
+  1311  fuse-overlayfs
+  57  none
+  274  pool
+
+population notes:
+  69  overlay preflight changed
+  415  reflink fallback
+  2096  reflink unsupported for filesystem pair
+  3  sharing preflight changed
+  3  source checkout is not clean
+
+dirty refusals (remove):
+  1  modified
+  4  unbranched-commits
+  3  untracked
+
+hook post-add: p50 100 ms, p90 104 ms, statuses {"failed":1,"ok":49}
+
+hook pre-remove: p50 50 ms, p90 952 ms, statuses {"ok":40}
+
+pool: 274 hit(s), 210 miss(es); 315 project(s) returned on remove
+
+slowest projects to populate (p50 ms, samples, mode/strategy):
+     28310   75  worktree/checkout            prebuilts/studio/sdk/linux
+      5580   75  worktree/checkout            external/jetbrains/kotlin
+      3182   75  worktree/checkout            tools/base
+      2395   75  worktree/checkout            external/intellij-plugins
+      2304   75  worktree/checkout            tools/idea
+      2157   75  worktree/checkout            tools/vendor/google
+      1592   75  worktree/checkout            external/dexter
+      1538   75  worktree/checkout            tools/vendor/intellij/cidr
+      1399   75  worktree/checkout            tools/emulator
+      1207   75  worktree/checkout            tools/gpu-profiler/idea
+       690   75  worktree/checkout            tools/profiler
+       570   75  worktree/checkout            tools/vendor/ggml-org/llama.cpp
+       529   75  overlay/fuse-overlayfs       prebuilts/tools
+       453   75  worktree/checkout            tools/adt/idea
+       362   75  worktree/checkout            tools/data-binding
+
+live trees: 21  (history: /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/history.jsonl)

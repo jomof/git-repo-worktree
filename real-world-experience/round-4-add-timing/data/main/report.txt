@@ -1,0 +1,49 @@
+33 event(s) from 2026-10-15T00:14:35Z to 2026-10-15T01:10:56Z
+environment: linux 7.1.6-1rodete1-amd64 (git version 2.56.0.176.g3575e65682-goog), 96 cpus, source fs ext4, tree fs ext4, overlay available
+
+command       count   ok  p50_ms  p90_ms  max_ms  errors
+add              10    9  221277  238953  243294  E_SYNC_ACTIVEx1
+list              3    3     464    1815    1815  
+pool --json       1    0       0       0       0  E_USAGEx1
+pool clear        2    2   21959   21959   21959  
+pool list         4    4       0      44      44  
+pool size         1    1       0       0       0  
+remove            8    8   46204   65803   73888  
+report            1    1      12      12      12  
+status            3    3    3199    5898    5898  
+
+usage errors:
+  1  pool --json [E_USAGE]
+
+project modes (add):
+  1017  overlay
+  8739  worktree
+
+strategies (add):
+  8655  checkout
+  1017  fuse-overlayfs
+  84  pool
+
+population notes:
+  8655  reflink unsupported for filesystem pair
+
+pool: 84 hit(s), 42 miss(es); 112 project(s) returned on remove
+
+slowest projects to populate (p50 ms, samples, mode/strategy):
+     16048    9  overlay/fuse-overlayfs       kernel/prebuilts/common-modules/virtual-device/mainline/x86-64
+     12721    9  overlay/fuse-overlayfs       prebuilts/module_sdk/ConfigInfrastructure
+     12346    9  overlay/fuse-overlayfs       external/openwrt-prebuilts
+     11552    9  overlay/fuse-overlayfs       external/timezone-boundary-builder
+     11541    9  overlay/fuse-overlayfs       prebuilts/abi-dumps/ndk
+     11516    9  overlay/fuse-overlayfs       prebuilts/bundletool
+     11477    9  overlay/fuse-overlayfs       kernel/prebuilts/common-modules/trusty/6.12/arm64
+     10478    9  overlay/fuse-overlayfs       prebuilts/module_sdk/Scheduling
+     10221    9  worktree/checkout            external/libwebsockets
+     10075    9  worktree/checkout            external/ltp
+     10065    9  overlay/fuse-overlayfs       device/google/sdv
+     10024    9  overlay/fuse-overlayfs       prebuilts/module_sdk/Profiling
+      9999    9  overlay/fuse-overlayfs       prebuilts/module_sdk/CrashRecovery
+      9691    9  overlay/fuse-overlayfs       prebuilts/module_sdk/SdkExtensions
+      9567    9  overlay/fuse-overlayfs       kernel/prebuilts/mainline/x86_64
+
+live trees: 2  (history: /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/history.jsonl)
