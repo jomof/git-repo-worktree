@@ -1,0 +1,20 @@
+prebuilts/studio/sdk/linux  2 spare(s)  about 11.3 GB each
+tools/idea  2 spare(s)  about 2.1 GB each
+tools/gpu-profiler/idea  2 spare(s)  about 2.1 GB each
+tools/adt/idea  2 spare(s)  about 2.5 GB each
+external/jetbrains/kotlin  2 spare(s)  about 740.2 MB each
+tools/base  2 spare(s)  about 1.0 GB each
+external/intellij-plugins  2 spare(s)  about 469.0 MB each
+tools/vendor/intellij/cidr  2 spare(s)  about 314.2 MB each
+tools/vendor/google  2 spare(s)  about 516.9 MB each
+external/dexter  2 spare(s)  about 667.0 MB each  orphaned: quick to check out (about 1342 ms)
+prebuilts/clang/host/linux-x86  2 spare(s)  about 3.9 GB each  orphaned: shared or overlaid from its clean source checkout
+prebuilts/remoteexecution-client  2 spare(s)  about 1.2 GB each  orphaned: shared or overlaid from its clean source checkout
+prebuilts/studio/buildbenchmarks  2 spare(s)  about 4.1 GB each  orphaned: shared or overlaid from its clean source checkout
+prebuilts/studio/intellij-sdk  2 spare(s)  about 13.6 GB each  orphaned: shared or overlaid from its clean source checkout
+prebuilts/studio/jdk  2 spare(s)  about 8.2 GB each  orphaned: shared or overlaid from its clean source checkout
+prebuilts/studio/sdk/remote  2 spare(s)  about 5.8 GB each  orphaned: shared or overlaid from its clean source checkout
+prebuilts/tools  2 spare(s)  about 27.1 GB each  orphaned: shared or overlaid from its clean source checkout
+tools/external/gradle  2 spare(s)  about 6.6 GB each  orphaned: shared or overlaid from its clean source checkout
+depth 2 of 2: the next 2 add(s) can take every pooled project from the pool
+18 orphaned spare(s), about 142.4 GB: no default add uses them; `pool clear --orphaned` deletes them

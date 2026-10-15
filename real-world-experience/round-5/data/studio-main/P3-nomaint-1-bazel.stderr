@@ -1,0 +1,48 @@
+Starting local Bazel server (9.2.0) and connecting to it...
+INFO: Invocation ID: ac0b101b-c5cc-483c-a3fe-ba0b8b064512
+INFO: Streaming build results to: https://fusion2.corp.google.com/invocations/ac0b101b-c5cc-483c-a3fe-ba0b8b064512
+Computing main repo mapping: 
+WARNING: For repository 'io_bazel_rules_go_bazel_features', the root module requires module version bazel_features@1.4.1, but got bazel_features@1.47.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'platforms', the root module requires module version platforms@0.0.10, but got platforms@1.1.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_cc', the root module requires module version rules_cc@0.0.15, but got rules_cc@0.2.19 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_jvm_external', the root module requires module version rules_jvm_external@6.8, but got rules_jvm_external@6.10 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_pkg', the root module requires module version rules_pkg@1.0.1, but got rules_pkg@1.2.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_shell', the root module requires module version rules_shell@0.4.0, but got rules_shell@0.6.1 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'with_cfg.bzl', the root module requires module version with_cfg.bzl@0.9.1, but got with_cfg.bzl@0.12.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'protoc-gen-validate', the root module requires module version protoc-gen-validate@1.0.4.bcr.2, but got protoc-gen-validate@1.2.1.bcr.2 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'com_google_absl', the root module requires module version abseil-cpp@20250127.0, but got abseil-cpp@20250814.1 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Loading: 
+Loading: 7 packages loaded
+Analyzing: target //tools/base/common:tools.common (13 packages loaded, 8 targets configured)
+Analyzing: target //tools/base/common:tools.common (13 packages loaded, 8 targets configured)
+
+Analyzing: target //tools/base/common:tools.common (134 packages loaded, 1889 targets configured)
+
+Analyzing: target //tools/base/common:tools.common (196 packages loaded, 15671 targets configured, 1 aspect application)
+
+Analyzing: target //tools/base/common:tools.common (198 packages loaded, 16659 targets configured, 4 aspect applications)
+[1 / 1] no actions running
+INFO: Analyzed target //tools/base/common:tools.common (198 packages loaded, 16659 targets configured, 4 aspect applications).
+[126 / 150] Building source jar tools/base/common/agp-version/libagp-version-src.jar; 1s remote-cache ... (5 actions, 0 running)
+[133 / 150] Building source jar tools/base/common/agp-version/libagp-version-src.jar; 2s remote-cache ... (2 actions, 0 running)
+[134 / 150] Generating Descriptor Set proto_library @com_google_protobuf//src/google/protobuf:empty_proto [for tool]; 4s remote-cache ... (2 actions, 0 running)
+[135 / 150] Generating Descriptor Set proto_library @com_google_protobuf//src/google/protobuf:empty_proto [for tool]; 5s remote-cache
+[136 / 150] [Prepa] ProtoCompile external/protobuf+/java/core/gen_well_known_protos_java.srcjar [for tool]
+INFO: Found 1 target...
+Target //tools/base/common:tools.common up-to-date:
+  bazel-bin/tools/base/common/tools.common.pom
+  bazel-bin/tools/base/common/tools.common.jar
+  bazel-bin/tools/base/common/tools.common.src.jar
+INFO: Elapsed time: 29.212s, Critical Path: 10.17s
+INFO: 150 processes: 113 remote cache hit, 37 internal.
+INFO: Build completed successfully, 150 total actions
+INFO: 
+INFO: Streaming build results to: https://fusion2.corp.google.com/invocations/ac0b101b-c5cc-483c-a3fe-ba0b8b064512

@@ -1,0 +1,2 @@
+[S4] maintain_active_before_add2=1
+[S4] waited 131s after S4-add2 for pool maintain to finish

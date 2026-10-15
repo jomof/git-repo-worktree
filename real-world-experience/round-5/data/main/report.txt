@@ -1,0 +1,50 @@
+69 event(s) from 2026-10-15T00:14:35Z to 2026-10-15T03:25:38Z
+environment: linux 7.1.6-1rodete1-amd64 (git version 2.56.0.176.g3575e65682-goog), 96 cpus, source fs ext4, tree fs ext4, overlay available
+
+command       count   ok  p50_ms  p90_ms  max_ms  errors
+add              22   21   60267  233289  243294  E_SYNC_ACTIVEx1
+list              4    4    1652    1815    1815  
+pool --json       1    0       0       0       0  E_USAGEx1
+pool clear        5    5   21959   48082   48082  
+pool list         8    8      14     112     122  
+pool maintain      3    3   85211  232608  232608  
+pool size         1    1       0       0       0  
+remove           20   20   30648   56860   73888  
+report            2    2      36      36      36  
+status            3    3    3199    5898    5898  
+
+usage errors:
+  1  pool --json [E_USAGE]
+
+project modes (add):
+  2373  overlay
+  20391  worktree
+
+strategies (add):
+  20293  checkout
+  2373  fuse-overlayfs
+  98  pool
+
+population notes:
+  8655  reflink unsupported for filesystem pair
+
+pool: 98 hit(s), 196 miss(es); 140 project(s) returned on remove
+
+slowest projects to populate (p50 ms, samples, mode/strategy):
+      9320   21  worktree/pool                cts
+      7146   21  worktree/pool                external/opencl/llvm-project
+      7104   21  worktree/pool                frameworks/base
+      6794   21  worktree/pool                external/cronet
+      5166   21  worktree/pool                packages/services/display_safety
+      3843   21  worktree/checkout            packages/apps/CellBroadcastReceiver
+      3814   21  worktree/pool                external/google-cloud-java
+      3585   21  worktree/checkout            hardware/interfaces
+      2802   21  worktree/pool                external/deqp
+      2670   21  worktree/pool                external/swiftshader
+      2566   21  worktree/checkout            packages/apps/Dialer
+      2530   21  worktree/checkout            packages/modules/NpuManager
+      2435   21  worktree/checkout            external/perfetto
+      2310   21  worktree/checkout            external/aws-sdk-java-v2
+      2239   21  worktree/checkout            art
+
+live trees: 2  (history: /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/history.jsonl)

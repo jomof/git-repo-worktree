@@ -1,0 +1,2 @@
+Filesystem                    1B-blocks          Used     Available Use% Mounted on
+/dev/glinux_20230721/root 8175786840064 6639630254080 1165201313792  86% /

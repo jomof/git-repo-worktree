@@ -32,14 +32,11 @@ It is intended for an engineering/review agent auditing the entire `git-repo-wor
 
 9. **[`round-3-blindfold-hooks-plan.md`](round-3-blindfold-hooks-plan.md)**: blindfold rerun after the round-2 fixes, adding site hooks (`post-add` runs `./build/bazel/env/setup`, `pre-remove` stops the tree's Bazel server) and testing hook failure, parallel agents without lock contention, and warm-pool timing.
 
-10. **[`round-5-pool-and-stalls-plan.md`](round-5-pool-and-stalls-plan.md)**: after the round-4 timing report, measures the orphaned-spare cleanup and background pool refill on studio-main, and attributes AOSP's stalled adds with a thread-level wait-channel sampler and a `-j` matrix.
-
-## Addendum
-
-7. **[`addendum-env-bazelrc-and-cartfs.md`](addendum-env-bazelrc-and-cartfs.md)** — **Addendum: How `env.bazelrc` and CartFS `output_base` Are Generated in `studio-main`**
-   - Traces `env.bazelrc` creation to `./build/bazel/env/setup` (`build/bazel/env/setup_dev_env.py`), explains how `startup --output_base=/google/cartfs/mount/<md5(workspace_root)>` is computed, clarifies that CartFS is a Google-internal FUSE filesystem (while `setup_dev_env.py` is in public AOSP), and shows how generic `<md5(source_root)>` -> `<md5(worktree_root)>` rewriting preserves both Bazel isolation and CartFS deduplication.
-   - Explicitly spells out that the reviewing/implementing agent **does not need CartFS** in its environment: following 4 purely generic conventions (real `<wt>/.repo/`, non-symlinked project dirs, `<source_root>`/`<md5(source_root)>` string substitution in copied root configs, and hash-guarded `output_base` cleanup) automatically takes advantage of CartFS when present and can be tested in any standard `/tmp` directory.
-
 ## Round 4
 
 10. **[`round-4-add-timing/report.md`](round-4-add-timing/report.md)**: real-world `add`/`remove` timing, disk, and pool behaviour on `~/projects/main` (AOSP, 1,084 projects) and `~/projects/studio-main`, with raw history, scripts, and ruled-out hypotheses for the AOSP slowdown. Headline: 132 GB of studio-main's 171 GB pool is spares `add` never consumes.
+
+## Round 5
+
+11. **[`round-5-pool-and-stalls-plan.md`](round-5-pool-and-stalls-plan.md)**: after the round-4 timing report, measures the orphaned-spare cleanup and background pool refill on studio-main, and attributes AOSP's stalled adds with a thread-level wait-channel sampler and a `-j` matrix.
+12. **[`round-5/report.md`](round-5/report.md)**: results of the Round 5 test plan on `a9a71ee28036` (`pool clear --orphaned` reclaiming 132.39 GiB on `studio-main` in 19.8 s; background `pool maintain` refills, bursts, spaced adds, and concurrent Bazel builds; AOSP cold `add` speedup from 155–243 s down to 24.8–43.4 s; warm-pool AOSP `add` in 20.5 s; `remove` `prune` down from 0.2–32 s to 25–47 ms; and attribution of the remaining AOSP `projects` time to synchronous `projects-journal-sync` / `projects-meta-write` `fsync()` calls on the main scheduler thread).

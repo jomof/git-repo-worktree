@@ -1,0 +1,48 @@
+Starting local Bazel server (9.2.0) and connecting to it...
+INFO: Invocation ID: f93a63b9-5b76-4483-8d2b-470d132deec8
+INFO: Streaming build results to: https://fusion2.corp.google.com/invocations/f93a63b9-5b76-4483-8d2b-470d132deec8
+Computing main repo mapping: 
+WARNING: For repository 'io_bazel_rules_go_bazel_features', the root module requires module version bazel_features@1.4.1, but got bazel_features@1.47.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'platforms', the root module requires module version platforms@0.0.10, but got platforms@1.1.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_cc', the root module requires module version rules_cc@0.0.15, but got rules_cc@0.2.19 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_jvm_external', the root module requires module version rules_jvm_external@6.8, but got rules_jvm_external@6.10 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_pkg', the root module requires module version rules_pkg@1.0.1, but got rules_pkg@1.2.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'rules_shell', the root module requires module version rules_shell@0.4.0, but got rules_shell@0.6.1 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'with_cfg.bzl', the root module requires module version with_cfg.bzl@0.9.1, but got with_cfg.bzl@0.12.0 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'protoc-gen-validate', the root module requires module version protoc-gen-validate@1.0.4.bcr.2, but got protoc-gen-validate@1.2.1.bcr.2 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+WARNING: For repository 'com_google_absl', the root module requires module version abseil-cpp@20250127.0, but got abseil-cpp@20250814.1 in the resolved dependency graph. Please update the version in your MODULE.bazel or set --check_direct_dependencies=off
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Loading: 
+Loading: 7 packages loaded
+Analyzing: target //tools/base/common:tools.common (13 packages loaded, 8 targets configured)
+Analyzing: target //tools/base/common:tools.common (13 packages loaded, 8 targets configured)
+
+Analyzing: target //tools/base/common:tools.common (185 packages loaded, 9288 targets configured)
+
+Analyzing: target //tools/base/common:tools.common (194 packages loaded, 13954 targets configured)
+
+Analyzing: target //tools/base/common:tools.common (198 packages loaded, 16659 targets configured, 4 aspect applications)
+[1 / 1] no actions running
+INFO: Analyzed target //tools/base/common:tools.common (198 packages loaded, 16659 targets configured, 4 aspect applications).
+[68 / 150] Compiling Java headers external/protobuf+/java/core/liblite_runtime_only-hjar.jar (96 source files) [for tool]; 0s remote-cache ... (4 actions, 0 running)
+[77 / 150] Building tools/base/bazel/modify_jar_manifest.jar (1 source file) [for tool]; 2s remote-cache
+[149 / 150] [Prepa] GenPom tools/base/common/tools.common.pom
+INFO: Found 1 target...
+Target //tools/base/common:tools.common up-to-date:
+  bazel-bin/tools/base/common/tools.common.pom
+  bazel-bin/tools/base/common/tools.common.jar
+  bazel-bin/tools/base/common/tools.common.src.jar
+INFO: Elapsed time: 30.088s, Critical Path: 3.64s
+INFO: 150 processes: 113 remote cache hit, 37 internal.
+INFO: Build completed successfully, 150 total actions
+INFO: 
+INFO: Streaming build results to: https://fusion2.corp.google.com/invocations/f93a63b9-5b76-4483-8d2b-470d132deec8

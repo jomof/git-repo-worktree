@@ -1,0 +1,23 @@
+	Command being timed: "git-repo-worktree add -v -j 32 /usr/local/google/home/jomof/projects/main-wt-r5-S4b"
+	User time (seconds): 143.63
+	System time (seconds): 365.43
+	Percent of CPU this job got: 520%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:37.72
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 585252
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 525
+	Minor (reclaiming a frame) page faults: 7699261
+	Voluntary context switches: 1382214
+	Involuntary context switches: 269716
+	Swaps: 0
+	File system inputs: 165048
+	File system outputs: 69417112
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

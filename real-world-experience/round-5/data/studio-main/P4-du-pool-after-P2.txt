@@ -1,0 +1,1 @@
+41051040	/usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool

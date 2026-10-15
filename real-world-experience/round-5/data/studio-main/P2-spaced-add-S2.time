@@ -1,0 +1,23 @@
+	Command being timed: "git -C /usr/local/google/home/jomof/projects/studio-main repo-worktree add --json -v /usr/local/google/home/jomof/projects/studio-wt-r5-S2"
+	User time (seconds): 16.54
+	System time (seconds): 29.99
+	Percent of CPU this job got: 542%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:08.57
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 2756576
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 28
+	Minor (reclaiming a frame) page faults: 934026
+	Voluntary context switches: 51522
+	Involuntary context switches: 18242
+	Swaps: 0
+	File system inputs: 224
+	File system outputs: 3226704
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
