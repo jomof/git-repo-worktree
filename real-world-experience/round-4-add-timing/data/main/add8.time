@@ -1,0 +1,23 @@
+	Command being timed: "git repo-worktree add --json -v /usr/local/google/home/jomof/projects/main-wt-report"
+	User time (seconds): 134.30
+	System time (seconds): 194.83
+	Percent of CPU this job got: 168%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:15.14
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 614924
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 319
+	Minor (reclaiming a frame) page faults: 6006529
+	Voluntary context switches: 917190
+	Involuntary context switches: 251395
+	Swaps: 0
+	File system inputs: 38216
+	File system outputs: 70154752
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

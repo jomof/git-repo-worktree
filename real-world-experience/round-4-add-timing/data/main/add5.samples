@@ -1,0 +1,1215 @@
+t=1 
+Sl+        0 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+poll_schedule_timeout.constprop.0
+t=2 phase snapshot: starting
+S+         1 /usr/bin/python3 /usr/local/google/home/jomof/projects/main/.repo/repo/main.py --repo-dir=/usr/local/google/home/jomof/projects/main/.repo --wrappe
+poll_schedule_timeout.constprop.0
+Sl+        2 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+poll_schedule_timeout.constprop.0
+t=3 phase snapshot: starting
+S+         3 /usr/bin/python3 /usr/local/google/home/jomof/projects/main/.repo/repo/main.py --repo-dir=/usr/local/google/home/jomof/projects/main/.repo --wrappe
+poll_schedule_timeout.constprop.0
+Sl+        3 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+poll_schedule_timeout.constprop.0
+t=4 phase snapshot: starting
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+        8 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=5 phase snapshot: starting
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+       13 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=6 phase snapshot: starting
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+       18 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=7 project 12/1084: added packages/modules/Virtualization (checkout, reflink unsupp
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/NpuManager worktre
+do_wait
+S+         1 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/mesa3d worktree add --deta
+do_wait
+
+
+S+         0 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/dexter worktree add --detach 
+do_wait
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+       22 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=8 project 54/1084: added packages/services/Car (checkout, reflink unsupported for 
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/av worktree add --detach
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/noto-fonts worktree add --
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/dng_sdk worktree add --det
+do_wait
+
+
+
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/ksp worktree add --detach 
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/webrtc worktree add --deta
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/skia worktree add --detach
+do_wait
+
+
+
+
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/sdv/vsomeip worktree add -
+do_wait
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+       28 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=9 project 99/1084: added external/python/cpython3 (checkout, reflink unsupported f
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/perfetto worktree add --de
+do_wait
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/hardware/interfaces worktree add --
+do_wait
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/kotlinc worktree add --det
+do_wait
+
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/grpc-grpc worktree add --d
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/clang worktree add --detac
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/chromium-web-tests worktre
+do_wait
+
+
+
+
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/chre worktree add --detach /
+do_wait
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/providers/MediaProvider wo
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/ComputeLibrary worktree ad
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/unwinding worktree add --det
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/tink worktree add --detach
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/brotli worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/inputmethods/LatinIME work
+do_wait
+Sl+       34 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=10 project 125/1084: added packages/inputmethods/LatinIME (checkout, reflink unsupp
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/Bluetooth worktree
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/hardware/google/gfxstream worktree 
+do_wait
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/cairo worktree add --detac
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/netsim worktree add --detach 
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/tflite-support worktree ad
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/XMP-Toolkit-SDK worktree a
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jackson-databind worktree 
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/rust/ninja-to-soong worktr
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/OpenCSD worktree add --det
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/rs worktree add --detach
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/pigweed worktree add --det
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/openscreen worktree add --
+do_wait
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/native worktree add --de
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/acpica worktree add --deta
+do_wait
+
+
+
+
+
+
+
+
+
+
+Sl+       41 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=11 project 172/1084: added external/trusty/arm-trusted-firmware (checkout, reflink 
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/apex worktree add --detach /
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/capstone worktree add --de
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/Permission worktre
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/selinux worktree add --det
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/sdk-platform-java worktree
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/guice worktree add --detac
+do_wait
+S+         2 git -C /usr/local/google/home/jomof/projects/main/external/openwrt-prebuilts rev-parse HEAD
+unix_wait_for_peer
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/DocumentsUI worktree 
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/ImsStack worktree 
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/rust/crabbyavif worktree a
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Launcher3 worktree ad
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/compiler-rt worktree add -
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/google-breakpad worktree a
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/apache-commons-compress wo
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libwebsockets worktree add
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/error_prone worktree add -
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/oboe worktree add --detach
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libvpx worktree add --deta
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libcxx worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/sonivox worktree add --det
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/sepolicy worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/conscrypt worktree add --d
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libcups worktree add --det
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/wycheproof worktree add --
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/SPIRV-Tools worktree add -
+do_wait
+
+
+
+
+
+
+Dl+       47 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+jbd2_log_wait_commit
+t=12 project 177/1084: added external/capstone (checkout, reflink unsupported for fil
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/DocumentsUI worktree 
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libwebsockets worktree add
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libvpx worktree add --deta
+do_wait
+
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/conscrypt worktree add --d
+do_wait
+
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/SPIRV-Tools worktree add -
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/CellBroadcastReceiver
+do_wait
+S+         3 git -C /usr/local/google/home/jomof/projects/main/kernel/prebuilts/mainline/x86_64 worktree add --no-checkout --detach /usr/local/google/home/jomof
+unix_wait_for_peer
+S+         3 git -C /usr/local/google/home/jomof/projects/main/prebuilts/bundletool worktree add --no-checkout --detach /usr/local/google/home/jomof/projects/ma
+unix_wait_for_peer
+S+         2 git -C /usr/local/google/home/jomof/projects/main/tools/rr_prebuilt worktree add --no-checkout --detach /usr/local/google/home/jomof/projects/main-
+unix_wait_for_peer
+S+         2 git -C /usr/local/google/home/jomof/projects/main/kernel/prebuilts/common-modules/virtual-device/6.6/arm64 worktree add --no-checkout --detach /usr
+unix_wait_for_peer
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/deqp-deps/SPIRV-Tools work
+unix_wait_for_peer
+S+         2 git -C /usr/local/google/home/jomof/projects/main/kernel/prebuilts/common-modules/virtual-device/mainline/x86-64 worktree add --no-checkout --detac
+unix_wait_for_peer
+S+         2 git -C /usr/local/google/home/jomof/projects/main/device/google/sdv worktree add --no-checkout --detach /usr/local/google/home/jomof/projects/main-
+unix_wait_for_peer
+S+         2 git -C /usr/local/google/home/jomof/projects/main/external/openwrt-prebuilts worktree add --no-checkout --detach /usr/local/google/home/jomof/proje
+unix_wait_for_peer
+S+         2 git -C /usr/local/google/home/jomof/projects/main/external/linux-kselftest rev-parse HEAD
+unix_wait_for_peer
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/TvSettings worktree a
+unix_wait_for_peer
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/test/mobly_extensions worktre
+unix_wait_for_peer
+Dl+       51 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+folio_wait_bit_common
+t=13 project 197/1084: added external/libwebsockets (checkout, reflink unsupported fo
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/CellBroadcastReceiver
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/deqp-deps/SPIRV-Tools work
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/TvSettings worktree a
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/test/mobly_extensions worktre
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/services/Telephony worktre
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/apksig worktree add --detach 
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/aac worktree add --detach 
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/geonames worktree add --de
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/openthread worktree add --
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/ndkports worktree add --detac
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/ltp worktree add --detach 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/bcc worktree add --detach 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/device/generic/goldfish worktree ad
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/llvm-libc worktree add --d
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/tradefederation/core worktree
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/telephony worktree a
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jackson-annotations worktr
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/dalvik worktree add --detach /usr/l
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/wpa_supplicant_8 worktree 
+do_wait
+
+
+
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/cpuinfo worktree add --det
+do_wait
+
+
+
+
+Dl+       57 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+jbd2_log_wait_commit
+t=14 project 238/1084: added packages/apps/Car/Settings (checkout, reflink unsupporte
+
+S+         1 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/mockftpserver worktree add
+do_wait
+S+         1 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/apache-xml worktree add --
+do_wait
+S+         1 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/antlr worktree add --detac
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/ms-tpm-20-ref worktree add
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/test/connectivity worktree ad
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/curl worktree add --detach
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libxaac worktree add --det
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/elfutils worktree add --de
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/strace worktree add --deta
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/hardware/broadcom/wlan worktree add
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libavc worktree add --deta
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/roboto-mono worktree add -
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Car/TemplatesPrebuilt
+do_wait
+
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/pcre worktree add --detach
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libhevc worktree add --det
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/build/make worktree add --detach /u
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/bouncycastle worktree add 
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/apache-commons-bcel worktr
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/arm-neon-tests worktree ad
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/chromium-trace worktree ad
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/crosvm worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/grpc-grpc-java worktree ad
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/eigen worktree add --detac
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/tink-java worktree add --d
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/build/soong worktree add --detach /
+do_wait
+
+
+
+Sl+       64 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=15 project 257/1084: added build/make (checkout, reflink unsupported for filesystem
+
+
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/crosvm worktree add --deta
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/grpc-grpc-java worktree ad
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/eigen worktree add --detac
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/tink-java worktree add --d
+
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Camera2 worktree add 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/Uwb worktree add -
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/bootable/recovery worktree add --de
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/tcpdump worktree add --det
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/vulkan-validation-layers w
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/device/google/atv worktree add --de
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/flatbuffers worktree add -
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Messaging worktree ad
+do_wait
+
+
+
+
+
+
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/icing worktree add --detac
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/services/Telecomm worktree
+do_wait
+
+Sl+       70 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=16 project 299/1084: added external/fio (checkout, reflink unsupported for filesyst
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/device/amlogic/yukawa worktree add 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+       76 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=17 project 386/1084: added external/libconfig (checkout, reflink unsupported for fi
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/bc worktree add --detach /
+do_wait
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libburnia/libisoburn workt
+
+
+
+
+
+
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/software_defined_vehicle/mid
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libevent worktree add --de
+do_wait
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/java-diff-utils worktree a
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/LegacyCamera worktree
+do_wait
+
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jetpack-camera-app worktre
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/software_defined_vehicle/vsi
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/software_defined_vehicle/sam
+do_wait
+
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libnl worktree add --detac
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/opencensus-java worktree a
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/okhttp worktree add --deta
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/ot-br-posix worktree add -
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/IntentResolver wor
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/threetenbp worktree add --
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/proto_logging worktree a
+do_wait
+Sl+       82 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=18 project 422/1084: added system/update_engine (checkout, reflink unsupported for 
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/DeviceLock worktre
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/musl worktree add --detach
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/build/release worktree add --detach
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/iproute2 worktree add --de
+do_wait
+
+
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jacoco worktree add --deta
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/ThemePicker worktree 
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/okio worktree add --detach
+do_wait
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/security worktree add --detac
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/trusty/musl worktree add -
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libcupsfilters worktree ad
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/security worktree add --deta
+do_wait
+
+
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/ImsMedia worktree 
+do_wait
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/epson-inkjet-printer-escpr
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/zlib worktree add --detach
+do_wait
+
+
+Sl+       89 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=19 project 462/1084: added external/hyphenation-patterns (checkout, reflink unsuppo
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/tinyxml2 worktree add --de
+do_wait
+
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/pixman worktree add --deta
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/hardware/invensense worktree add --
+do_wait
+
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jemalloc_new worktree add 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+       95 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=20 project 536/1084: added external/cblas (checkout, reflink unsupported for filesy
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/setupdesign worktree add -
+do_wait
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+      101 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=21 project 606/1084: added external/android-nn-driver (checkout, reflink unsupporte
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pyfakefs worktree a
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/rust/crates/openssl worktr
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/trusty/user/app/sample worktree add
+do_wait
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/software_defined_vehicle/pla
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/StorageManager worktr
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/rust/rutabaga_gfx worktree
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Multiuser worktree ad
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pycparser worktree 
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/v4l2_codec2 worktree add -
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/google-java-format worktre
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/mp4parser worktree add --d
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/google-fonts/source-sans-p
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/google-fonts/big-shoulders
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/animal-sniffer worktree ad
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/mobly worktree add 
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/python-api-core wor
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/open-dice worktree add --d
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pyasn1-modules work
+do_wait
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/libvintf worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/yapf worktree add --detach
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/services/DeviceAsWebcam wo
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/minijail worktree add --de
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/test/app_compat/csuite worktree add
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libtracefs worktree add --
+do_wait
+Sl+      107 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=22 project 644/1084: added external/squashfs-tools (checkout, reflink unsupported f
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/trusty/user/desktop worktree add --
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/android_onboarding worktre
+
+
+
+
+
+
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/CertInstaller worktre
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/leveldb worktree add --det
+do_wait
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+      113 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=23 project 685/1084: added system/teeui (checkout, reflink unsupported for filesyst
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/connectivity/wificond worktr
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/scudo worktree add --detac
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/hardware/interfaces work
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/minidns worktree add --det
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/hardware/google/interfaces worktree
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jimfs worktree add --detac
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/VirtualGamepad worktr
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/owasp/java-encoder worktre
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/glide worktree add --detac
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jsoncpp worktree add --det
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/androidplot worktree add -
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/device/generic/car worktree add --d
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/oauth2client worktr
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/mako worktree add -
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/minigbm worktree add --det
+do_wait
+
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/hardware/nxp/keymint worktree add -
+do_wait
+
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libcap worktree add --deta
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pyasn1 worktree add
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/CellBroadcastServi
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/ca-certificates worktree add
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/vcard worktree add -
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/failsafe worktree add --de
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/inputmethods/LeanbackIME w
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/volley worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/lfi/fadec worktree add --d
+do_wait
+Sl+      119 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=24 project 705/1084: added external/minigbm (checkout, reflink unsupported for file
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libcap worktree add --deta
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pyasn1 worktree add
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/CellBroadcastServi
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/ca-certificates worktree add
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/vcard worktree add -
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/failsafe worktree add --de
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/inputmethods/LeanbackIME w
+do_wait
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/volley worktree add --deta
+do_wait
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/software_defined_vehicle/orc
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/tv/tvsystem worktree
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/clpeak worktree add --deta
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/vogar worktree add --detac
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/ExtServices worktr
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/screensavers/PhotoTable wo
+do_wait
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/PhoneCommon worktree 
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/software_defined_vehicle/aut
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libtraceevent worktree add
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/usb-ids worktree add --det
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/zopfli worktree add --deta
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/ply worktree add --detach 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/treble worktree add --detach 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/ConfigInfrastructu
+unix_wait_for_peer
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/car/setupwizard work
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/CaptivePortalLogin
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/iputils worktree add --det
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/erofs-utils worktree add -
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/wallpapers/LivePicker work
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/hardware/synaptics/wlan worktree ad
+do_wait
+Sl+      125 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=25 project 728/1084: added system/software_defined_vehicle/automotive_services (che
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/ply worktree add --detach 
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/treble worktree add --detach 
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/ConfigInfrastructu
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/car/setupwizard work
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/CaptivePortalLogin
+do_wait
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/erofs-utils worktree add -
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/wallpapers/LivePicker work
+do_wait
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/junit worktree add --detac
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pexpect worktree ad
+do_wait
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/chips worktree add -
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libdisplay-info worktree a
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Car/RotaryController 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/Telecom worktree a
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/image_io worktree add --de
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libfuse worktree add --det
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/libs/service_entitlement
+do_wait
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/bazelbuild-remote-apis wor
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/UprobeStats worktr
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/trusty/user/app/authmgr worktree ad
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/s2-geometry-library-java w
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/parse_type worktree
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/setupcompat worktree add -
+do_wait
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/frameworks/opt/car/services worktre
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pyserial worktree a
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/SettingsIntelligence 
+unix_wait_for_peer
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/rnnoise worktree add --det
+0
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/python/pyyaml worktree add
+do_wait
+Sl+      131 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=26 project 769/1084: added external/setupcompat (checkout, reflink unsupported for 
+
+S+         1 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Stk worktree add --de
+do_wait
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+      137 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=27 project 802/1084: added test/cts-root (checkout, reflink unsupported for filesys
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/UniversalMediaPlayer 
+do_wait
+
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/hamcrest worktree add --de
+do_wait
+
+
+
+
+S+         6 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/screensavers/Basic worktre
+do_wait
+
+
+
+
+
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/nist-pkits worktree add --
+do_wait
+
+
+
+
+S+         7 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/libhidl worktree add --detac
+do_wait
+
+
+
+
+S+         8 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/MusicFX worktree add 
+do_wait
+
+
+
+
+
+
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/nos/host/generic worktree 
+do_wait
+Sl+      142 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=28 project 844/1084: added packages/apps/SecureElement (checkout, reflink unsupport
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/TvFeedbackConsent wor
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/device/linaro/dragonboard worktree 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/trebuchet worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/authgraph worktree add --det
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/modules/common worktree ad
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libldac worktree add --det
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/nvram worktree add --detach 
+
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/rust/cros-libva worktree a
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/wmediumd worktree add --de
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/FP16 worktree add --detach
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/services/Mms worktree add 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/trusty/user/app/keymaster worktree 
+do_wait
+S+         5 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/mobly-bundled-snippets wor
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/libgsm worktree add --deta
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/downloader worktree add --
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/test/catbox worktree add --detach /
+do_wait
+
+
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/jmustache worktree add --d
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/tools/platform-compat worktree add 
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/test/vts-testcase/hal worktree add 
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/mobly-snippet-lib worktree
+do_wait
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/objenesis worktree add --d
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/Car/SystemUpdater wor
+do_wait
+
+S+         3 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/system/libufdt worktree add --detac
+do_wait
+S+         4 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/external/obex worktree add --detach
+do_wait
+
+
+
+
+Sl+      149 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+futex_do_wait
+t=29 project 982/1084: added packages/apps/SafetyRegulatoryInfo (checkout, reflink un
+
+S+         2 git -c checkout.workers=8 -c checkout.thresholdForParallelism=100 -C /usr/local/google/home/jomof/projects/main/packages/apps/SampleLocationAttribu
+do_wait
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sl+      155 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+poll_schedule_timeout.constprop.0
+t=30 phase total: 155.002s
+S+         0 git -C /usr/local/google/home/jomof/projects/main-wt-report/hardware/sdv/interfaces symbolic-ref -q --short HEAD
+unix_wait_for_peer
+Sl+      156 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+poll_schedule_timeout.constprop.0
+t=31 phase total: 155.002s
+S+         0 git -C /usr/local/google/home/jomof/projects/main-wt-report/system/fs/fs_mgr symbolic-ref -q --short HEAD
+unix_wait_for_peer
+Sl+      158 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+poll_schedule_timeout.constprop.0
+t=32 phase total: 155.002s
+
+Sl+      160 /usr/local/google/home/jomof/.local/bin/git-repo-worktree add -v /usr/local/google/home/jomof/projects/main-wt-report
+poll_schedule_timeout.constprop.0
+t=33 phase total: 155.002s

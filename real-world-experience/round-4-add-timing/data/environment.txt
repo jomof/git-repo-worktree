@@ -1,0 +1,21 @@
+# captured 2026-10-15T01:49:58Z
+git-repo-worktree 2.0.0 (6025da9bd07d)
+Linux jomof-specialist.c.googlers.com 7.1.6-1rodete1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 7.1.6-1rodete1 (2026-08-05) x86_64 GNU/Linux
+96
+               total        used        free      shared  buff/cache   available
+Mem:             236          47          17           2         175         188
+Swap:            447          55         392
+Filesystem                 Size  Used Avail Use% Mounted on
+/dev/glinux_20230721/root  7.5T  6.1T  1.1T  86% /
+TARGET FSTYPE OPTIONS
+/      ext4   rw,relatime,errors=remount-ro
+git version 2.56.0.176.g3575e65682-goog
+repo version v2.68.1
+/usr/bin/fuse-overlayfs
+fusermount3 version: 3.18.2
+fuse-overlayfs daemons: 264
+ 01:49:59 up 14 days, 23:28,  1 user,  load average: 45.39, 27.81, 19.02
+some avg10=0.00 avg60=0.07 avg300=1.98 total=22197925499
+full avg10=0.00 avg60=0.07 avg300=1.98 total=21218961170
+some avg10=0.00 avg60=0.01 avg300=0.07 total=14041804013
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0

@@ -1,0 +1,3 @@
+returned 14 project(s) to the pool
+removed main-wt-report (/usr/local/google/home/jomof/projects/main-wt-report)
+{"format_version":1,"command":"remove","ok":true,"exit_code":0,"error":null,"result":{"hooks":{},"lingering_processes":[],"name":"main-wt-report","path":"/usr/local/google/home/jomof/projects/main-wt-report","removed":true,"returned_to_pool":["cts","development","external/coreboot","external/cronet","external/deqp","external/google-cloud-java","external/icu","external/llvm","external/swiftshader","external/tensorflow","frameworks/base","external/opencl/llvm-project","external/rust/android-crates-io","packages/services/display_safety"]}}

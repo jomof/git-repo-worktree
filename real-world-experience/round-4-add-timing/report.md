@@ -6,8 +6,9 @@ Tool: `git-repo-worktree 2.0.0 (6025da9bd07d)`, built from `main` and installed 
 trees share one filesystem; reflink is unsupported (ext4), and fuse-overlayfs is
 available.
 
-Raw data is in [`data/`](data/) and every measurement script is in
-[`scripts/`](scripts/). Times are wall clock unless noted.
+Raw data is in [`data/`](data/) (file index: [`data/README.md`](data/README.md)),
+and every measurement script is in [`scripts/`](scripts/). Times are wall clock
+unless noted.
 
 ## Summary
 
