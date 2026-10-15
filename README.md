@@ -39,14 +39,13 @@ side by side.
 
 ## Android Studio, by the numbers
 
-Android Studio's `studio-main` client (56 projects, about 660,000 files and
-88 GB) on a 96-core Linux workstation with ext4, starting from a clean source
-client:
+Android Studio's `studio-main` client (56 projects, about 660,000 files) on a
+96-core Linux workstation with ext4, starting from a clean source client:
 
-| | Checking out every project | `git repo-worktree add` |
+| | `repo init` + `repo sync -j 8` | `git repo-worktree add` |
 |---|---|---|
-| Create a tree | 1 min 50 s | **5.4 s** (about 15 s the very first time) |
-| Disk per tree | 88 GB | **about 11 GB** |
+| Time to a new client | 16 min 50 s | **5.4 s** (about 15 s the very first time) |
+| Disk per client | 141 GB | **about 11 GB** |
 
 A Bazel build of `//tools/base/common:tools.common` in a brand-new tree took
 16.3 s, with 113 of its 150 actions served from the remote cache.
