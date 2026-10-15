@@ -975,11 +975,25 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     let mut filled = Vec::new();
     let mut failed = Vec::new();
     let mut deferred = BTreeSet::new();
+    let mut trees_deleted = 0;
     for _ in 0..MAINTENANCE_ROUNDS {
         if crate::INTERRUPTED.load(Ordering::SeqCst) {
             break;
         }
         let mut worked = false;
+        let step = Instant::now();
+        crate::metrics::phase("paused", wait_for_quiet_trees(registry));
+        let deleted = crate::trash::empty(registry, |command| {
+            run_yielding(command, registry).is_ok_and(|(status, stopped_ms)| {
+                crate::metrics::phase("paused", stopped_ms);
+                status.success()
+            })
+        });
+        crate::metrics::phase("trash", crate::metrics::elapsed_ms(step));
+        if deleted > 0 {
+            worked = true;
+            trees_deleted += deleted;
+        }
         let step = Instant::now();
         let plan = plan(source, registry)?;
         crate::metrics::phase("plan", crate::metrics::elapsed_ms(step));
@@ -1049,6 +1063,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     crate::metrics::record("filled", json!(filled));
     crate::metrics::record("failed", json!(failed));
     crate::metrics::record("deferred", json!(deferred));
+    crate::metrics::record("trees_deleted", json!(trees_deleted));
     crate::metrics::record("system_end", crate::metrics::system_load());
     Ok(json!({
         "reaped": reaped,
@@ -1056,6 +1071,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
         "filled": filled,
         "failed": failed,
         "deferred": deferred,
+        "trees_deleted": trees_deleted,
     }))
 }
 
@@ -1122,7 +1138,9 @@ pub fn needs_refill(meta: &TreeMeta) -> bool {
 
 /// Whether a tree's pool may need attention once the command finishes.
 pub fn maintenance_wanted(meta: &TreeMeta) -> bool {
-    registry_path(&meta.source()).join(DIR_NAME).is_dir()
+    let registry = registry_path(&meta.source());
+    registry.join(DIR_NAME).is_dir()
+        || crate::trash::pending(&registry)
         || meta
             .projects
             .iter()

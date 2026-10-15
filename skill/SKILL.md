@@ -246,7 +246,9 @@ git repo-worktree remove --force mywork            # discard dirty work knowingl
 ```
 
 A refusal is `E_DIRTY` with every dirty project, and why, in
-`error.details.dirty_projects`. After removing, read `lingering_processes`:
+`error.details.dirty_projects`. When `deleting_in_background` is true the
+tree is already gone and unregistered; its files are deleted in the
+background, so disk space returns shortly after. After removing, read `lingering_processes`:
 programs you started in the tree (build servers, watchers) keep running until
 you stop them. Use `--force` only after explicit confirmation
 that the listed work may be discarded. Locked trees need `--force --force` and

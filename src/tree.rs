@@ -42,7 +42,6 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const JOURNAL_BATCH_WINDOW: Duration = Duration::from_millis(10);
 /// During population the journal is synced, and meta.json rewritten, at most
 /// this often, on a writer thread so the scheduler never waits on disk.
 const META_WRITE_INTERVAL: Duration = Duration::from_secs(1);
@@ -200,7 +199,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 "tree name is empty after sanitization",
             ));
         }
-        if name == pool::DIR_NAME {
+        if name == pool::DIR_NAME || name == crate::trash::DIR_NAME {
             return Err(AppError::operational(
                 "E_BAD_NAME",
                 format!("{name} is reserved; pass --name"),
@@ -1047,6 +1046,11 @@ impl Dispatcher<'_> {
                 self.running_heavy += 1;
             }
         }
+        if self.running < self.jobs {
+            // The remaining free slots wait for lack of startable work, not
+            // for the scheduler.
+            self.freed.clear();
+        }
     }
 }
 
@@ -1116,23 +1120,7 @@ fn run_project_phase(
             .recv()
             .map_err(|error| AppError::io("receive project completion from worker pool", error))?;
         let mut batch = vec![first];
-        let deadline = Instant::now() + JOURNAL_BATCH_WINDOW;
-        while batch.len() < dispatcher.running {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            match receiver.recv_timeout(remaining) {
-                Ok(completion) => batch.push(completion),
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(error) => {
-                    return Err(AppError::io(
-                        "receive project completion from worker pool",
-                        error,
-                    ));
-                }
-            }
-        }
+        batch.extend(receiver.try_iter());
         dispatcher.running -= batch.len();
         dispatcher.running_heavy -= batch
             .iter()
@@ -2552,6 +2540,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             );
             let step = Instant::now();
             let locked = meta.locked.is_some();
+            let background = !pool::maintenance_disabled();
             let mut projects = meta.projects.clone();
             projects.sort_by_key(|project| std::cmp::Reverse(project_depth(&project.path)));
             let mut start = 0;
@@ -2573,6 +2562,9 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                         })
                         .filter_map(|project| {
                             let checkout = meta.root().join(&project.path);
+                            if background && unregister_linked_worktree(&checkout) {
+                                return Some(project.path.clone());
+                            }
                             let _ = bridge::to_gitfile(&checkout.join(".git"));
                             let mut command = Command::new("git");
                             command
@@ -2597,12 +2589,16 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             let lingering = crate::inspect::processes_referencing(&meta.root());
             crate::metrics::record("lingering_processes", json!(lingering.len()));
             let step = Instant::now();
+            let stashed = meta.root().exists()
+                && background
+                && crate::trash::stash(registry, &meta.root()).is_ok();
             if meta.root().exists() {
                 fs::remove_dir_all(meta.root()).map_err(|error| {
                     AppError::io(format!("remove tree {}", meta.root().display()), error)
                 })?;
             }
             crate::metrics::phase("delete", crate::metrics::elapsed_ms(step));
+            crate::metrics::record("deleting_in_background", json!(stashed));
             let step = Instant::now();
             let mut gitdirs = dedupe_paths(
                 meta.projects
@@ -2638,7 +2634,8 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     .map_err(|error| AppError::io(format!("remove {}", entry.display()), error))?;
             }
             crate::metrics::record("system_end", crate::metrics::system_load());
-            if !args.no_pool && pool::needs_refill(&meta) && pool::spawn_maintenance(&meta.source())
+            if (stashed || (!args.no_pool && pool::needs_refill(&meta)))
+                && pool::spawn_maintenance(&meta.source())
             {
                 crate::metrics::record("pool_maintenance", json!("started"));
             }
@@ -2646,7 +2643,14 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 if !returned.is_empty() {
                     eprintln!("returned {} project(s) to the pool", returned.len());
                 }
-                eprintln!("removed {} ({})", meta.name, meta.path);
+                if stashed {
+                    eprintln!(
+                        "removed {} ({}); its files are being deleted in the background",
+                        meta.name, meta.path
+                    );
+                } else {
+                    eprintln!("removed {} ({})", meta.name, meta.path);
+                }
                 if !lingering.is_empty() {
                     eprintln!(
                     "warning: {} process(es) still use the removed tree; stop them if they are no longer needed:",
@@ -2666,12 +2670,50 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 "name": meta.name,
                 "path": meta.path,
                 "removed": true,
+                "deleting_in_background": stashed,
                 "returned_to_pool": returned,
                 "lingering_processes": lingering,
                 "hooks": meta.hooks,
             }))
         },
     )
+}
+
+/// Deletes the Git administrative directory of the linked worktree at
+/// `checkout`, leaving its files for background deletion. Succeeds only when
+/// the directory's `gitdir` file points back at `checkout`.
+fn unregister_linked_worktree(checkout: &Path) -> bool {
+    let dot_git = checkout.join(".git");
+    let Ok(metadata) = fs::symlink_metadata(&dot_git) else {
+        return false;
+    };
+    let admin = if metadata.file_type().is_file() {
+        let Some(path) = fs::read_to_string(&dot_git).ok().and_then(|text| {
+            text.trim()
+                .strip_prefix("gitdir:")
+                .map(|path| checkout.join(path.trim()))
+        }) else {
+            return false;
+        };
+        fs::canonicalize(path)
+    } else {
+        fs::canonicalize(&dot_git)
+    };
+    let Ok(admin) = admin else {
+        return false;
+    };
+    if admin.parent().and_then(Path::file_name) != Some(std::ffi::OsStr::new("worktrees")) {
+        return false;
+    }
+    let points_back = fs::read_to_string(admin.join("gitdir"))
+        .ok()
+        .and_then(|recorded| {
+            let recorded = PathBuf::from(recorded.trim());
+            fs::canonicalize(recorded.parent()?).ok()
+        })
+        .zip(fs::canonicalize(checkout).ok())
+        .is_some_and(|(recorded, checkout)| recorded == checkout);
+    points_back && fs::remove_dir_all(&admin).is_ok()
 }
 
 /// Records inspections slow enough to matter for `remove` and `status` latency.

@@ -93,7 +93,8 @@ Two modes keep large projects fast without sharing the source's files:
 ## Keeping the pool full
 
 After `add` and `remove`, a detached `pool maintain` runs in the background at
-the lowest CPU and I/O priority. It refills every pooled project to `pool size`
+the lowest CPU and I/O priority. It first deletes the files of removed trees,
+then refills every pooled project to `pool size`
 spares, one spare per project at a time, so after the first tree a burst of
 `pool size` adds all take spares. It also deletes *orphaned* spares: spares of
 projects a default `add` would no longer take from the pool, for example
@@ -112,7 +113,8 @@ git repo-worktree pool size 1           # keep fewer spares per project
 
 `pool list` reports the pool's *depth*: how many consecutive adds can take
 every pooled project from the pool. Set `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE=1`
-to stop background maintenance, for example while measuring pool misses.
+to stop background maintenance, for example while measuring pool misses;
+`remove` then deletes tree files in the foreground.
 To keep spares for a project the pool would otherwise orphan, give it a
 `pool` default.
 

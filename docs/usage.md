@@ -125,6 +125,13 @@ the full list under `error.details.dirty_projects` in JSON mode. One `--force`
 deliberately discards dirty work. A locked tree is protected from prune and
 requires `--force --force` for removal.
 
+`remove` returns once the tree is unregistered and moved aside: its files are
+deleted afterwards by background maintenance (see
+[Keeping the pool full](population.md#keeping-the-pool-full)), so disk space
+comes back shortly after the command finishes. The tree's path is free for a
+new tree immediately. With `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE=1`, `remove`
+deletes the files itself.
+
 On Linux, `remove` warns about processes that still use the tree (working
 directory inside it, or arguments naming it), such as a build server started
 there, and lists them under `lingering_processes`. It does not stop them; a

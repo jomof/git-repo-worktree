@@ -2316,6 +2316,75 @@ fn hold_lock(path: &Path) -> &'static mut fd_lock::RwLock<fs::File> {
     Box::leak(Box::new(fd_lock::RwLock::new(file)))
 }
 
+fn wait_for_maintenance(fixture: &Fixture, count: usize) -> Value {
+    let history = fixture.client.join(".repo/repo-worktrees/history.jsonl");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let events = fs::read_to_string(&history)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|event| event["command"] == "pool maintain")
+            .collect::<Vec<_>>();
+        if events.len() >= count {
+            return events[count - 1].clone();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "background maintenance never finished"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn remove_deletes_files_in_the_background() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    fs::write(fixture.destination.join("p/build-output"), "ignored\n").unwrap();
+    fs::write(fixture.client.join("p/.git/info/exclude"), "build-output\n").unwrap();
+    let removed = output_json(
+        command(&fixture)
+            .env_remove("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE")
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["deleting_in_background"], true);
+    assert!(!fixture.destination.exists());
+    let worktrees = git(
+        &fixture.client.join("p"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert!(
+        !worktrees.contains(fixture.destination.to_str().unwrap()),
+        "{worktrees}"
+    );
+    assert!(!worktrees.contains("prunable"), "{worktrees}");
+    let maintained = wait_for_maintenance(&fixture, 1);
+    assert_eq!(maintained["trees_deleted"], 1, "{maintained}");
+    let trash = fixture.client.join(".repo/repo-worktrees/.trash");
+    assert_eq!(fs::read_dir(&trash).unwrap().count(), 0);
+
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let refused = output_json(
+        command(&fixture)
+            .args(["add", "--name", ".trash", "--json"])
+            .arg(fixture.temp.path().join("other"))
+            .assert()
+            .code(1),
+    );
+    assert_eq!(refused["error"]["code"], "E_BAD_NAME");
+}
+
 #[test]
 fn pool_maintenance_waits_for_tree_operations() {
     let fixture = fixture();

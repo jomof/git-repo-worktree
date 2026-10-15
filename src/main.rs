@@ -20,6 +20,7 @@ mod report;
 mod resolve;
 mod skill;
 mod status;
+mod trash;
 mod tree;
 mod util;
 

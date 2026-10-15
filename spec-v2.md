@@ -385,6 +385,30 @@ I/O priority does not keep its buffered writes from throttling a concurrent
 
 `remove` skips the cleanliness check of a project whose pool is already full.
 
+### 9.3 Background deletion on `remove`
+
+Unless `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE` disables maintenance, `remove`
+does not delete a tree's files itself. After the dirty and lock checks, the
+`pre-remove` hook, unmounting, and pool returns, for each worktree project it
+deletes the Git administrative directory the project's `.git` resolves to,
+but only when that directory's parent is named `worktrees` and its `gitdir`
+file points back at the project; any other project is removed with
+`git worktree remove` as before. It then removes the manifest worktree,
+checks for lingering processes, and renames the tree root to
+`.repo/repo-worktrees/.trash/<unique>`. When that crosses filesystems it
+renames the root beside itself to `.git-repo-worktree-trash-<unique>` and
+records that path in `.trash/<unique>.path`. If the rename fails, it deletes
+the tree in the foreground. The result adds `deleting_in_background`, and a
+successful rename always starts maintenance.
+
+Each maintenance round first deletes everything in `.trash` (and every
+marked directory a `.path` note names; unmarked targets are never deleted)
+with `rm -rf --one-file-system` on Linux or `rm -rfx` on macOS, run like a
+refill: waiting while any tree lock is held, and stopped while one is taken.
+`add` also starts maintenance when `.trash` is not empty. History records
+`trees_deleted` and phase `trash`. The tree name `.trash` is reserved
+(`E_BAD_NAME`).
+
 ## 10. Overlay mode (Linux)
 
 A sharing candidate becomes an overlay candidate when its default is `overlay`,
@@ -529,7 +553,9 @@ add:
   `projects-meta-write` (time the journal writer thread spent syncing, off the
   scheduler's path), and `projects-idle-slot` (worker-slot milliseconds between
   a project finishing and the scheduler starting the next one in its slot;
-  slots left empty because no work remained are not counted).
+  slots left empty because no project could start, for lack of ready projects
+  or because of the heavy-project limit, are not counted). The scheduler
+  starts the next project as soon as it receives a completion.
 * `remove`: `tree`, `force`, `inspected`, `slow_inspections` (≥ 100 ms, at most
   20), `dirty` (project and reasons) on refusal, `returned_to_pool`, `projects`,
   `pruned_git_dirs`, `system_start`/`system_end`, and phases `inspect`,

@@ -642,3 +642,50 @@ fn repo_gc_in_a_tree_cannot_delete_the_sources_object_stores() {
     run(&tree, "repo", &["status"]);
     tool(&client).args(["remove", "tree"]).assert().success();
 }
+
+#[test]
+fn background_removal_unregisters_bridged_projects_and_spares_the_source() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    let removed = json(
+        tool(&client)
+            .env_remove("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE")
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["deleting_in_background"], true);
+    assert!(!tree.exists());
+    for project in ["a", "lib/b"] {
+        let worktrees = run(
+            &client.root.join(project),
+            "git",
+            &["worktree", "list", "--porcelain"],
+        );
+        assert!(!worktrees.contains(tree.to_str().unwrap()), "{worktrees}");
+        assert!(!worktrees.contains("prunable"), "{worktrees}");
+    }
+    let history = client.root.join(".repo/repo-worktrees/history.jsonl");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !fs::read_to_string(&history)
+        .unwrap_or_default()
+        .contains("\"pool maintain\"")
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(
+        fs::read_dir(client.root.join(".repo/repo-worktrees/.trash"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert!(client.root.join("prebuilts/pre/README").is_file());
+    assert!(client
+        .root
+        .join(".repo/project-objects/a.git/objects")
+        .is_dir());
+    run(&client.root, "repo", &["status"]);
+}

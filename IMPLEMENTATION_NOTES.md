@@ -172,3 +172,24 @@ machine interface deterministic:
   with the scheduler blocked on syncs, and summed per-project time doubled
   from `-j 8` to `-j 32`, so the disk saturated well below 32 workers. It
   needs re-measuring now that slots are refilled promptly.
+
+## Round 6 changes
+
+- The scheduler starts the next project as soon as one finishes instead of
+  waiting 10 ms to collect more completions; the window only existed to
+  batch journal syncs, which the writer thread now does. Round 6 measured
+  7.5, 11, and 26 ms of slot idle time per project at `-j 8`, `16`, and `32`.
+  `projects-idle-slot` no longer counts slots left empty because only heavy
+  projects remained, which made pool-miss adds look idle for 30 s.
+- `remove` deletes files in the background. It was slower than `add` after
+  round 5's fixes (27–45 s on AOSP, about 20 s of it deleting 1.35 million
+  files; 33–46 s on studio-main with a full pool). It now deletes each
+  project's worktree administrative directory directly, since that is all
+  `git worktree remove` does besides deleting files, and renames the tree
+  aside for maintenance to delete. The administrative directory is deleted
+  only when its `gitdir` points back at the project, so a moved or foreign
+  registration falls back to `git worktree remove`. Deletion runs `rm` as a
+  child so maintenance can stop it during tree operations, with
+  `--one-file-system` (`-x` on macOS) so an overlay that failed to unmount is
+  never descended into. The same switch that turns maintenance off restores
+  foreground deletion, so a disabled maintenance never strands files.
