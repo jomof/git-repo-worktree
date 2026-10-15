@@ -885,9 +885,78 @@ fn has_room(directory: &Path, bytes: u64) -> bool {
     available.saturating_mul(1024).saturating_sub(bytes) >= reserve
 }
 
+/// Whether a tree operation (`add`, `remove`, `repair`, ...) holds its tree
+/// lock right now.
+fn tree_operation_active(registry: &Path) -> bool {
+    fs::read_dir(registry)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name() != DIR_NAME)
+                .map(|entry| crate::registry::tree_lock_path(&entry.path()))
+                .any(|lock| crate::registry::is_locked(&lock))
+        })
+        .unwrap_or(false)
+}
+
+const YIELD_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Waits while any tree operation runs, so maintenance never competes with
+/// one for the disk. Returns the milliseconds waited.
+fn wait_for_quiet_trees(registry: &Path) -> u64 {
+    let started = Instant::now();
+    while tree_operation_active(registry) && !crate::INTERRUPTED.load(Ordering::SeqCst) {
+        std::thread::sleep(YIELD_POLL);
+    }
+    crate::metrics::elapsed_ms(started)
+}
+
+fn signal_group(group: u32, signal: &str) {
+    let _ = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg("--")
+        .arg(format!("-{group}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Runs `command` in its own process group, stopping the whole group while
+/// any tree operation runs and continuing it afterwards: buffered writes from
+/// a refill otherwise throttle the operation's writes, whatever their I/O
+/// priority. Returns the exit status and the milliseconds spent stopped.
+fn run_yielding(
+    mut command: Command,
+    registry: &Path,
+) -> std::io::Result<(std::process::ExitStatus, u64)> {
+    let mut child = command.process_group(0).spawn()?;
+    let group = child.id();
+    let mut stopped_since: Option<Instant> = None;
+    let mut stopped_ms = 0;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok((status, stopped_ms));
+        }
+        let active = tree_operation_active(registry) && !crate::INTERRUPTED.load(Ordering::SeqCst);
+        match (active, stopped_since) {
+            (true, None) => {
+                signal_group(group, "STOP");
+                stopped_since = Some(Instant::now());
+            }
+            (false, Some(since)) => {
+                signal_group(group, "CONT");
+                stopped_ms += crate::metrics::elapsed_ms(since);
+                stopped_since = None;
+            }
+            _ => {}
+        }
+        std::thread::sleep(YIELD_POLL);
+    }
+}
+
 /// Deletes orphaned spares, trims pools above the pool size, and refills the
 /// rest one spare at a time, shallowest pool first. Exits at once when
-/// another maintenance run holds the lock.
+/// another maintenance run holds the lock, and yields to tree operations.
 fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     let directory = registry.join(DIR_NAME);
     if !registry.is_dir() {
@@ -916,6 +985,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
         crate::metrics::phase("plan", crate::metrics::elapsed_ms(step));
         let step = Instant::now();
         for orphan in &plan.orphaned {
+            crate::metrics::phase("paused", wait_for_quiet_trees(registry));
             let cleared = clear_project(source, registry, &orphan.project)?;
             if !cleared.is_empty() {
                 worked = true;
@@ -945,6 +1015,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
                 if crate::INTERRUPTED.load(Ordering::SeqCst) {
                     break;
                 }
+                crate::metrics::phase("paused", wait_for_quiet_trees(registry));
                 if !has_room(&directory, facts.disk_bytes()) {
                     deferred.insert(project.clone());
                     blocked.insert(project.clone());
@@ -1033,6 +1104,22 @@ pub fn spawn_maintenance(source: &Path) -> bool {
         .is_ok()
 }
 
+/// Whether `project`'s pool already holds `capacity` spares.
+pub fn is_full(registry: &Path, project_path: &str, capacity: usize) -> bool {
+    slots(registry, project_path).len() >= capacity
+}
+
+/// Whether any of a removed tree's pooled projects is below the pool size.
+/// Orphans are left for the maintenance that follows the next `add`.
+pub fn needs_refill(meta: &TreeMeta) -> bool {
+    let registry = registry_path(&meta.source());
+    let capacity = capacity(&registry);
+    meta.projects
+        .iter()
+        .filter(|project| project.mode == MODE_WORKTREE && meta.uses_pool(project))
+        .any(|project| !is_full(&registry, &project.path, capacity))
+}
+
 /// Whether a tree's pool may need attention once the command finishes.
 pub fn maintenance_wanted(meta: &TreeMeta) -> bool {
     registry_path(&meta.source()).join(DIR_NAME).is_dir()
@@ -1063,7 +1150,8 @@ fn fill_one(
     }
     let name = unique_name();
     let staging = directory.join(format!("{FILLING_PREFIX}{name}"));
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(source.join(project))
         .args([
@@ -1080,12 +1168,37 @@ fn fill_one(
             "--detach",
         ])
         .arg(&staging)
-        .arg("HEAD")
-        .output()
-        .map_err(|error| format!("run git worktree add: {error}"))?;
-    if !output.status.success() {
-        let _ = remove_slot(&common, &staging);
-        return Err(exit_reason(&output));
+        .arg("HEAD");
+    if background {
+        let log = directory.join(format!("{FILLING_PREFIX}{name}.log"));
+        let stderr =
+            fs::File::create(&log).map_err(|error| format!("create {}: {error}", log.display()))?;
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(stderr);
+        let outcome = run_yielding(command, registry);
+        let message = fs::read_to_string(&log).unwrap_or_default();
+        let _ = fs::remove_file(&log);
+        let (status, stopped_ms) =
+            outcome.map_err(|error| format!("run git worktree add: {error}"))?;
+        crate::metrics::phase("paused", stopped_ms);
+        if !status.success() {
+            let _ = remove_slot(&common, &staging);
+            return Err(format!(
+                "exit {}: {}",
+                status.code().unwrap_or(1),
+                message.trim().chars().take(500).collect::<String>()
+            ));
+        }
+    } else {
+        let output = command
+            .output()
+            .map_err(|error| format!("run git worktree add: {error}"))?;
+        if !output.status.success() {
+            let _ = remove_slot(&common, &staging);
+            return Err(exit_reason(&output));
+        }
     }
     let slot = directory.join(&name);
     let published = match lock_project(registry, project) {

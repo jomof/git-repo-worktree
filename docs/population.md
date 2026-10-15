@@ -98,8 +98,10 @@ spares, one spare per project at a time, so after the first tree a burst of
 `pool size` adds all take spares. It also deletes *orphaned* spares: spares of
 projects a default `add` would no longer take from the pool, for example
 fixed-depth prebuilts that are now overlaid, projects quick enough to check
-out directly, or projects whose default has changed. Refills stop short of
-leaving less than 10% of the filesystem (at most 50 GB) free.
+out directly, or projects whose default has changed. Maintenance pauses while
+any `add`, `remove`, or other tree operation runs, so refills never compete
+with them for the disk. Refills stop short of leaving less than 10% of the
+filesystem (at most 50 GB) free.
 
 ```sh
 git repo-worktree pool list             # spares per project, depth, orphaned spares and their size

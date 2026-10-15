@@ -94,9 +94,9 @@ recovers its copy/link directives from the active source manifests, and persists
 supplement into `snapshot.xml` before creation begins.
 Only actual parent/child project paths constrain scheduling, so unrelated projects
 can run immediately even when their paths have different depths. Completion records
-are coalesced into small batches and `fsync`ed before progress is reported or
-dependent projects are released, while independent projects keep starting; an
-interrupted batch is safely replayed by `add --continue`.
+are written by a separate thread and synced about once a second, so syncing
+never holds up the next project; records lost to a crash are safely replayed
+by `add --continue`.
 An interrupted optimized population is never accepted merely because its
 `HEAD` is correct: resume repairs the unfinished worktree with a parallel
 `reset --hard` before marking it done.

@@ -145,3 +145,30 @@ machine interface deterministic:
   are there to attribute it next time.
 - `remove` prunes only Git directories that may hold stale registrations
   (overlay projects, failed `git worktree remove`), not every project's.
+
+## Round 5 changes
+
+- Project completion records are journaled by a writer thread that syncs at
+  most once a second, instead of the scheduler syncing every 10 ms batch.
+  Round 5 showed the scheduler spending 46–93% of AOSP's population phase in
+  the journal and `meta.json` syncs, each of which waits for an ext4 journal
+  commit, while 60–150 ms checkouts finished and their slots sat empty. Git
+  does not sync the files it checks out, so syncing a completion record never
+  made the project itself survive power loss; resume already replays an
+  unrecorded project idempotently.
+- Size estimates are cached by commit in `estimates.json`. They were 1.3–1.8 s
+  of studio-main's 4.4–5 s warm `add`, and a commit's tree never changes.
+- Background maintenance stops its running refill (`SIGSTOP` to the git
+  process group) while any tree lock is held. Round 5's `add` during an AOSP
+  refill took 98 s instead of about 30 s, throttled by the refill's buffered
+  writes: I/O priority orders block requests but not dirty page cache.
+  Stopping the process stops new dirty pages; writes already buffered still
+  drain. Tree locks are the signal because every operation that writes
+  heavily holds one.
+- Maintenance keeps refilling the slowest projects first, although round 5
+  suggested the quickest first: an `add` waits for its slowest project, so
+  pooling the quick ones first would not shorten the next `add`.
+- The default `-j` is unchanged. Round 5's `-j 8/16/32` matrix was measured
+  with the scheduler blocked on syncs, and summed per-project time doubled
+  from `-j 8` to `-j 32`, so the disk saturated well below 32 workers. It
+  needs re-measuring now that slots are refilled promptly.

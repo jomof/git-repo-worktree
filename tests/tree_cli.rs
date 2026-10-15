@@ -2255,6 +2255,7 @@ fn history_records_invocations_and_report_summarizes_them() {
         "snapshot-estimates",
         "snapshot-preflight",
         "projects-journal-sync",
+        "projects-idle-slot",
     ] {
         assert!(add["phases"][phase].is_u64(), "{phase}: {add}");
     }
@@ -2263,6 +2264,13 @@ fn history_records_invocations_and_report_summarizes_them() {
     assert!(add["environment"]["os"].is_string());
     assert!(add["system_start"].is_object());
     assert!(add["system_end"].is_object());
+    assert_eq!(add["estimate_cache_hits"], 0);
+    let last_add = history
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .rfind(|event| event["command"] == "add" && event["exit_code"] == 0)
+        .unwrap();
+    assert_eq!(last_add["estimate_cache_hits"], 1, "{last_add}");
 
     let report = output_json(
         command(&fixture)
@@ -2306,6 +2314,59 @@ fn hold_lock(path: &Path) -> &'static mut fd_lock::RwLock<fs::File> {
         .open(path)
         .unwrap();
     Box::leak(Box::new(fd_lock::RwLock::new(file)))
+}
+
+#[test]
+fn pool_maintenance_waits_for_tree_operations() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let tree_lock = hold_lock(&fixture.client.join(".repo/repo-worktrees/tree/lock"));
+    let guard = tree_lock.try_write().unwrap();
+    let maintain = StdCommand::new(assert_cmd::cargo::cargo_bin("git-repo-worktree"))
+        .env("PATH", &fixture.path_env)
+        .env("HOME", fixture.temp.path())
+        .env("GIT_REPO_WORKTREE_NO_OVERLAY", "1")
+        .env("GRW_TEST_POOL_RESERVE_BYTES", "0")
+        .arg("-C")
+        .arg(&fixture.client)
+        .args(["pool", "maintain", "--json"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let listed = output_json(
+        command(&fixture)
+            .args(["pool", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(pool_entry(&listed, "p")["spares"], 0, "{listed}");
+    drop(guard);
+    let output = maintain.wait_with_output().unwrap();
+    let maintained: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        maintained["result"]["filled"].as_array().unwrap().len(),
+        2,
+        "{maintained}"
+    );
+    let event = fs::read_to_string(fixture.client.join(".repo/repo-worktrees/history.jsonl"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .rfind(|event| event["command"] == "pool maintain")
+        .unwrap();
+    assert!(
+        event["phases"]["paused"].as_u64().unwrap() >= 1000,
+        "{event}"
+    );
 }
 
 #[test]

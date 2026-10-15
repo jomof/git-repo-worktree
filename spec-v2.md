@@ -354,8 +354,9 @@ with any given paths.
 
 ### 9.2 Background maintenance
 
-After `add` (complete or partial) and after `remove` without `--no-pool`, when
-the client has a `.pool` directory or the tree has pooled projects, start
+After `add` (complete or partial) when the client has a `.pool` directory or
+the tree has pooled projects, and after `remove` without `--no-pool` when any
+of the tree's pooled projects has fewer spares than the pool size, start
 `git-repo-worktree -C <source> -q pool maintain` detached: in its own process
 group with null standard streams, under `nice -n 19` and
 `ionice -c 3 -t` where those programs exist. The command records
@@ -370,9 +371,19 @@ projects one spare at a time, bringing every kept project to one spare before
 any gets two, slowest checkout first, with `checkout.workers=2`. A refill is
 published only while the pool is below the pool size, and is skipped
 (`deferred`) when it would leave less free space on the pool's filesystem
-than 10% of its size, capped at 50 GB. History records `reaped`, `trimmed`,
-`filled`, `failed`, `deferred`, `system_start`, `system_end`, and phases
-`plan`, `reap`, `fill`.
+than 10% of its size, capped at 50 GB.
+
+Maintenance yields to tree operations, detected by trying each registered
+tree's `lock` without waiting. Before deleting a project's spares and before
+starting a refill it waits, polling every 250 ms, while any tree lock is
+held. A refill's `git worktree add` runs in its own process group, which is
+sent `SIGSTOP` while any tree lock is held and `SIGCONT` once none is: idle
+I/O priority does not keep its buffered writes from throttling a concurrent
+`add`. History records `reaped`, `trimmed`, `filled`, `failed`, `deferred`,
+`system_start`, `system_end`, and phases `plan`, `reap`, `fill`, and `paused`
+(milliseconds spent waiting or stopped).
+
+`remove` skips the cleanliness check of a project whose pool is already full.
 
 ## 10. Overlay mode (Linux)
 
@@ -502,15 +513,23 @@ the client can be discovered from `-C` or the working directory. Commands
 add:
 
 * `add`: `tree`, `state`, `skipped`, `repo_bridge` state, `projects` (path,
-  mode, strategy, state, `ms`, `queue_ms` (wait for a worker after becoming
-  ready), `bytes`, `pooled`, reason), `notes` (per-project population
+  mode, strategy, state, `ms`, `queue_ms` (time from becoming eligible, at the
+  start of the phase or when its parent project finished, to starting; it
+  includes waiting behind other projects), `bytes`, `pooled`, reason),
+  `estimate_cache_hits` (projects whose size estimate came from
+  `.repo/repo-worktrees/estimates.json`, which maps each commit to its tracked
+  bytes and file count and is rewritten with the current snapshot's entries
+  when any was missing), `notes` (per-project population
   fallbacks), `reflink` (a reason that applied to every project, such as an
   unsupported filesystem pair, recorded once instead of per project),
   `environment` (os, arch, kernel, cpus, git, repo, source and tree filesystem
   types, `overlay_unavailable`), and `system_start`/`system_end`. Phases add
   `snapshot-repo-manifest`, `snapshot-git-dirs`, `snapshot-estimates`, and
-  `snapshot-preflight` (parts of `snapshot`), and `projects-journal-sync` and
-  `projects-meta-write` (time the scheduler spent making batches durable).
+  `snapshot-preflight` (parts of `snapshot`), `projects-journal-sync` and
+  `projects-meta-write` (time the journal writer thread spent syncing, off the
+  scheduler's path), and `projects-idle-slot` (worker-slot milliseconds between
+  a project finishing and the scheduler starting the next one in its slot;
+  slots left empty because no work remained are not counted).
 * `remove`: `tree`, `force`, `inspected`, `slow_inspections` (≥ 100 ms, at most
   20), `dirty` (project and reasons) on refusal, `returned_to_pool`, `projects`,
   `pruned_git_dirs`, `system_start`/`system_end`, and phases `inspect`,

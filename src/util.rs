@@ -143,22 +143,31 @@ pub fn append_journal_batch(entry: &Path, records: &[JournalRecord]) -> AppResul
     if records.is_empty() {
         return Ok(());
     }
+    let path = entry.join("journal.jsonl");
+    let mut file = open_journal(entry)?;
+    file.write_all(&encode_journal(records)?)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| AppError::io(format!("append journal batch to {}", path.display()), error))
+}
+
+pub fn open_journal(entry: &Path) -> AppResult<fs::File> {
+    let path = entry.join("journal.jsonl");
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o644)
+        .open(&path)
+        .map_err(|error| AppError::io(format!("open {}", path.display()), error))
+}
+
+pub fn encode_journal(records: &[JournalRecord]) -> AppResult<Vec<u8>> {
     let mut bytes = Vec::new();
     for record in records {
         serde_json::to_writer(&mut bytes, record)
             .map_err(|error| AppError::io("serialize journal record", error))?;
         bytes.push(b'\n');
     }
-    let path = entry.join("journal.jsonl");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o644)
-        .open(&path)
-        .map_err(|error| AppError::io(format!("open {}", path.display()), error))?;
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|error| AppError::io(format!("append journal batch to {}", path.display()), error))
+    Ok(bytes)
 }
 
 pub fn journal_has_done(entry: &Path, step: &str) -> AppResult<bool> {

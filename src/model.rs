@@ -73,7 +73,8 @@ pub struct ProjectMeta {
     /// Wall-clock milliseconds the last successful population took.
     #[serde(default)]
     pub populate_ms: Option<u64>,
-    /// Milliseconds the project waited for a worker after it became ready.
+    /// Milliseconds from becoming eligible (phase start, or its parent
+    /// project finishing) to starting, including waiting behind other projects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_ms: Option<u64>,
 }

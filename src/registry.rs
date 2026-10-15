@@ -164,6 +164,17 @@ pub fn tree_lock_path(entry: &Path) -> PathBuf {
     entry.join("lock")
 }
 
+/// Whether another process holds the lock on `path`. Never waits, and never
+/// creates the file.
+pub fn is_locked(path: &Path) -> bool {
+    let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
+        return false;
+    };
+    let mut lock = RwLock::new(file);
+    let busy = lock.try_write().is_err();
+    busy
+}
+
 /// Selects a tree, waits for its own lock, and runs `operation` with freshly
 /// read metadata. Operations on different trees run concurrently.
 pub fn with_tree_lock<T>(

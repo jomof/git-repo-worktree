@@ -147,11 +147,11 @@ For each shared project, journal step `project-share`:
    `dest-occupied`.
 4. Durably append the completion record before updating `meta.json`.
 
-Completion records may be journaled in batches. Each batch is one
-append/write followed by sync; metadata may mark a project done only after
-the batch containing its completion is durable. A crash before that point
-replays the idempotent operation. This batching rule also applies to
-worktree-project and directive completion records.
+Completion records may be journaled in batches. Directive batches are one
+append followed by sync. Project completion records are appended by a writer
+thread and synced at most once per second (base spec §5.3); metadata written
+during the phase never marks a project done before its record is appended. A
+crash before a record is durable replays the idempotent operation.
 
 ## 6. Lifecycle safety
 

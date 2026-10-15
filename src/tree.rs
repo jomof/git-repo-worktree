@@ -19,9 +19,10 @@ use crate::registry::{load_all, select_tree, with_registry_lock, with_tree_lock,
 use crate::resolve::{resolve_projects, rewritten};
 use crate::util::{
     absolutize, append_journal, append_journal_batch, canonicalize_missing, copy_permissions,
-    dedupe_paths, default_jobs, ensure_safe_destination, exit_reason, is_path_prefix,
-    journal_has_done, journal_has_project_status, journal_record, now, path_is_safe_relative,
-    relative_path, sanitize_name, truncated_stderr, write_breadcrumb, write_meta,
+    dedupe_paths, default_jobs, encode_journal, ensure_safe_destination, exit_reason,
+    is_path_prefix, journal_has_done, journal_has_project_status, journal_record, now,
+    open_journal, path_is_safe_relative, relative_path, sanitize_name, truncated_stderr,
+    write_breadcrumb, write_meta,
 };
 use crate::INTERRUPTED;
 use rayon::prelude::*;
@@ -42,8 +43,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const JOURNAL_BATCH_WINDOW: Duration = Duration::from_millis(10);
-/// During population, meta.json is rewritten at most this often; the journal,
-/// synced per batch, is what resume trusts for project progress.
+/// During population the journal is synced, and meta.json rewritten, at most
+/// this often, on a writer thread so the scheduler never waits on disk.
 const META_WRITE_INTERVAL: Duration = Duration::from_secs(1);
 const REFLINK_UNSUPPORTED: &str = "reflink unsupported for filesystem pair";
 const REFLINK_DISABLED: &str = "reflink disabled";
@@ -878,7 +879,115 @@ struct ReflinkState {
     unsupported_pairs: Mutex<HashSet<(u64, u64)>>,
 }
 
-type Completion = (usize, Result<ProjectOutcome, String>, u64);
+enum Durable {
+    Records(Vec<crate::model::JournalRecord>),
+    Meta(Vec<u8>),
+}
+
+/// Appends journal records and rewrites meta.json on its own thread, syncing
+/// at most once per [`META_WRITE_INTERVAL`] and once when finished. A crash
+/// loses at most the last interval of records, whose operations resume
+/// replays idempotently.
+struct DurabilityWriter {
+    sender: Option<mpsc::Sender<Durable>>,
+    handle: Option<std::thread::JoinHandle<AppResult<()>>>,
+}
+
+impl DurabilityWriter {
+    fn start(entry: &Path) -> AppResult<Self> {
+        let mut journal = open_journal(entry)?;
+        let journal_path = entry.join("journal.jsonl");
+        let meta_path = entry.join("meta.json");
+        let (sender, receiver) = mpsc::channel::<Durable>();
+        let handle = std::thread::spawn(move || -> AppResult<()> {
+            let mut unsynced = false;
+            let mut pending_meta = None;
+            let mut next_sync = Instant::now() + META_WRITE_INTERVAL;
+            let mut sync_ms = 0;
+            let mut meta_ms = 0;
+            loop {
+                let finished = match receiver
+                    .recv_timeout(next_sync.saturating_duration_since(Instant::now()))
+                {
+                    Ok(Durable::Records(records)) => {
+                        journal
+                            .write_all(&encode_journal(&records)?)
+                            .map_err(|error| {
+                                AppError::io(format!("append to {}", journal_path.display()), error)
+                            })?;
+                        unsynced = true;
+                        false
+                    }
+                    Ok(Durable::Meta(bytes)) => {
+                        pending_meta = Some(bytes);
+                        false
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => false,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => true,
+                };
+                if finished || Instant::now() >= next_sync {
+                    if unsynced {
+                        let started = Instant::now();
+                        journal.sync_data().map_err(|error| {
+                            AppError::io(format!("sync {}", journal_path.display()), error)
+                        })?;
+                        sync_ms += crate::metrics::elapsed_ms(started);
+                        unsynced = false;
+                    }
+                    if let Some(bytes) = pending_meta.take() {
+                        let started = Instant::now();
+                        crate::util::write_atomic(&meta_path, &bytes, 0o644)?;
+                        meta_ms += crate::metrics::elapsed_ms(started);
+                    }
+                    next_sync = Instant::now() + META_WRITE_INTERVAL;
+                }
+                if finished {
+                    break;
+                }
+            }
+            crate::metrics::phase("projects-journal-sync", sync_ms);
+            crate::metrics::phase("projects-meta-write", meta_ms);
+            Ok(())
+        });
+        Ok(Self {
+            sender: Some(sender),
+            handle: Some(handle),
+        })
+    }
+
+    /// Queues `item`; when the writer has stopped, returns its error.
+    fn send(&mut self, item: Durable) -> AppResult<()> {
+        let sent = self
+            .sender
+            .as_ref()
+            .is_some_and(|sender| sender.send(item).is_ok());
+        if sent {
+            Ok(())
+        } else {
+            self.join()
+                .and(Err(AppError::operational("E_IO", "journal writer stopped")))
+        }
+    }
+
+    /// Syncs everything queued and stops the writer.
+    fn finish(mut self) -> AppResult<()> {
+        self.join()
+    }
+
+    fn join(&mut self) -> AppResult<()> {
+        self.sender.take();
+        match self.handle.take() {
+            Some(handle) => handle
+                .join()
+                .unwrap_or_else(|_| Err(AppError::operational("E_IO", "journal writer panicked"))),
+            None => Ok(()),
+        }
+    }
+}
+
+/// A finished project: index, outcome, population milliseconds, and when its
+/// worker slot became free.
+type Completion = (usize, Result<ProjectOutcome, String>, u64, Instant);
 
 /// Starts ready projects on the worker pool while it has free slots.
 struct Dispatcher<'a> {
@@ -892,6 +1001,10 @@ struct Dispatcher<'a> {
     reflink_state: &'a Arc<ReflinkState>,
     running: usize,
     running_heavy: usize,
+    /// When each currently free slot was vacated by a finished project.
+    freed: std::collections::VecDeque<Instant>,
+    /// Slot-milliseconds between a slot being vacated and refilled.
+    idle_slot_ms: u64,
 }
 
 impl Dispatcher<'_> {
@@ -909,6 +1022,9 @@ impl Dispatcher<'_> {
                 break;
             };
             queue_ms[index] = ready_at[index].map(crate::metrics::elapsed_ms);
+            if let Some(freed) = self.freed.pop_front() {
+                self.idle_slot_ms += crate::metrics::elapsed_ms(freed);
+            }
             let project = meta.projects[index].clone();
             let context = PopulateContext {
                 source_root: self.source.to_path_buf(),
@@ -924,7 +1040,7 @@ impl Dispatcher<'_> {
                 let started = Instant::now();
                 let result = process_project(&project, &context, &reflink_state);
                 let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                let _ = sender.send((index, result, elapsed));
+                let _ = sender.send((index, result, elapsed, Instant::now()));
             });
             self.running += 1;
             if project_is_heavy(&meta.projects[index]) {
@@ -961,7 +1077,7 @@ fn run_project_phase(
     if !no_reflink {
         probe_reflink(source, destination, &meta.registry_entry(), &reflink_state);
     }
-    let (sender, receiver) = mpsc::channel::<(usize, Result<ProjectOutcome, String>, u64)>();
+    let (sender, receiver) = mpsc::channel::<Completion>();
     let mut ready_at = vec![None; meta.projects.len()];
     let phase_started = Instant::now();
     for &index in &ready {
@@ -980,7 +1096,10 @@ fn run_project_phase(
         reflink_state: &reflink_state,
         running: 0,
         running_heavy: 0,
+        freed: std::collections::VecDeque::new(),
+        idle_slot_ms: 0,
     };
+    let mut writer = DurabilityWriter::start(&meta.registry_entry())?;
 
     while processed < work_count {
         if INTERRUPTED.load(Ordering::SeqCst) {
@@ -1017,8 +1136,11 @@ fn run_project_phase(
         dispatcher.running -= batch.len();
         dispatcher.running_heavy -= batch
             .iter()
-            .filter(|(index, _, _)| project_is_heavy(&meta.projects[*index]))
+            .filter(|(index, _, _, _)| project_is_heavy(&meta.projects[*index]))
             .count();
+        dispatcher
+            .freed
+            .extend(batch.iter().map(|(_, _, _, finished)| *finished));
         if INTERRUPTED.load(Ordering::SeqCst) {
             stop = true;
         }
@@ -1028,7 +1150,7 @@ fn run_project_phase(
 
         let records = batch
             .iter()
-            .map(|(index, result, _)| {
+            .map(|(index, result, _, _)| {
                 let path = &meta.projects[*index].path;
                 match result {
                     Ok(outcome) => journal_record(
@@ -1056,11 +1178,9 @@ fn run_project_phase(
                 }
             })
             .collect::<Vec<_>>();
-        let synced = Instant::now();
-        append_journal_batch(&meta.registry_entry(), &records)?;
-        crate::metrics::phase("projects-journal-sync", crate::metrics::elapsed_ms(synced));
+        writer.send(Durable::Records(records))?;
 
-        for (index, result, elapsed) in batch {
+        for (index, result, elapsed, _) in batch {
             processed += 1;
             settled += 1;
             let project_path = meta.projects[index].path.clone();
@@ -1113,13 +1233,15 @@ fn run_project_phase(
                 ready_at[child] = Some(now);
             }
         }
-        if meta_written.elapsed() >= META_WRITE_INTERVAL || processed == work_count {
-            let written = Instant::now();
-            write_meta(meta)?;
-            crate::metrics::phase("projects-meta-write", crate::metrics::elapsed_ms(written));
+        if meta_written.elapsed() >= META_WRITE_INTERVAL {
+            let bytes = serde_json::to_vec_pretty(meta)
+                .map_err(|error| AppError::io("serialize meta.json", error))?;
+            writer.send(Durable::Meta(bytes))?;
             meta_written = Instant::now();
         }
     }
+    crate::metrics::phase("projects-idle-slot", dispatcher.idle_slot_ms);
+    writer.finish()?;
     write_meta(meta)?;
 
     if !stop && processed != work_count {
@@ -2516,9 +2638,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     .map_err(|error| AppError::io(format!("remove {}", entry.display()), error))?;
             }
             crate::metrics::record("system_end", crate::metrics::system_load());
-            if !args.no_pool
-                && pool::maintenance_wanted(&meta)
-                && pool::spawn_maintenance(&meta.source())
+            if !args.no_pool && pool::needs_refill(&meta) && pool::spawn_maintenance(&meta.source())
             {
                 crate::metrics::record("pool_maintenance", json!("started"));
             }
@@ -2618,7 +2738,7 @@ fn return_projects_to_pool(
             Some(clean) => clean.contains(&project.path),
             None => !crate::inspect::inspect_project(&root, &entry, project).dirty,
         };
-        if !is_clean {
+        if !is_clean || pool::is_full(registry, &project.path, capacity) {
             return None;
         }
         let facts = pool::ProjectFacts::from_meta(project)

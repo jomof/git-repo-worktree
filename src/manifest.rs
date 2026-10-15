@@ -701,25 +701,82 @@ fn resolve_git_common_dirs(
     }
     crate::metrics::phase("snapshot-git-dirs", crate::metrics::elapsed_ms(step));
     let step = std::time::Instant::now();
+    let cache_path = estimate_cache_path(source_root);
+    let cached = read_estimate_cache(&cache_path);
     let estimates = pool.install(|| {
         projects
             .par_iter()
             .enumerate()
             .filter(|(_, project)| project.state == "pending")
             .map(|(index, project)| {
-                (
-                    index,
-                    estimate_tracked_bytes(Path::new(&project.git_common_dir), &project.sha),
-                )
+                let estimate = cached.get(&project.sha).copied().or_else(|| {
+                    estimate_tracked_bytes(Path::new(&project.git_common_dir), &project.sha)
+                });
+                (index, estimate)
             })
             .collect::<Vec<_>>()
     });
-    crate::metrics::phase("snapshot-estimates", crate::metrics::elapsed_ms(step));
+    let mut current = HashMap::new();
     for (index, estimate) in estimates {
         projects[index].est_bytes = estimate.map(|(bytes, _)| bytes);
         projects[index].est_files = estimate.map(|(_, files)| files);
+        if let Some(estimate) = estimate {
+            current.insert(projects[index].sha.clone(), estimate);
+        }
     }
+    crate::metrics::record(
+        "estimate_cache_hits",
+        serde_json::json!(current
+            .keys()
+            .filter(|sha| cached.contains_key(*sha))
+            .count()),
+    );
+    if current.keys().any(|sha| !cached.contains_key(sha)) {
+        write_estimate_cache(&cache_path, &current);
+    }
+    crate::metrics::phase("snapshot-estimates", crate::metrics::elapsed_ms(step));
     Ok(())
+}
+
+/// Tracked size and file count by commit: a commit's tree never changes, so
+/// a project still at the same commit as the last `add` reuses its estimate.
+fn estimate_cache_path(source_root: &Path) -> PathBuf {
+    source_root.join(".repo/repo-worktrees/estimates.json")
+}
+
+fn read_estimate_cache(path: &Path) -> HashMap<String, (u64, u64)> {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| {
+            value.get("entries")?.as_object().map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|(sha, estimate)| {
+                        Some((
+                            sha.clone(),
+                            (estimate.get(0)?.as_u64()?, estimate.get(1)?.as_u64()?),
+                        ))
+                    })
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// Replaces the cache with the current snapshot's estimates, so it holds one
+/// entry per project rather than growing with every commit.
+fn write_estimate_cache(path: &Path, estimates: &HashMap<String, (u64, u64)>) {
+    if !path.parent().is_some_and(Path::is_dir) {
+        return;
+    }
+    let entries = estimates
+        .iter()
+        .map(|(sha, (bytes, files))| (sha.clone(), serde_json::json!([bytes, files])))
+        .collect::<serde_json::Map<_, _>>();
+    if let Ok(bytes) = serde_json::to_vec(&serde_json::json!({"version": 1, "entries": entries})) {
+        let _ = write_atomic(path, &bytes, 0o644);
+    }
 }
 
 /// Total size and number of tracked blobs at `sha`.

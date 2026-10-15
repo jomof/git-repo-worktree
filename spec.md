@@ -237,14 +237,18 @@ Rules:
 
 ### 5.3 `journal.jsonl` schema
 
-Append-only, one JSON object per line. Records completed within a short bounded
-coalescing window may be written together and covered by one `fsync`. State,
-progress output, and dependent scheduling must not advance until that batch is
-durable; independent ready work may start while it is being synced. During
-project population `meta.json` is rewritten at most once per second (and once
-when the phase ends), so it may lag the journal but never lead it. A crash
-before durability may replay any item in the batch; every operation
-is idempotent, so this does not weaken resume guarantees. Recovery truncates only a
+Append-only, one JSON object per line. Outside project population, each
+record or small batch is synced before the step it records is reported. During
+project population a writer thread appends completion records as they arrive
+and syncs the journal, and rewrites `meta.json` from the scheduler's latest
+snapshot, at most once per second and once when the phase ends; scheduling,
+progress output, and dependent projects never wait for it. Population writes
+are not synced by Git either, so per-record syncing never made a completed
+project survive power loss; a process crash loses nothing written. After a
+power loss, up to the last second of records may be missing and resume
+replays those projects; every operation is idempotent, so this does not
+weaken resume guarantees. `meta.json` may lag the journal but never leads
+it. Recovery truncates only a
 malformed, unterminated final line and fails on malformed durable lines. The journal
 is used to make `add` resumable and to explain partial failures.
 
