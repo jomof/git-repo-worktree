@@ -2185,16 +2185,23 @@ fn check_quiescence(source_root: &Path, force: bool, quiet: bool) -> AppResult<(
         .map(|name| source_root.join(".repo/manifests.git").join(name))
         .find(|path| path.exists());
     let detected_process = if detected_lock.is_none() {
+        let repo_dir = fs::canonicalize(source_root.join(".repo")).ok();
         Command::new("ps")
-            .args(["-Ao", "args="])
+            .args(["-ww", "-Ao", "pid=,args="])
             .output()
             .ok()
             .filter(|output| output.status.success())
             .and_then(|output| {
                 String::from_utf8_lossy(&output.stdout)
                     .lines()
-                    .find(|line| is_repo_sync_process(line))
-                    .map(str::to_owned)
+                    .filter_map(|line| line.trim_start().split_once(' '))
+                    .find(|(pid, args)| {
+                        is_repo_sync_process(args)
+                            && repo_dir
+                                .as_deref()
+                                .is_some_and(|repo_dir| syncs_client(pid.trim(), args, repo_dir))
+                    })
+                    .map(|(_, args)| args.trim().to_owned())
             })
     } else {
         None
@@ -2237,7 +2244,7 @@ fn is_repo_sync_process(line: &str) -> bool {
     };
     let script = if program == "repo" {
         Some(0)
-    } else if program.starts_with("python") {
+    } else if program.to_ascii_lowercase().starts_with("python") {
         tokens
             .iter()
             .skip(1)
@@ -2253,6 +2260,21 @@ fn is_repo_sync_process(line: &str) -> bool {
         tokens[index + 1..]
             .iter()
             .any(|token| *token == "sync" || *token == "init")
+    })
+}
+
+/// Whether a repo process works on the client whose `.repo` is `repo_dir`:
+/// repo passes `--repo-dir=<client>/.repo` to its `main.py`. Without that
+/// argument (the launcher, before it starts `main.py`), the process's working
+/// directory decides where it can be read (Linux).
+fn syncs_client(pid: &str, args: &str, repo_dir: &Path) -> bool {
+    let named = args
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("--repo-dir="))
+        .map(|path| fs::canonicalize(path).is_ok_and(|path| path == repo_dir));
+    named.unwrap_or_else(|| {
+        let client = repo_dir.parent().unwrap_or(repo_dir);
+        fs::read_link(format!("/proc/{pid}/cwd")).is_ok_and(|cwd| cwd.starts_with(client))
     })
 }
 
@@ -3835,6 +3857,7 @@ mod tests {
             "/usr/bin/python3 /usr/bin/repo sync -c",
             "python3 -E /home/u/src/.repo/repo/main.py --repo-dir=/home/u/src/.repo --wrapper-version=2.4 -- sync -j8",
             "/opt/homebrew/bin/repo init -u url",
+            "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /home/u/src/.repo/repo/main.py --repo-dir=/home/u/src/.repo -- sync",
         ] {
             assert!(is_repo_sync_process(line), "{line}");
         }

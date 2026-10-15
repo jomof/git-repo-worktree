@@ -350,6 +350,49 @@ fn sync_detection_and_force_override() {
         .success();
 }
 
+/// Starts a process whose command line looks like repo's `main.py` running
+/// `sync` for the client whose `.repo` is `repo_dir`.
+fn fake_repo_sync(fixture: &Fixture, repo_dir: &Path) -> std::process::Child {
+    let script = fixture.temp.path().join("fake/main.py");
+    fs::create_dir_all(script.parent().unwrap()).unwrap();
+    fs::write(&script, "import time\ntime.sleep(60)\n").unwrap();
+    let child = StdCommand::new("python3")
+        .arg(&script)
+        .arg(format!("--repo-dir={}", repo_dir.display()))
+        .arg("sync")
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    child
+}
+
+#[test]
+fn only_a_sync_of_this_client_blocks_add() {
+    let fixture = fixture();
+    let other = fixture.temp.path().join("other-client/.repo");
+    fs::create_dir_all(&other).unwrap();
+    let mut elsewhere = fake_repo_sync(&fixture, &other);
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    elsewhere.kill().unwrap();
+    let _ = elsewhere.wait();
+
+    let mut here = fake_repo_sync(&fixture, &fixture.client.join(".repo"));
+    let refused = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(fixture.temp.path().join("second"))
+            .assert()
+            .code(4),
+    );
+    here.kill().unwrap();
+    let _ = here.wait();
+    assert_eq!(refused["error"]["code"], "E_SYNC_ACTIVE");
+}
+
 #[test]
 fn crash_hook_leaves_a_resumable_original_snapshot() {
     let fixture = fixture();
