@@ -1,0 +1,50 @@
+107 event(s) from 2026-10-15T00:14:35Z to 2026-10-15T04:51:21Z
+environment: linux 7.1.6-1rodete1-amd64 (git version 2.56.0.176.g3575e65682-goog), 96 cpus, source fs ext4, tree fs ext4, overlay available
+
+command       count   ok  p50_ms  p90_ms  max_ms  errors
+add              34   33   29860  231485  243294  E_SYNC_ACTIVEx1
+list              6    6    1815    3909    3909  
+pool --json       1    0       0       0       0  E_USAGEx1
+pool clear        8    8   21959   48082   48257  
+pool list        14   14      14     128     135  
+pool maintain      6    6  152170  232608  232608  
+pool size         1    1       0       0       0  
+remove           32   32   30920   46204   73888  
+report            2    2      36      36      36  
+status            3    3    3199    5898    5898  
+
+usage errors:
+  1  pool --json [E_USAGE]
+
+project modes (add):
+  3729  overlay
+  32043  worktree
+
+strategies (add):
+  31931  checkout
+  3729  fuse-overlayfs
+  112  pool
+
+population notes:
+  8655  reflink unsupported for filesystem pair
+
+pool: 112 hit(s), 350 miss(es); 140 project(s) returned on remove
+
+slowest projects to populate (p50 ms, samples, mode/strategy):
+     10628   33  worktree/pool                cts
+      9174   33  worktree/pool                external/opencl/llvm-project
+      7532   33  worktree/pool                external/cronet
+      6963   33  worktree/pool                frameworks/base
+      4784   33  worktree/pool                packages/services/display_safety
+      2943   33  worktree/pool                external/google-cloud-java
+      2802   33  worktree/pool                external/deqp
+      2612   33  worktree/checkout            packages/modules/NpuManager
+      2473   33  worktree/pool                external/swiftshader
+      2074   33  worktree/checkout            external/perfetto
+      1993   33  worktree/checkout            packages/apps/Dialer
+      1986   33  worktree/checkout            hardware/interfaces
+      1907   33  worktree/pool                external/coreboot
+      1889   33  worktree/checkout            test/mlts/models
+      1787   33  worktree/checkout            packages/apps/CellBroadcastReceiver
+
+live trees: 2  (history: /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/history.jsonl)

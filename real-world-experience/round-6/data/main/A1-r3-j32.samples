@@ -1,0 +1,146 @@
+t=1792037151.538311556 
+49.87 49.02 38.90 39/9010
+cpu some avg10=0.00 avg60=1.25 avg300=1.60 total=14136425690
+io some avg10=1.42 avg60=1.80 avg300=2.69 total=22660816307
+memory some avg10=0.00 avg60=0.00 avg300=0.00 total=1286460780
+Dirty: 78344 kB Writeback: 268 kB 
+      1 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+t=1792037153.439778710 phase snapshot: starting
+50.52 49.17 39.01 78/9054
+cpu some avg10=0.00 avg60=1.20 avg300=1.59 total=14136441272
+io some avg10=1.52 avg60=1.81 avg300=2.69 total=22660857537
+memory some avg10=0.00 avg60=0.00 avg300=0.00 total=1286463550
+Dirty: 88952 kB Writeback: 0 kB 
+      1 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+      1 D+   kernel_clone                     python3
+t=1792037155.277885879 phase snapshot: starting
+50.52 49.17 39.01 65/9027
+cpu some avg10=0.00 avg60=1.16 avg300=1.58 total=14136447643
+io some avg10=1.61 avg60=1.81 avg300=2.68 total=22660898160
+memory some avg10=0.00 avg60=0.00 avg300=0.00 total=1286464690
+Dirty: 102472 kB Writeback: 0 kB 
+      1 S+   poll_schedule_timeout.constprop. python3
+      1 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+t=1792037157.309733332 project 45/1084: added external/leakcanary2 (checkout)
+50.52 49.17 39.01 163/9342
+cpu some avg10=0.00 avg60=1.13 avg300=1.57 total=14136731129
+io some avg10=1.50 avg60=1.79 avg300=2.67 total=22660933482
+memory some avg10=0.00 avg60=0.00 avg300=0.00 total=1286479798
+Dirty: 6212448 kB Writeback: 0 kB 
+     40 Z+   -                                git
+     32 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+     17 R+   -                                git
+     16 S+   do_wait                          git
+      6 S+   poll_schedule_timeout.constprop. git
+      1 Sl+  futex_do_wait                    git-repo-worktr
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   -                                git
+      1 S+   do_wait                          time
+      1 Dl+  jbd2_log_wait_commit             git-repo-worktr
+t=1792037160.390967055 project 183/1084: added external/wycheproof (checkout)
+58.72 50.90 39.62 188/9373
+cpu some avg10=6.58 avg60=2.34 avg300=1.82 total=14137391421
+io some avg10=2.60 avg60=1.97 avg300=2.70 total=22661273668
+memory some avg10=0.14 avg60=0.03 avg300=0.00 total=1286499687
+Dirty: 18492684 kB Writeback: 0 kB 
+     31 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+     12 R+   -                                git
+      5 Z+   -                                git
+      4 S+   do_wait                          git
+      2 S+   poll_schedule_timeout.constprop. git
+      2 Sl+  futex_do_wait                    git-repo-worktr
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+      1 S+   anon_pipe_read                   git
+      1 Rl+  -                                git-repo-worktr
+t=1792037162.761749634 project 385/1084: added external/federated-compute (checkout)
+58.72 50.90 39.62 139/9329
+cpu some avg10=10.64 avg60=3.21 avg300=2.01 total=14138072901
+io some avg10=5.03 avg60=2.42 avg300=2.79 total=22661633445
+memory some avg10=0.12 avg60=0.02 avg300=0.00 total=1286516038
+Dirty: 22406164 kB Writeback: 104576 kB 
+     30 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+     12 Z+   -                                git
+     10 D+   jbd2_log_wait_commit             git
+      3 S+   poll_schedule_timeout.constprop. git
+      3 S+   do_wait                          git
+      2 Rl+  -                                git-repo-worktr
+      2 R+   -                                git
+      1 Sl+  futex_do_wait                    git-repo-worktr
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+      1 Dl+  add_transaction_credits          git-repo-worktr
+t=1792037165.203136819 project 1031/1084: added system/libartpalette (checkout)
+64.19 52.16 40.09 102/9231
+cpu some avg10=13.06 avg60=3.89 avg300=2.16 total=14138577630
+io some avg10=7.01 avg60=2.87 avg300=2.88 total=22661938952
+memory some avg10=0.09 avg60=0.02 avg300=0.00 total=1286524162
+Dirty: 23653456 kB Writeback: 162748 kB 
+     31 Sl+  futex_do_wait                    git-repo-worktr
+      9 Z+   -                                git
+      8 R+   -                                git
+      3 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+      3 S+   do_wait                          git
+      1 S+   poll_schedule_timeout.constprop. git
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   -                                git
+      1 S+   do_wait                          time
+t=1792037167.406109298 project 1077/1084: added external/opencl/llvm-project (checkout)
+64.19 52.16 40.09 52/9191
+cpu some avg10=12.87 avg60=4.16 avg300=2.22 total=14138653116
+io some avg10=7.19 avg60=3.04 avg300=2.91 total=22662014142
+memory some avg10=0.08 avg60=0.02 avg300=0.00 total=1286528082
+Dirty: 24014920 kB Writeback: 20132 kB 
+     31 Sl+  futex_do_wait                    git-repo-worktr
+      7 Z+   -                                git
+      3 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+      3 S+   do_wait                          git
+      3 R+   -                                git
+      1 S+   poll_schedule_timeout.constprop. git
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+t=1792037169.609866456 project 1079/1084: added external/deqp (checkout)
+64.18 52.36 40.22 76/9206
+cpu some avg10=10.72 avg60=4.05 avg300=2.22 total=14138735052
+io some avg10=6.43 avg60=3.04 avg300=2.91 total=22662090944
+memory some avg10=0.06 avg60=0.02 avg300=0.00 total=1286530150
+Dirty: 24788308 kB Writeback: 37260 kB 
+     31 Sl+  futex_do_wait                    git-repo-worktr
+     20 Z+   -                                git
+      4 R+   -                                git
+      3 S+   poll_schedule_timeout.constprop. git
+      3 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+      3 S+   do_wait                          git
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+t=1792037171.700829581 project 1080/1084: added external/swiftshader (checkout)
+64.18 52.36 40.22 89/9256
+cpu some avg10=9.50 avg60=4.05 avg300=2.23 total=14138784086
+io some avg10=5.81 avg60=3.03 avg300=2.91 total=22662144260
+memory some avg10=0.05 avg60=0.02 avg300=0.00 total=1286538099
+Dirty: 23859656 kB Writeback: 36204 kB 
+     31 Sl+  futex_do_wait                    git-repo-worktr
+     14 Z+   -                                git
+      9 D+   jbd2_log_do_checkpoint           git
+      3 S+   poll_schedule_timeout.constprop. git
+      3 Sl+  poll_schedule_timeout.constprop. git-repo-worktr
+      3 S+   do_wait                          git
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+      1 R+   -                                git
+t=1792037173.856290102 project 1084/1084: added tools/dexter (checkout)
+67.53 53.25 40.57 68/9152
+cpu some avg10=7.21 avg60=3.95 avg300=2.23 total=14138853260
+io some avg10=4.88 avg60=3.03 avg300=2.92 total=22662231163
+memory some avg10=0.03 avg60=0.02 avg300=0.00 total=1286545620
+Dirty: 23652144 kB Writeback: 16164 kB 
+     32 Sl+  futex_do_wait                    git-repo-worktr
+      1 Sl+  futex_do_wait                    ctrl-c
+      1 S+   do_wait                          time
+      1 Rl+  -                                git-repo-worktr

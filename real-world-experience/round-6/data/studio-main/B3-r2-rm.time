@@ -1,0 +1,23 @@
+	Command being timed: "git -C /usr/local/google/home/jomof/projects/studio-main repo-worktree remove --json /usr/local/google/home/jomof/projects/studio-wt-r6-B3"
+	User time (seconds): 13.07
+	System time (seconds): 34.62
+	Percent of CPU this job got: 670%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:07.11
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 401476
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 20
+	Minor (reclaiming a frame) page faults: 569432
+	Voluntary context switches: 2929
+	Involuntary context switches: 7751
+	Swaps: 0
+	File system inputs: 4720
+	File system outputs: 326568
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

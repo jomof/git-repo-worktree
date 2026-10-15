@@ -1,0 +1,83 @@
+phase snapshot: starting
+phase snapshot: 759ms (56 projects)
+warning: included 4 synced checkout(s) absent from repo manifest output; pinned from source HEAD
+supplemented prebuilts/bazel/linux-x86_64
+supplemented prebuilts/clang/host/linux-x86
+supplemented prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8
+supplemented prebuilts/studio/sdk/linux
+phase projects: starting 56 project(s) with 32 job(s)
+project 1/56: added prebuilts/remoteexecution-client (fuse-overlayfs)
+project 2/56: added tools/external/gradle (fuse-overlayfs)
+project 3/56: added prebuilts/studio/sdk/remote (fuse-overlayfs)
+project 4/56: added prebuilts/r8 (fuse-overlayfs)
+project 5/56: added prebuilts/studio/buildbenchmarks (fuse-overlayfs)
+project 6/56: added prebuilts/bazel/linux-x86_64 (fuse-overlayfs)
+project 7/56: added prebuilts/python/darwin-x86 (fuse-overlayfs)
+project 8/56: added prebuilts/python/linux-x86 (fuse-overlayfs)
+project 9/56: added tools/apksig (checkout)
+project 10/56: added prebuilts/python/windows-x86 (fuse-overlayfs)
+project 11/56: added tools/apkzlib (checkout)
+project 12/56: added prebuilts/clang/host/linux-x86 (fuse-overlayfs)
+project 13/56: added prebuilts/studio/evalprojects (fuse-overlayfs)
+project 14/56: added tools/repohooks (checkout)
+project 15/56: added external/jarjar (checkout)
+project 16/56: added prebuilts/studio/jdk (fuse-overlayfs)
+project 17/56: added external/python/absl-py (checkout)
+project 18/56: added prebuilts/studio/layoutlib (fuse-overlayfs)
+project 19/56: added external/android/system/logging (fuse-overlayfs)
+project 20/56: added external/dokka (fuse-overlayfs)
+project 21/56: added tools/analytics-library (checkout)
+project 22/56: added external/googletest (checkout)
+project 23/56: added external/gradle-profiler (checkout)
+project 24/56: added prebuilts/studio/intellij-sdk (fuse-overlayfs)
+project 25/56: added external/nanopb-c (checkout)
+project 26/56: added prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8 (fuse-overlayfs)
+project 27/56: added external/doclava (checkout)
+project 28/56: added tools/vendor/modelcontextprotocol/kotlin-sdk (checkout)
+project 29/56: added tools/gradle (checkout)
+project 30/56: added tools/vendor/robo (checkout)
+project 31/56: added tools/buildSrc (checkout)
+project 32/56: added tools/studio/google/cloud/testing (checkout)
+project 33/56: added external/gflags (checkout)
+project 34/56: added tools/vendor/adt_infra_internal (checkout)
+project 35/56: added tools/gradle-recipes (checkout)
+project 36/56: added tools/external/fat32lib (checkout)
+project 37/56: added build/bazel (checkout)
+project 38/56: added tools/external/bazelbuild-rules-kotlin (checkout)
+project 39/56: added tools/assets (fuse-overlayfs)
+project 40/56: added tools/data-binding (checkout)
+project 41/56: added tools/vendor/google3/aswb (checkout)
+project 42/56: added tools/vendor/redhat-developer/lsp4ij (checkout)
+project 43/56: added tools/adt/idea (pool)
+project 44/56: added prebuilts/tools (fuse-overlayfs)
+project 45/56: added tools/profiler (checkout)
+project 46/56: added tools/vendor/ggml-org/llama.cpp (checkout)
+project 47/56: added tools/vendor/google (pool)
+project 48/56: added tools/emulator (checkout)
+project 49/56: added tools/base (pool)
+project 50/56: added tools/gpu-profiler/idea (pool)
+project 51/56: added external/jetbrains/kotlin (pool)
+project 52/56: added external/intellij-plugins (pool)
+project 53/56: added tools/vendor/intellij/cidr (pool)
+project 54/56: added tools/idea (pool)
+project 55/56: added external/dexter (checkout)
+project 56/56: added prebuilts/studio/sdk/linux (pool, overlay preflight changed: source checkout is not clean)
+note: 19 project(s) are copy-on-write overlays of the source checkout; `repair` remounts them after a reboot
+phase projects: 6.122s (56 candidates)
+phase directives: starting
+phase directives: 17ms (16 copy/link directives)
+phase submodules: starting
+warning: 2 projects contain .gitmodules and were not populated
+         (external/gflags, tools/vendor/ggml-org/llama.cpp); use --submodules to populate
+phase submodules: 0ms
+phase repo-bridge: starting
+phase repo-bridge: 157ms (done)
+INFO: Detected platform Platform.GLINUX_DESKTOP
+INFO: Found workspace root /usr/local/google/home/jomof/projects/studio-wt-r6-B3
+INFO: Wrote env.bazelrc
+ran post-add hook (100 ms)
+phase hook-post-add: 105ms (ok)
+phase finalize: starting
+phase finalize: 3ms
+created studio-wt-r6-B3 at /usr/local/google/home/jomof/projects/studio-wt-r6-B3: 56 projects, 0 skipped, 0 failed
+phase total: 7.299s

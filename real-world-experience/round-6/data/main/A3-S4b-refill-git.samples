@@ -1,0 +1,60 @@
+--- t=1792038234.078050357 ---
+1493072 SN   do_wait                          git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038235.223675661 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038236.405750935 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038237.602599557 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038238.764815716 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038239.918013752 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038241.084494744 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038242.488393640 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038243.950347217 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038245.217077829 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038246.484787879 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038247.711781339 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038248.949674414 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038250.159952167 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038251.417293001 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038252.729333099 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038254.179936991 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038255.439107676 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038256.635216021 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038258.036857314 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038259.235352689 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038260.413194866 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038261.657959148 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038262.976744589 ---
+1493072 TN   do_signal_stop                   git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038264.228634367 ---
+1493072 SN   do_wait                          git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038265.438486302 ---
+1493072 SN   do_wait                          git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038266.639152911 ---
+1493072 SN   do_wait                          git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038267.861626999 ---
+1493072 SN   do_wait                          git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038269.029560672 ---
+1493072 SN   do_wait                          git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD
+--- t=1792038270.203849529 ---
+1493072 SN   do_wait                          git             git -C /usr/local/google/home/jomof/projects/main/external/opencl/llvm-project -c checkout.workers=2 -c checkout.thresholdForParallelism=100 worktree add --detach /usr/local/google/home/jomof/projects/main/.repo/repo-worktrees/.pool/external%2Fopencl%2Fllvm-project/.filling-1792038233766132450-1491600-0 HEAD

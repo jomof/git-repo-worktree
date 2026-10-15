@@ -1,0 +1,23 @@
+# captured 2026-10-15T03:58:18Z
+git-repo-worktree 2.0.0 (ca1c36d6d15e)
+/usr/local/google/home/jomof/.local/bin/git-repo-worktree
+Linux jomof-specialist.c.googlers.com 7.1.6-1rodete1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 7.1.6-1rodete1 (2026-08-05) x86_64 GNU/Linux
+96
+               total        used        free      shared  buff/cache   available
+Mem:             236          30          13           3         197         206
+Swap:            447          42         405
+Filesystem                    1B-blocks          Used     Available Use% Mounted on
+/dev/glinux_20230721/root 8175786840064 6512222400512 1292609167360  84% /
+TARGET FSTYPE OPTIONS
+/      ext4   rw,relatime,errors=remount-ro
+git version 2.56.0.176.g3575e65682-goog
+<repo not installed>
+repo launcher version 2.65
+fusermount3 version: 3.18.2
+ 03:58:18 up 15 days,  1:37,  1 user,  load average: 40.10, 27.75, 29.06
+some avg10=0.00 avg60=0.38 avg300=0.47 total=14126691180
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+some avg10=1.09 avg60=1.33 avg300=5.64 total=22650024536
+full avg10=1.00 avg60=1.22 avg300=5.48 total=21620619562
+some avg10=0.00 avg60=0.00 avg300=0.00 total=1286077524
+full avg10=0.00 avg60=0.00 avg300=0.00 total=1190838070

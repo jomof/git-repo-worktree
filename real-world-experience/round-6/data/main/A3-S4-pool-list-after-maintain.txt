@@ -1,0 +1,15 @@
+external/opencl/llvm-project  2 spare(s)  about 2.8 GB each
+external/cronet  2 spare(s)  about 2.3 GB each
+frameworks/base  2 spare(s)  about 2.0 GB each
+cts  2 spare(s)  about 2.8 GB each
+external/google-cloud-java  2 spare(s)  about 1.2 GB each
+external/deqp  2 spare(s)  about 1.8 GB each
+external/swiftshader  2 spare(s)  about 1.4 GB each
+packages/services/display_safety  2 spare(s)  about 1.4 GB each
+external/rust/android-crates-io  2 spare(s)  about 484.3 MB each
+external/tensorflow  2 spare(s)  about 419.5 MB each
+external/icu  2 spare(s)  about 479.5 MB each
+external/coreboot  2 spare(s)  about 242.5 MB each
+external/llvm  2 spare(s)  about 240.8 MB each
+development  2 spare(s)  about 490.2 MB each
+depth 2 of 2: the next 2 add(s) can take every pooled project from the pool

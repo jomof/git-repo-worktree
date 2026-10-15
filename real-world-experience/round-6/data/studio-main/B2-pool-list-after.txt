@@ -1,0 +1,10 @@
+prebuilts/studio/sdk/linux  2 spare(s)  about 11.3 GB each
+tools/idea  2 spare(s)  about 2.1 GB each
+tools/gpu-profiler/idea  2 spare(s)  about 2.1 GB each
+tools/adt/idea  2 spare(s)  about 2.5 GB each
+external/jetbrains/kotlin  2 spare(s)  about 740.2 MB each
+tools/base  2 spare(s)  about 1.0 GB each
+external/intellij-plugins  2 spare(s)  about 469.0 MB each
+tools/vendor/intellij/cidr  2 spare(s)  about 314.2 MB each
+tools/vendor/google  2 spare(s)  about 519.2 MB each
+depth 2 of 2: the next 2 add(s) can take every pooled project from the pool
