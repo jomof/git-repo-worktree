@@ -44,3 +44,7 @@ It is intended for an engineering/review agent auditing the entire `git-repo-wor
 
 13. **[`round-6-verify-round-5-fixes-plan.md`](round-6-verify-round-5-fixes-plan.md)**: repeats round 5's measurements against the round-5 fixes (journal writer thread, size-estimate cache, maintenance pausing during tree operations, cheaper `remove` on a full pool) and decides whether the default `-j` should change.
 14. **[`round-6/report.md`](round-6/report.md)**: results of the Round 6 test plan on `ca1c36d6d15e` (scheduler idle slots down to <1s per worker; cold AOSP adds at 23.8–24.2 s across both `-j 16` and `-j 32`; size-estimate cache cutting `snapshot-estimates` to 0–3 ms; `SIGSTOP` pause protecting concurrent AOSP adds from 97.7 s down to 29.2 s; and cheaper `remove` on a full pool).
+
+## Field post-mortems
+
+15. **[`asfp-cxx-lsp-repair-postmortem.md`](asfp-cxx-lsp-repair-postmortem.md)**: a `repair` run to remount a dead FUSE overlay rewrote the tree's `.repo` bridge, removing all 56 projects via `local_manifests`. Every `repo` command and the repohooks pre-upload hook then failed with `internal error parsing repo-hooks`. Root-cause chain: `git worktree repair` over `manifests.git` fails on other trees' symlinked `.git`, that failure is stamped onto every project as `repair-failed`, and the bridge is rebuilt from that state.
