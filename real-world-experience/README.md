@@ -32,6 +32,8 @@ It is intended for an engineering/review agent auditing the entire `git-repo-wor
 
 9. **[`round-3-blindfold-hooks-plan.md`](round-3-blindfold-hooks-plan.md)**: blindfold rerun after the round-2 fixes, adding site hooks (`post-add` runs `./build/bazel/env/setup`, `pre-remove` stops the tree's Bazel server) and testing hook failure, parallel agents without lock contention, and warm-pool timing.
 
+10. **[`round-5-pool-and-stalls-plan.md`](round-5-pool-and-stalls-plan.md)**: after the round-4 timing report, measures the orphaned-spare cleanup and background pool refill on studio-main, and attributes AOSP's stalled adds with a thread-level wait-channel sampler and a `-j` matrix.
+
 ## Addendum
 
 7. **[`addendum-env-bazelrc-and-cartfs.md`](addendum-env-bazelrc-and-cartfs.md)** — **Addendum: How `env.bazelrc` and CartFS `output_base` Are Generated in `studio-main`**
