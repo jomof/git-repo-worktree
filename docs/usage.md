@@ -95,8 +95,8 @@ supplement into `snapshot.xml` before creation begins.
 Only actual parent/child project paths constrain scheduling, so unrelated projects
 can run immediately even when their paths have different depths. Completion records
 are coalesced into small batches and `fsync`ed before progress is reported or
-dependent projects are released; an interrupted batch is safely replayed by
-`add --continue`.
+dependent projects are released, while independent projects keep starting; an
+interrupted batch is safely replayed by `add --continue`.
 An interrupted optimized population is never accepted merely because its
 `HEAD` is correct: resume repairs the unfinished worktree with a parallel
 `reset --hard` before marking it done.
@@ -153,9 +153,13 @@ Every invocation appends one JSON line to `.repo/repo-worktrees/history.jsonl` i
 the source client: the command and flag names (never flag values or paths
 outside the client), duration, exit and error codes, phase timings, and, for
 `add`, `materialize`, `repair`, and `pool fill`, per-project modes, strategies,
-sizes, and timings. `add` also records the OS, kernel, Git and repo versions,
-CPU count, and filesystem types. The file never leaves the machine, is written
-without `fsync`, and is trimmed to its newest half past 8 MiB.
+sizes, and timings, including how long each project waited for a worker.
+`add` also records the OS, kernel, Git and repo versions, CPU count, and
+filesystem types. `add`, `remove`, and pool maintenance record the load
+average and, on Linux, CPU, I/O, and memory pressure when they start and end,
+so a slow run on a busy machine can be told apart from a slow tool. The file
+never leaves the machine, is written without `fsync`, and is trimmed to its
+newest half past 8 MiB.
 
 ```sh
 git repo-worktree report                 # latency per command, errors, usage mistakes, slowest projects

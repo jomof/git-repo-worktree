@@ -159,6 +159,7 @@ fn tool(client: &Client) -> Command {
         .env("GIT_AUTHOR_EMAIL", "test@example.com")
         .env("GIT_COMMITTER_NAME", "Test")
         .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .env("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE", "1")
         .env("GIT_REPO_WORKTREE_NO_OVERLAY", "1")
         .arg("-C")
         .arg(&client.root);

@@ -195,6 +195,7 @@ pub fn parse_snapshot(
             remote,
             upstream,
             populate_ms: None,
+            queue_ms: None,
         };
         let path_safe = path_is_safe_relative(Path::new(path));
         if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -301,6 +302,7 @@ pub fn parse_snapshot(
                 remote: declaration.and_then(|declaration| declaration.remote.clone()),
                 upstream: declaration.and_then(|declaration| declaration.upstream.clone()),
                 populate_ms: None,
+                queue_ms: None,
             });
             if path_safe {
                 let Some(declaration) = declaration else {
@@ -661,6 +663,7 @@ fn resolve_git_common_dirs(
         .num_threads(jobs)
         .build()
         .map_err(|error| AppError::io("create manifest worker pool", error))?;
+    let step = std::time::Instant::now();
     let resolutions = pool.install(|| {
         candidates
             .par_iter()
@@ -696,6 +699,8 @@ fn resolve_git_common_dirs(
             }
         }
     }
+    crate::metrics::phase("snapshot-git-dirs", crate::metrics::elapsed_ms(step));
+    let step = std::time::Instant::now();
     let estimates = pool.install(|| {
         projects
             .par_iter()
@@ -709,6 +714,7 @@ fn resolve_git_common_dirs(
             })
             .collect::<Vec<_>>()
     });
+    crate::metrics::phase("snapshot-estimates", crate::metrics::elapsed_ms(step));
     for (index, estimate) in estimates {
         projects[index].est_bytes = estimate.map(|(bytes, _)| bytes);
         projects[index].est_files = estimate.map(|(_, files)| files);
@@ -721,6 +727,20 @@ fn estimate_tracked_bytes(git_common_dir: &Path, sha: &str) -> Option<(u64, u64)
     let output = Command::new("git")
         .arg(format!("--git-dir={}", git_common_dir.display()))
         .args(["ls-tree", "-rlz", sha])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| parse_tracked_bytes(&output.stdout))
+}
+
+/// Total size and number of tracked blobs at a checkout's `HEAD`.
+pub fn estimate_checkout(checkout: &Path) -> Option<(u64, u64)> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["ls-tree", "-rlz", "HEAD"])
         .output()
         .ok()?;
     output

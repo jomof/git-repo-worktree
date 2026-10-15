@@ -217,6 +217,44 @@ pub fn environment(source_root: &Path, tree_root: &Path) -> Value {
     })
 }
 
+/// Load average and, on Linux, pressure stall averages (percent of time some
+/// or all tasks waited on CPU, I/O, or memory), so slow runs on a busy
+/// machine can be told apart from slow tools.
+pub fn system_load() -> Value {
+    let loadavg = fs::read_to_string("/proc/loadavg").ok().map(|text| {
+        text.split_whitespace()
+            .take(3)
+            .filter_map(|value| value.parse::<f64>().ok())
+            .collect::<Vec<_>>()
+    });
+    let mut pressure = Map::new();
+    for resource in ["cpu", "io", "memory"] {
+        let Ok(text) = fs::read_to_string(format!("/proc/pressure/{resource}")) else {
+            continue;
+        };
+        let mut lines = Map::new();
+        for line in text.lines() {
+            let mut fields = line.split_whitespace();
+            let Some(kind) = fields.next() else {
+                continue;
+            };
+            let averages = fields
+                .filter_map(|field| field.split_once('='))
+                .filter(|(name, _)| name.starts_with("avg"))
+                .filter_map(|(name, value)| {
+                    Some((name.to_string(), json!(value.parse::<f64>().ok()?)))
+                })
+                .collect::<Map<_, _>>();
+            lines.insert(kind.to_string(), Value::Object(averages));
+        }
+        pressure.insert(resource.to_string(), Value::Object(lines));
+    }
+    json!({
+        "loadavg": loadavg,
+        "pressure": (!pressure.is_empty()).then_some(Value::Object(pressure)),
+    })
+}
+
 /// The type of the filesystem containing `path`, from the mount table.
 pub fn filesystem_type(path: &Path) -> Option<String> {
     let path = fs::canonicalize(path).ok()?;

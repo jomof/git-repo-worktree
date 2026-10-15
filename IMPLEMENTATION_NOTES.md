@@ -116,3 +116,32 @@ machine interface deterministic:
   pinned manifest made `repo sync` a no-op. Creation still pins to the source's
   checked-out commits; the snapshot remains the tool's record for resume and
   repair.
+
+## Round 4 changes
+
+- Spares are kept only for projects a default `add` would take from the pool,
+  judged with current defaults and the source checkout. Round 4 found 132 GB
+  of studio-main's 171 GB pool held by nine projects no `add` pooled: spares
+  returned from `--full` trees (whose prebuilts are worktrees and looked
+  poolable by checkout time alone), and spares `pool fill` kept topping up
+  because old trees without file counts fell back to the 500 MiB rule. The
+  rule's inputs are recorded beside each pool so it needs no registered tree.
+- Pool depth came only from `remove`, so "27 spares" meant one per pooled
+  project, and the second and third adds of a burst missed (40 s, 60 s versus
+  4.8 s). A detached `pool maintain` now refills to the pool size after `add`
+  and `remove`, at idle priority, filling every project to one spare before any
+  gets two. It runs `nice`/`ionice` as programs rather than calling
+  `setpriority`/`ioprio_set` to avoid a libc dependency; `ionice -t` keeps a
+  refused priority change from stopping the run. A disk reserve (10%, at most
+  50 GB) keeps background refills from filling the disk unasked.
+- AOSP adds stalled machine-wide (1,084 projects, 155–243 s at about one busy
+  CPU). Sampling showed the scheduler thread sometimes blocked in ext4 journal
+  commits and, in about a third of samples, only 1–4 git children running
+  while hundreds of projects were ready. The scheduler now starts independent
+  projects before syncing each 10 ms batch and rewrites `meta.json` (hundreds
+  of kilobytes for AOSP, previously after every batch) at most once a second. The
+  root cause is outside the tool; `queue_ms`, the `snapshot-*` and
+  `projects-journal-sync` phases, and load and pressure snapshots in history
+  are there to attribute it next time.
+- `remove` prunes only Git directories that may hold stale registrations
+  (overlay projects, failed `git worktree remove`), not every project's.

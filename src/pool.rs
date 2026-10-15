@@ -4,34 +4,59 @@
 //! `.repo/repo-worktrees/.pool/<project>/`. `add` moves a spare into the new
 //! tree with `git worktree move` and checks out the pinned commit, which only
 //! rewrites files that differ. `remove` returns clean projects to the pool
-//! instead of deleting them.
+//! instead of deleting them. After either, a detached low-priority
+//! `pool maintain` deletes spares no default `add` would use and refills the
+//! rest up to the pool size.
 
 use crate::bridge;
 use crate::cli::PoolCommand;
 use crate::defaults;
 use crate::discovery::discover_client;
 use crate::error::{AppError, AppResult};
-use crate::registry::{acquire, load_all, with_registry_lock, Held, LockMode};
+use crate::model::{
+    estimated_checkout_ms, ProjectMeta, TreeMeta, MODE_WORKTREE, POOL_MIN_ESTIMATED_MS,
+};
+use crate::registry::{acquire, load_all, registry_path, try_acquire, Held};
 use crate::resolve::resolve_projects;
-use crate::util::{default_jobs, exit_reason};
+use crate::util::{default_jobs, exit_reason, write_atomic};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub const STRATEGY: &str = "pool";
 pub const DIR_NAME: &str = ".pool";
 const FILLING_PREFIX: &str = ".filling-";
+const MAINTAIN_LOCK: &str = ".maintain.lock";
+/// Disables the background `pool maintain` that follows `add` and `remove`.
+pub const NO_MAINTENANCE_ENV: &str = "GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE";
+/// Maintenance re-plans after each round so returns and takes made while it
+/// runs are seen; this bounds how long one run keeps going.
+const MAINTENANCE_ROUNDS: usize = 5;
+/// Background refills leave this share of the filesystem free, capped at
+/// [`RESERVED_FREE_MAX_BYTES`] so large disks are not held back.
+const RESERVED_FREE_PERCENT: u64 = 10;
+const RESERVED_FREE_MAX_BYTES: u64 = 50_000_000_000;
 
 fn project_dir(registry: &Path, project_path: &str) -> PathBuf {
     registry
         .join(DIR_NAME)
         .join(project_path.replace('%', "%25").replace('/', "%2F"))
+}
+
+fn facts_path(registry: &Path, project_path: &str) -> PathBuf {
+    let mut name = project_dir(registry, project_path).into_os_string();
+    name.push(".json");
+    PathBuf::from(name)
 }
 
 fn slots(registry: &Path, project_path: &str) -> Vec<PathBuf> {
@@ -92,6 +117,222 @@ pub fn capacity(registry: &Path) -> usize {
         .ok()
         .and_then(|defaults| defaults.pool_spares)
         .unwrap_or(DEFAULT_SPARES)
+}
+
+/// What decides whether a project's spares serve future default adds,
+/// recorded beside its pool so the decision needs no registered tree.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectFacts {
+    pub est_files: u64,
+    pub est_bytes: u64,
+    /// The project is a fixed-depth clone, which a default `add` shares or
+    /// overlays from a clean source checkout instead of pooling.
+    pub shallow: bool,
+}
+
+impl ProjectFacts {
+    pub fn from_meta(project: &ProjectMeta) -> Option<Self> {
+        Some(Self {
+            est_files: project.est_files?,
+            est_bytes: project.est_bytes.unwrap_or(0),
+            shallow: project.clone_depth.is_some(),
+        })
+    }
+
+    /// Approximate disk one checkout occupies: content plus a block per file.
+    pub fn disk_bytes(&self) -> u64 {
+        self.est_bytes
+            .saturating_add(self.est_files.saturating_mul(4096))
+    }
+}
+
+fn read_facts(registry: &Path, project_path: &str) -> Option<ProjectFacts> {
+    serde_json::from_slice(&fs::read(facts_path(registry, project_path)).ok()?).ok()
+}
+
+fn record_facts(registry: &Path, project_path: &str, facts: &ProjectFacts) {
+    if let Ok(bytes) = serde_json::to_vec(facts) {
+        let _ = write_atomic(&facts_path(registry, project_path), &bytes, 0o644);
+    }
+}
+
+pub fn measure_facts(source: &Path, project_path: &str) -> Option<ProjectFacts> {
+    let checkout = source.join(project_path);
+    let (est_bytes, est_files) = crate::manifest::estimate_checkout(&checkout)?;
+    let shallow = Command::new("git")
+        .arg("-C")
+        .arg(&checkout)
+        .args(["rev-parse", "--is-shallow-repository"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "true");
+    Some(ProjectFacts {
+        est_files,
+        est_bytes,
+        shallow,
+    })
+}
+
+pub fn source_is_clean(checkout: &Path) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .output()
+        .is_ok_and(|output| output.status.success() && output.stdout.is_empty())
+}
+
+/// Source-client state the spare-keeping rule reads.
+pub struct PoolContext {
+    defaults: BTreeMap<String, String>,
+    active: Option<HashSet<String>>,
+    sharing_disabled: bool,
+}
+
+impl PoolContext {
+    pub fn load(source: &Path, registry: &Path, sharing_disabled: bool) -> Self {
+        Self {
+            defaults: defaults::load(registry)
+                .map(|defaults| defaults.projects)
+                .unwrap_or_default(),
+            active: active_projects(source)
+                .ok()
+                .map(|projects| projects.into_iter().collect()),
+            sharing_disabled,
+        }
+    }
+}
+
+/// Whether a default `add` disables sharing because every active project of
+/// the tree's client has a fixed clone depth.
+pub fn sharing_disabled(meta: &TreeMeta) -> bool {
+    let mut active = meta
+        .projects
+        .iter()
+        .filter(|project| project.state != "skipped")
+        .peekable();
+    active.peek().is_some() && active.all(|project| project.clone_depth.is_some())
+}
+
+/// Why a default `add` would never take a spare of `project`, or `None` when
+/// it would. `source_is_clean` is consulted only for fixed-depth projects,
+/// which a default `add` pools only when their source checkout is too dirty
+/// to share.
+pub fn orphan_reason(
+    project: &str,
+    facts: Option<&ProjectFacts>,
+    context: &PoolContext,
+    source_is_clean: impl FnOnce() -> bool,
+) -> Option<String> {
+    if context
+        .active
+        .as_ref()
+        .is_some_and(|active| !active.contains(project))
+    {
+        return Some("not an active project".into());
+    }
+    match context.defaults.get(project).map(String::as_str) {
+        Some("pool") => return None,
+        Some(mode) => return Some(format!("its default is {mode}")),
+        None => {}
+    }
+    let Some(facts) = facts else {
+        return Some("its source checkout is missing".into());
+    };
+    let estimated = estimated_checkout_ms(facts.est_files, facts.est_bytes);
+    if estimated < POOL_MIN_ESTIMATED_MS {
+        return Some(format!("quick to check out (about {estimated} ms)"));
+    }
+    if facts.shallow && !context.sharing_disabled && source_is_clean() {
+        return Some("shared or overlaid from its clean source checkout".into());
+    }
+    None
+}
+
+struct Orphan {
+    project: String,
+    reason: String,
+    facts: Option<ProjectFacts>,
+}
+
+/// Which projects the pool should hold spares for, and which pooled projects
+/// it should not.
+struct Plan {
+    kept: Vec<(String, ProjectFacts)>,
+    orphaned: Vec<Orphan>,
+}
+
+fn plan(source: &Path, registry: &Path) -> AppResult<Plan> {
+    let trees = load_all(registry)?;
+    let pooled = pooled_projects(registry)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let mut candidates = pooled.iter().cloned().collect::<BTreeSet<_>>();
+    let mut known = HashMap::new();
+    for tree in &trees {
+        for project in &tree.projects {
+            if project.mode == MODE_WORKTREE && tree.uses_pool(project) {
+                candidates.insert(project.path.clone());
+            }
+            if let Some(facts) = ProjectFacts::from_meta(project) {
+                known.entry(project.path.clone()).or_insert(facts);
+            }
+        }
+    }
+    let context = PoolContext::load(
+        source,
+        registry,
+        trees
+            .iter()
+            .max_by(|left, right| left.created_at.cmp(&right.created_at))
+            .is_some_and(sharing_disabled),
+    );
+    candidates.extend(
+        context
+            .defaults
+            .iter()
+            .filter(|(_, mode)| *mode == "pool")
+            .map(|(project, _)| project.clone()),
+    );
+    let evaluated = candidates
+        .par_iter()
+        .map(|project| {
+            let facts = read_facts(registry, project).or_else(|| {
+                let facts = known
+                    .get(project)
+                    .copied()
+                    .or_else(|| measure_facts(source, project));
+                if let (Some(facts), true) = (&facts, pooled.contains(project)) {
+                    record_facts(registry, project, facts);
+                }
+                facts
+            });
+            let reason = orphan_reason(project, facts.as_ref(), &context, || {
+                source_is_clean(&source.join(project))
+            });
+            (project.clone(), facts, reason)
+        })
+        .collect::<Vec<_>>();
+    let mut plan = Plan {
+        kept: Vec::new(),
+        orphaned: Vec::new(),
+    };
+    for (project, facts, reason) in evaluated {
+        match (reason, facts) {
+            (None, Some(facts)) => plan.kept.push((project, facts)),
+            (Some(reason), facts) if pooled.contains(&project) => plan.orphaned.push(Orphan {
+                project,
+                reason,
+                facts,
+            }),
+            _ => {}
+        }
+    }
+    plan.kept.sort_by_key(|(_, facts)| {
+        std::cmp::Reverse(estimated_checkout_ms(facts.est_files, facts.est_bytes))
+    });
+    Ok(plan)
 }
 
 /// Serializes spare claims and returns for one project across processes.
@@ -178,6 +419,7 @@ pub fn give_back(
     git_common_dir: &str,
     checkout: &Path,
     capacity: usize,
+    facts: Option<&ProjectFacts>,
 ) -> Result<bool, String> {
     let _held = lock_project(registry, project_path)?;
     if slots(registry, project_path).len() >= capacity {
@@ -188,6 +430,9 @@ pub fn give_back(
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     if !same_device(&directory, checkout) {
         return Ok(false);
+    }
+    if let Some(facts) = facts {
+        record_facts(registry, project_path, facts);
     }
     let dot_git = checkout.join(".git");
     let link = bridge::to_gitfile(&dot_git)?;
@@ -322,47 +567,41 @@ fn select(
         })
 }
 
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) -> AppResult<Value> {
     let client = discover_client(cwd, true)?;
     let source = client.root.clone();
+    let registry = registry_path(&source);
     match command {
-        PoolCommand::List => with_registry_lock(&source, LockMode::Shared, false, |registry| {
-            let spares = pooled_projects(registry)
-                .into_iter()
-                .flat_map(|project| {
-                    slots(registry, &project)
-                        .into_iter()
-                        .map(move |slot| (project.clone(), slot))
-                })
-                .map(|(project, slot)| {
-                    json!({"project": project, "path": slot, "head": slot_head(&slot)})
-                })
-                .collect::<Vec<_>>();
-            if !json_output {
-                for spare in &spares {
-                    println!(
-                        "{}  {}  {}",
-                        spare["project"].as_str().unwrap_or(""),
-                        spare["head"].as_str().unwrap_or("-"),
-                        spare["path"].as_str().unwrap_or("")
-                    );
-                }
-                if spares.is_empty() {
-                    println!("no spare worktrees");
-                }
-            }
-            Ok(json!({"spares": spares}))
-        }),
+        PoolCommand::List => list(&source, &registry, json_output),
         PoolCommand::Size(args) => {
-            let registry = crate::registry::registry_path(&source);
             if let Some(spares) = args.spares {
-                with_registry_lock(&source, LockMode::Exclusive, true, |registry| {
-                    let mut defaults = defaults::load(registry)?;
-                    defaults.pool_spares = Some(spares);
-                    let bytes = serde_json::to_vec_pretty(&defaults)
-                        .map_err(|error| AppError::io("serialize defaults.json", error))?;
-                    crate::util::write_atomic(&defaults::path(registry), &bytes, 0o644)
-                })?;
+                crate::registry::with_registry_lock(
+                    &source,
+                    crate::registry::LockMode::Exclusive,
+                    true,
+                    |registry| {
+                        let mut defaults = defaults::load(registry)?;
+                        defaults.pool_spares = Some(spares);
+                        let bytes = serde_json::to_vec_pretty(&defaults)
+                            .map_err(|error| AppError::io("serialize defaults.json", error))?;
+                        write_atomic(&defaults::path(registry), &bytes, 0o644)
+                    },
+                )?;
             }
             let spares = capacity(&registry);
             if !json_output {
@@ -371,27 +610,15 @@ pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) ->
             Ok(json!({"spares": spares, "default": DEFAULT_SPARES}))
         }
         PoolCommand::Fill(args) => {
-            let registry = crate::registry::registry_path(&source);
-            let mut pooled = defaults::load(&registry)?
-                .projects
-                .into_iter()
-                .filter(|(_, mode)| mode == "pool")
-                .map(|(project, _)| project)
-                .collect::<Vec<_>>();
-            pooled.extend(pooled_projects(&registry));
-            for tree in load_all(&registry)? {
-                pooled.extend(
-                    tree.projects
-                        .iter()
-                        .filter(|project| {
-                            project.mode == crate::model::MODE_WORKTREE && tree.uses_pool(project)
-                        })
-                        .map(|project| project.path.clone()),
-                );
-            }
-            pooled.sort();
-            pooled.dedup();
-            let projects = select(&source, cwd, &args.projects, pooled)?;
+            let projects = if args.projects.is_empty() {
+                plan(&source, &registry)?
+                    .kept
+                    .into_iter()
+                    .map(|(project, _)| project)
+                    .collect()
+            } else {
+                select(&source, cwd, &args.projects, Vec::new())?
+            };
             if projects.is_empty() {
                 return Err(AppError::operational(
                     "E_NO_POOL_PROJECTS",
@@ -413,8 +640,8 @@ pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) ->
             let created = pool.install(|| {
                 work.par_iter()
                     .map(|project| {
-                        let started = std::time::Instant::now();
-                        let result = fill_one(&source, &registry, project);
+                        let started = Instant::now();
+                        let result = fill_one(&source, &registry, project, false, None);
                         crate::metrics::push(
                             "spares",
                             json!({
@@ -431,7 +658,8 @@ pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) ->
             let mut failed = Vec::new();
             for (project, result) in work.iter().zip(created) {
                 match result {
-                    Ok(slot) => filled.push(json!({"project": project, "path": slot})),
+                    Ok(Some(slot)) => filled.push(json!({"project": project, "path": slot})),
+                    Ok(None) => {}
                     Err(reason) => {
                         if !quiet {
                             eprintln!("warning: pool fill {project} failed: {reason}");
@@ -451,47 +679,388 @@ pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) ->
             }
         }
         PoolCommand::Clear(args) => {
-            with_registry_lock(&source, LockMode::Shared, false, |registry| {
-                let projects = select(&source, cwd, &args.projects, pooled_projects(registry))?;
-                let mut cleared = Vec::new();
-                for project in projects {
-                    let _held = lock_project(registry, &project)
-                        .map_err(|reason| AppError::locked("E_LOCKED", reason))?;
-                    let directory = project_dir(registry, &project);
-                    let Ok(common) = common_dir(&source, &project) else {
-                        let _ = fs::remove_dir_all(&directory);
-                        continue;
-                    };
-                    let entries = fs::read_dir(&directory)
-                        .map(|entries| {
-                            entries
-                                .filter_map(Result::ok)
-                                .map(|entry| entry.path())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    for slot in entries {
-                        remove_slot(&common, &slot)
-                            .map_err(|reason| AppError::operational("E_IO", reason))?;
-                        cleared.push(json!({"project": project, "path": slot}));
-                    }
-                    let _ = fs::remove_dir(&directory);
+            let fallback = if args.orphaned {
+                plan(&source, &registry)?
+                    .orphaned
+                    .into_iter()
+                    .map(|orphan| orphan.project)
+                    .collect::<Vec<_>>()
+            } else {
+                pooled_projects(&registry)
+            };
+            let projects = if args.orphaned && !args.projects.is_empty() {
+                let allowed = fallback.iter().collect::<HashSet<_>>();
+                select(&source, cwd, &args.projects, Vec::new())?
+                    .into_iter()
+                    .filter(|project| allowed.contains(project))
+                    .collect()
+            } else {
+                select(&source, cwd, &args.projects, fallback)?
+            };
+            let mut cleared = Vec::new();
+            for project in projects {
+                for slot in clear_project(&source, &registry, &project)? {
+                    cleared.push(json!({"project": project, "path": slot}));
                 }
-                if !quiet {
-                    eprintln!("removed {} spare worktree(s)", cleared.len());
-                }
-                Ok(json!({"cleared": cleared}))
-            })
+            }
+            if !quiet {
+                eprintln!("removed {} spare worktree(s)", cleared.len());
+            }
+            Ok(json!({"cleared": cleared}))
         }
+        PoolCommand::Maintain => maintain(&source, &registry),
     }
 }
 
-/// Builds a spare outside the registry lock, then publishes it under the lock.
-fn fill_one(source: &Path, registry: &Path, project: &str) -> Result<PathBuf, String> {
+fn list(source: &Path, registry: &Path, json_output: bool) -> AppResult<Value> {
+    let plan = plan(source, registry)?;
+    let capacity = capacity(registry);
+    let orphaned = plan
+        .orphaned
+        .iter()
+        .map(|orphan| orphan.project.as_str())
+        .collect::<HashSet<_>>();
+    let spares = pooled_projects(registry)
+        .into_iter()
+        .flat_map(|project| {
+            slots(registry, &project)
+                .into_iter()
+                .map(move |slot| (project.clone(), slot))
+        })
+        .map(|(project, slot)| {
+            json!({
+                "project": project,
+                "path": slot,
+                "head": slot_head(&slot),
+                "orphaned": orphaned.contains(project.as_str()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut projects = Vec::new();
+    for (project, facts) in &plan.kept {
+        projects.push(json!({
+            "project": project,
+            "spares": slots(registry, project).len(),
+            "bytes_per_spare": facts.disk_bytes(),
+            "orphaned": null,
+        }));
+    }
+    let mut orphaned_spares = 0;
+    let mut orphaned_bytes = 0u64;
+    for orphan in &plan.orphaned {
+        let count = slots(registry, &orphan.project).len();
+        let bytes = orphan.facts.map(|facts| facts.disk_bytes());
+        orphaned_spares += count;
+        orphaned_bytes =
+            orphaned_bytes.saturating_add(bytes.unwrap_or(0).saturating_mul(count as u64));
+        projects.push(json!({
+            "project": orphan.project,
+            "spares": count,
+            "bytes_per_spare": bytes,
+            "orphaned": orphan.reason,
+        }));
+    }
+    let depth = plan
+        .kept
+        .iter()
+        .map(|(project, _)| slots(registry, project).len())
+        .min();
+    if !json_output {
+        for project in &projects {
+            let count = project["spares"].as_u64().unwrap_or(0);
+            let size = project["bytes_per_spare"]
+                .as_u64()
+                .map(|bytes| format!("  about {} each", human_bytes(bytes)))
+                .unwrap_or_default();
+            let orphan = project["orphaned"]
+                .as_str()
+                .map(|reason| format!("  orphaned: {reason}"))
+                .unwrap_or_default();
+            println!(
+                "{}  {count} spare(s){size}{orphan}",
+                project["project"].as_str().unwrap_or("")
+            );
+        }
+        match depth {
+            Some(depth) => println!(
+                "depth {depth} of {capacity}: the next {depth} add(s) can take every pooled project from the pool"
+            ),
+            None => println!("no pooled projects"),
+        }
+        if orphaned_spares > 0 {
+            println!(
+                "{orphaned_spares} orphaned spare(s), about {}: no default add uses them; `pool clear --orphaned` deletes them",
+                human_bytes(orphaned_bytes)
+            );
+        }
+    }
+    Ok(json!({
+        "spares": spares,
+        "projects": projects,
+        "capacity": capacity,
+        "depth": depth,
+        "orphaned_spares": orphaned_spares,
+        "orphaned_bytes": orphaned_bytes,
+    }))
+}
+
+/// Deletes every spare of `project` and its pool directory.
+fn clear_project(source: &Path, registry: &Path, project: &str) -> AppResult<Vec<PathBuf>> {
+    let _held =
+        lock_project(registry, project).map_err(|reason| AppError::locked("E_LOCKED", reason))?;
+    let directory = project_dir(registry, project);
+    let entries = fs::read_dir(&directory)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut cleared = Vec::new();
+    match common_dir(source, project) {
+        Ok(common) => {
+            for slot in entries {
+                remove_slot(&common, &slot)
+                    .map_err(|reason| AppError::operational("E_IO", reason))?;
+                cleared.push(slot);
+            }
+        }
+        Err(_) => {
+            cleared.extend(entries);
+            let _ = fs::remove_dir_all(&directory);
+        }
+    }
+    let _ = fs::remove_dir(&directory);
+    let _ = fs::remove_file(facts_path(registry, project));
+    Ok(cleared)
+}
+
+/// Removes spares beyond `capacity`, newest first.
+fn trim_project(source: &Path, registry: &Path, project: &str, capacity: usize) -> usize {
+    let Ok(_held) = lock_project(registry, project) else {
+        return 0;
+    };
+    let current = slots(registry, project);
+    if current.len() <= capacity {
+        return 0;
+    }
+    let Ok(common) = common_dir(source, project) else {
+        return 0;
+    };
+    current
+        .iter()
+        .rev()
+        .take(current.len() - capacity)
+        .filter(|slot| remove_slot(&common, slot).is_ok())
+        .count()
+}
+
+/// Whether the filesystem holding the pool can take `bytes` more and keep
+/// its reserve free.
+fn has_room(directory: &Path, bytes: u64) -> bool {
+    let Ok(output) = Command::new("df").arg("-Pk").arg(directory).output() else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let Some(fields) = text
+        .lines()
+        .nth(1)
+        .map(|line| line.split_whitespace().collect::<Vec<_>>())
+    else {
+        return false;
+    };
+    let (Some(total), Some(available)) = (
+        fields.get(1).and_then(|value| value.parse::<u64>().ok()),
+        fields.get(3).and_then(|value| value.parse::<u64>().ok()),
+    ) else {
+        return false;
+    };
+    let reserve = std::env::var("GRW_TEST_POOL_RESERVE_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            (total.saturating_mul(1024) / 100 * RESERVED_FREE_PERCENT).min(RESERVED_FREE_MAX_BYTES)
+        });
+    available.saturating_mul(1024).saturating_sub(bytes) >= reserve
+}
+
+/// Deletes orphaned spares, trims pools above the pool size, and refills the
+/// rest one spare at a time, shallowest pool first. Exits at once when
+/// another maintenance run holds the lock.
+fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
+    let directory = registry.join(DIR_NAME);
+    if !registry.is_dir() {
+        return Ok(json!({"skipped": "no registry"}));
+    }
+    fs::create_dir_all(&directory)
+        .map_err(|error| AppError::io(format!("create {}", directory.display()), error))?;
+    let Some(_held) = try_acquire(&directory.join(MAINTAIN_LOCK), "pool maintenance")? else {
+        crate::metrics::record("skipped", json!("another maintenance run is active"));
+        return Ok(json!({"skipped": "another maintenance run is active"}));
+    };
+    crate::metrics::record("system_start", crate::metrics::system_load());
+    let capacity = capacity(registry);
+    let mut reaped = Vec::new();
+    let mut trimmed = Vec::new();
+    let mut filled = Vec::new();
+    let mut failed = Vec::new();
+    let mut deferred = BTreeSet::new();
+    for _ in 0..MAINTENANCE_ROUNDS {
+        if crate::INTERRUPTED.load(Ordering::SeqCst) {
+            break;
+        }
+        let mut worked = false;
+        let step = Instant::now();
+        let plan = plan(source, registry)?;
+        crate::metrics::phase("plan", crate::metrics::elapsed_ms(step));
+        let step = Instant::now();
+        for orphan in &plan.orphaned {
+            let cleared = clear_project(source, registry, &orphan.project)?;
+            if !cleared.is_empty() {
+                worked = true;
+                reaped.push(json!({
+                    "project": orphan.project,
+                    "spares": cleared.len(),
+                    "reason": orphan.reason,
+                    "bytes": orphan.facts.map(|facts| facts.disk_bytes().saturating_mul(cleared.len() as u64)),
+                }));
+            }
+        }
+        for (project, _) in &plan.kept {
+            let removed = trim_project(source, registry, project, capacity);
+            if removed > 0 {
+                worked = true;
+                trimmed.push(json!({"project": project, "spares": removed}));
+            }
+        }
+        crate::metrics::phase("reap", crate::metrics::elapsed_ms(step));
+        let step = Instant::now();
+        let mut blocked = HashSet::new();
+        for level in 1..=capacity {
+            for (project, facts) in &plan.kept {
+                if blocked.contains(project) || slots(registry, project).len() >= level {
+                    continue;
+                }
+                if crate::INTERRUPTED.load(Ordering::SeqCst) {
+                    break;
+                }
+                if !has_room(&directory, facts.disk_bytes()) {
+                    deferred.insert(project.clone());
+                    blocked.insert(project.clone());
+                    continue;
+                }
+                let started = Instant::now();
+                match fill_one(source, registry, project, true, Some(capacity)) {
+                    Ok(Some(_)) => {
+                        worked = true;
+                        filled.push(json!({
+                            "project": project,
+                            "ms": crate::metrics::elapsed_ms(started),
+                        }));
+                    }
+                    Ok(None) => {}
+                    Err(reason) => {
+                        blocked.insert(project.clone());
+                        failed.push(json!({"project": project, "reason": reason}));
+                    }
+                }
+            }
+        }
+        crate::metrics::phase("fill", crate::metrics::elapsed_ms(step));
+        if !worked {
+            break;
+        }
+    }
+    let deferred = deferred.into_iter().collect::<Vec<_>>();
+    crate::metrics::record("reaped", json!(reaped));
+    crate::metrics::record("trimmed", json!(trimmed));
+    crate::metrics::record("filled", json!(filled));
+    crate::metrics::record("failed", json!(failed));
+    crate::metrics::record("deferred", json!(deferred));
+    crate::metrics::record("system_end", crate::metrics::system_load());
+    Ok(json!({
+        "reaped": reaped,
+        "trimmed": trimmed,
+        "filled": filled,
+        "failed": failed,
+        "deferred": deferred,
+    }))
+}
+
+pub fn maintenance_disabled() -> bool {
+    std::env::var(NO_MAINTENANCE_ENV).is_ok_and(|value| !value.is_empty() && value != "0")
+}
+
+fn find_program(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Starts `pool maintain` detached, at idle I/O and lowest CPU priority, so
+/// spares are reaped and refilled after the calling command has returned.
+pub fn spawn_maintenance(source: &Path) -> bool {
+    if maintenance_disabled() {
+        return false;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+    let mut argv: Vec<OsString> = Vec::new();
+    if let Some(ionice) = find_program("ionice") {
+        argv.extend([ionice.into(), "-c".into(), "3".into(), "-t".into()]);
+    }
+    if let Some(nice) = find_program("nice") {
+        argv.extend([nice.into(), "-n".into(), "19".into()]);
+    }
+    argv.push(executable.into());
+    argv.extend([
+        "-C".into(),
+        source.as_os_str().to_owned(),
+        "-q".into(),
+        "pool".into(),
+        "maintain".into(),
+    ]);
+    Command::new(&argv[0])
+        .args(&argv[1..])
+        .current_dir(source)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .is_ok()
+}
+
+/// Whether a tree's pool may need attention once the command finishes.
+pub fn maintenance_wanted(meta: &TreeMeta) -> bool {
+    registry_path(&meta.source()).join(DIR_NAME).is_dir()
+        || meta
+            .projects
+            .iter()
+            .any(|project| project.mode == MODE_WORKTREE && meta.uses_pool(project))
+}
+
+/// Builds a spare outside the project lock, then publishes it under the lock.
+/// With `capacity`, a spare that would overfill the pool is discarded and
+/// `Ok(None)` returned. `background` checks out with fewer workers.
+fn fill_one(
+    source: &Path,
+    registry: &Path,
+    project: &str,
+    background: bool,
+    capacity: Option<usize>,
+) -> Result<Option<PathBuf>, String> {
     let common = common_dir(source, project)?;
     let directory = project_dir(registry, project);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    if read_facts(registry, project).is_none() {
+        if let Some(facts) = measure_facts(source, project) {
+            record_facts(registry, project, &facts);
+        }
+    }
     let name = unique_name();
     let staging = directory.join(format!("{FILLING_PREFIX}{name}"));
     let output = Command::new("git")
@@ -499,7 +1068,11 @@ fn fill_one(source: &Path, registry: &Path, project: &str) -> Result<PathBuf, St
         .arg(source.join(project))
         .args([
             "-c",
-            "checkout.workers=8",
+            if background {
+                "checkout.workers=2"
+            } else {
+                "checkout.workers=8"
+            },
             "-c",
             "checkout.thresholdForParallelism=100",
             "worktree",
@@ -515,13 +1088,114 @@ fn fill_one(source: &Path, registry: &Path, project: &str) -> Result<PathBuf, St
         return Err(exit_reason(&output));
     }
     let slot = directory.join(&name);
-    let published = lock_project(registry, project)
-        .and_then(|_held| git_worktree_move(&common, &staging, &slot));
+    let published = match lock_project(registry, project) {
+        Ok(_held) => {
+            if capacity.is_some_and(|capacity| slots(registry, project).len() >= capacity) {
+                Err(None)
+            } else {
+                git_worktree_move(&common, &staging, &slot).map_err(Some)
+            }
+        }
+        Err(error) => Err(Some(error)),
+    };
     match published {
-        Ok(()) => Ok(slot),
+        Ok(()) => Ok(Some(slot)),
         Err(error) => {
             let _ = remove_slot(&common, &staging);
-            Err(error)
+            error.map_or(Ok(None), Err)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(defaults: &[(&str, &str)], active: &[&str]) -> PoolContext {
+        PoolContext {
+            defaults: defaults
+                .iter()
+                .map(|(project, mode)| (project.to_string(), mode.to_string()))
+                .collect(),
+            active: Some(active.iter().map(|project| project.to_string()).collect()),
+            sharing_disabled: false,
+        }
+    }
+
+    fn facts(est_files: u64, est_bytes: u64, shallow: bool) -> ProjectFacts {
+        ProjectFacts {
+            est_files,
+            est_bytes,
+            shallow,
+        }
+    }
+
+    #[test]
+    fn spares_are_kept_only_for_projects_a_default_add_pools() {
+        let all = [
+            "tools/idea",
+            "prebuilts/tools",
+            "external/dexter",
+            "sdk/linux",
+            "small",
+        ];
+        let context = context(&[("small", "pool"), ("tools/base", "worktree")], &all);
+        let idea = facts(274_366, 982_000_000, false);
+        let prebuilt = facts(40_000, 26_800_000_000, true);
+        let dexter = facts(183, 666_000_000, false);
+        assert_eq!(
+            orphan_reason("tools/idea", Some(&idea), &context, || true),
+            None
+        );
+        assert_eq!(
+            orphan_reason("prebuilts/tools", Some(&prebuilt), &context, || true).as_deref(),
+            Some("shared or overlaid from its clean source checkout")
+        );
+        assert_eq!(
+            orphan_reason("sdk/linux", Some(&prebuilt), &context, || false),
+            None
+        );
+        assert!(
+            orphan_reason("external/dexter", Some(&dexter), &context, || true)
+                .unwrap()
+                .starts_with("quick to check out")
+        );
+        assert_eq!(
+            orphan_reason("small", Some(&facts(1, 1, true)), &context, || true),
+            None
+        );
+        assert_eq!(
+            orphan_reason("tools/base", Some(&idea), &context, || true).as_deref(),
+            Some("not an active project")
+        );
+        let mut shallow_client = context;
+        shallow_client.sharing_disabled = true;
+        assert_eq!(
+            orphan_reason("prebuilts/tools", Some(&prebuilt), &shallow_client, || true),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_non_pool_defaults_orphan_spares() {
+        let context = context(&[("tools/idea", "worktree")], &["tools/idea"]);
+        assert_eq!(
+            orphan_reason(
+                "tools/idea",
+                Some(&facts(274_366, 982_000_000, false)),
+                &context,
+                || true
+            )
+            .as_deref(),
+            Some("its default is worktree")
+        );
+    }
+
+    #[test]
+    fn disk_estimate_counts_a_block_per_file() {
+        assert_eq!(
+            facts(274_366, 982_000_000, false).disk_bytes(),
+            2_105_803_136
+        );
     }
 }

@@ -260,7 +260,7 @@ git repo-worktree list --json
 git repo-worktree lock --reason "keep for release diffing" <tree>
 git repo-worktree move <tree> <new-path>        # same filesystem only
 git repo-worktree defaults list --json
-git repo-worktree pool list --json             # alias: pool status
+git repo-worktree pool list --json             # alias: pool status; depth and orphaned spares
 git repo-worktree repair [<tree>...]            # registrations, links, directives, overlays, .repo bridge
 ```
 

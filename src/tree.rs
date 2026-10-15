@@ -42,6 +42,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const JOURNAL_BATCH_WINDOW: Duration = Duration::from_millis(10);
+/// During population, meta.json is rewritten at most this often; the journal,
+/// synced per batch, is what resume trusts for project progress.
+const META_WRITE_INTERVAL: Duration = Duration::from_secs(1);
+const REFLINK_UNSUPPORTED: &str = "reflink unsupported for filesystem pair";
+const REFLINK_DISABLED: &str = "reflink disabled";
 const CHECKOUT_WORKERS_CONFIG: &str = "checkout.workers=8";
 const CHECKOUT_THRESHOLD_CONFIG: &str = "checkout.thresholdForParallelism=100";
 
@@ -106,6 +111,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
     })?;
     check_git_version()?;
     let client = discover_client(cwd, false)?;
+    crate::metrics::record("system_start", crate::metrics::system_load());
     if args.resume {
         return with_tree_lock(&client.root, selector, cwd, quiet, |_registry, mut meta| {
             let resume_started = Instant::now();
@@ -255,6 +261,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         let snapshot_started = Instant::now();
         phase_start(quiet, verbose, "snapshot");
         let snapshot = entry.join("snapshot.xml");
+        let step = Instant::now();
         let output = match Command::new("repo")
             .current_dir(&client.root)
             .args(["manifest", "-r", "-o"])
@@ -270,6 +277,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 ));
             }
         };
+        crate::metrics::phase("snapshot-repo-manifest", crate::metrics::elapsed_ms(step));
         if !output.status.success() {
             let error = crate::manifest::snapshot_command_failure(&output);
             let _ = fs::remove_dir_all(&entry);
@@ -295,6 +303,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                     .map(|mode| (project.path.clone(), mode.clone()))
             })
             .collect();
+        let step = Instant::now();
         if let Err(error) = configure_population_modes(
             &mut meta,
             &parsed.malformed_clone_depth,
@@ -306,6 +315,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             let _ = fs::remove_dir_all(&entry);
             return Err(error);
         }
+        crate::metrics::phase("snapshot-preflight", crate::metrics::elapsed_ms(step));
         append_journal(&entry, "pin", "done", None, None, None)?;
         write_meta(&meta)?;
         phase_done(
@@ -733,6 +743,9 @@ fn run_add_phases(
     }
     phase_done(quiet, verbose, "total", operation_started, None);
     record_tree_metrics(meta);
+    if pool::maintenance_wanted(meta) && pool::spawn_maintenance(&meta.source()) {
+        crate::metrics::record("pool_maintenance", json!("started"));
+    }
     let result = tree_json(meta, verbose);
     if meta.state == "incomplete" {
         Err(AppError::partial(result))
@@ -754,6 +767,7 @@ fn record_tree_metrics(meta: &TreeMeta) {
                 "strategy": project.strategy,
                 "state": project.state,
                 "ms": project.populate_ms,
+                "queue_ms": project.queue_ms,
                 "bytes": project.est_bytes,
                 "pooled": project.mode == MODE_WORKTREE && meta.uses_pool(project),
                 "reason": project.reason,
@@ -772,6 +786,7 @@ fn record_tree_metrics(meta: &TreeMeta) {
         "environment",
         crate::metrics::environment(&meta.source(), &meta.root()),
     );
+    crate::metrics::record("system_end", crate::metrics::system_load());
 }
 
 #[derive(Debug)]
@@ -863,6 +878,62 @@ struct ReflinkState {
     unsupported_pairs: Mutex<HashSet<(u64, u64)>>,
 }
 
+type Completion = (usize, Result<ProjectOutcome, String>, u64);
+
+/// Starts ready projects on the worker pool while it has free slots.
+struct Dispatcher<'a> {
+    pool: &'a rayon::ThreadPool,
+    source: &'a Path,
+    destination: &'a Path,
+    no_reflink: bool,
+    jobs: usize,
+    heavy_jobs: usize,
+    sender: &'a mpsc::Sender<Completion>,
+    reflink_state: &'a Arc<ReflinkState>,
+    running: usize,
+    running_heavy: usize,
+}
+
+impl Dispatcher<'_> {
+    fn fill(
+        &mut self,
+        meta: &TreeMeta,
+        ready: &mut Vec<usize>,
+        ready_at: &[Option<Instant>],
+        queue_ms: &mut [Option<u64>],
+    ) {
+        while self.running < self.jobs {
+            let Some(index) =
+                pop_next_ready(ready, &meta.projects, self.running_heavy < self.heavy_jobs)
+            else {
+                break;
+            };
+            queue_ms[index] = ready_at[index].map(crate::metrics::elapsed_ms);
+            let project = meta.projects[index].clone();
+            let context = PopulateContext {
+                source_root: self.source.to_path_buf(),
+                destination: self.destination.to_path_buf(),
+                entry: meta.registry_entry(),
+                branch: meta.branch_for(&project.path).map(str::to_owned),
+                no_reflink: self.no_reflink,
+                pool_registry: meta.uses_pool(&project).then(|| registry_path(self.source)),
+            };
+            let sender = self.sender.clone();
+            let reflink_state = Arc::clone(self.reflink_state);
+            self.pool.spawn(move || {
+                let started = Instant::now();
+                let result = process_project(&project, &context, &reflink_state);
+                let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                let _ = sender.send((index, result, elapsed));
+            });
+            self.running += 1;
+            if project_is_heavy(&meta.projects[index]) {
+                self.running_heavy += 1;
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_project_phase(
     meta: &mut TreeMeta,
@@ -884,8 +955,6 @@ fn run_project_phase(
     let total = meta.total_non_skipped();
     let mut settled = total.saturating_sub(work_count);
     let mut processed = 0usize;
-    let mut running = 0usize;
-    let mut running_heavy = 0usize;
     let mut stop = false;
     let mut completed_for_hook = 0usize;
     let reflink_state = Arc::new(ReflinkState::default());
@@ -893,40 +962,34 @@ fn run_project_phase(
         probe_reflink(source, destination, &meta.registry_entry(), &reflink_state);
     }
     let (sender, receiver) = mpsc::channel::<(usize, Result<ProjectOutcome, String>, u64)>();
+    let mut ready_at = vec![None; meta.projects.len()];
+    let phase_started = Instant::now();
+    for &index in &ready {
+        ready_at[index] = Some(phase_started);
+    }
+    let mut queue_ms = vec![None; meta.projects.len()];
+    let mut meta_written = Instant::now();
+    let mut dispatcher = Dispatcher {
+        pool,
+        source,
+        destination,
+        no_reflink,
+        jobs,
+        heavy_jobs,
+        sender: &sender,
+        reflink_state: &reflink_state,
+        running: 0,
+        running_heavy: 0,
+    };
 
     while processed < work_count {
         if INTERRUPTED.load(Ordering::SeqCst) {
             stop = true;
         }
-        while !stop && running < jobs {
-            let Some(index) =
-                pop_next_ready(&mut ready, &meta.projects, running_heavy < heavy_jobs)
-            else {
-                break;
-            };
-            let project = meta.projects[index].clone();
-            let context = PopulateContext {
-                source_root: source.to_path_buf(),
-                destination: destination.to_path_buf(),
-                entry: meta.registry_entry(),
-                branch: meta.branch_for(&project.path).map(str::to_owned),
-                no_reflink,
-                pool_registry: meta.uses_pool(&project).then(|| registry_path(source)),
-            };
-            let sender = sender.clone();
-            let reflink_state = Arc::clone(&reflink_state);
-            pool.spawn(move || {
-                let started = Instant::now();
-                let result = process_project(&project, &context, &reflink_state);
-                let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                let _ = sender.send((index, result, elapsed));
-            });
-            running += 1;
-            if project_is_heavy(&meta.projects[index]) {
-                running_heavy += 1;
-            }
+        if !stop {
+            dispatcher.fill(meta, &mut ready, &ready_at, &mut queue_ms);
         }
-        if running == 0 {
+        if dispatcher.running == 0 {
             break;
         }
 
@@ -935,7 +998,7 @@ fn run_project_phase(
             .map_err(|error| AppError::io("receive project completion from worker pool", error))?;
         let mut batch = vec![first];
         let deadline = Instant::now() + JOURNAL_BATCH_WINDOW;
-        while batch.len() < running {
+        while batch.len() < dispatcher.running {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 break;
@@ -951,11 +1014,17 @@ fn run_project_phase(
                 }
             }
         }
-        running -= batch.len();
-        running_heavy -= batch
+        dispatcher.running -= batch.len();
+        dispatcher.running_heavy -= batch
             .iter()
             .filter(|(index, _, _)| project_is_heavy(&meta.projects[*index]))
             .count();
+        if INTERRUPTED.load(Ordering::SeqCst) {
+            stop = true;
+        }
+        if !stop {
+            dispatcher.fill(meta, &mut ready, &ready_at, &mut queue_ms);
+        }
 
         let records = batch
             .iter()
@@ -987,12 +1056,15 @@ fn run_project_phase(
                 }
             })
             .collect::<Vec<_>>();
+        let synced = Instant::now();
         append_journal_batch(&meta.registry_entry(), &records)?;
+        crate::metrics::phase("projects-journal-sync", crate::metrics::elapsed_ms(synced));
 
         for (index, result, elapsed) in batch {
             processed += 1;
             settled += 1;
             let project_path = meta.projects[index].path.clone();
+            meta.projects[index].queue_ms = queue_ms[index];
             match result {
                 Ok(outcome) => {
                     meta.projects[index].state = "done".into();
@@ -1035,12 +1107,20 @@ fn run_project_phase(
                     }
                 }
             }
+            let now = Instant::now();
             for &child in &children[index] {
                 ready.push(child);
+                ready_at[child] = Some(now);
             }
         }
-        write_meta(meta)?;
+        if meta_written.elapsed() >= META_WRITE_INTERVAL || processed == work_count {
+            let written = Instant::now();
+            write_meta(meta)?;
+            crate::metrics::phase("projects-meta-write", crate::metrics::elapsed_ms(written));
+            meta_written = Instant::now();
+        }
     }
+    write_meta(meta)?;
 
     if !stop && processed != work_count {
         return Err(AppError::operational(
@@ -1197,7 +1277,7 @@ fn populate_project(
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
     let reflink_reason = if no_reflink {
-        Some("reflink disabled".into())
+        Some(REFLINK_DISABLED.into())
     } else {
         reflink_ineligibility(&source_checkout, destination, &project.sha, reflink_state)?
     };
@@ -1239,10 +1319,17 @@ fn populate_project(
             }
         }
     }
+    let note = reflink_reason.filter(|reason| {
+        let machine_wide = reason == REFLINK_UNSUPPORTED || reason == REFLINK_DISABLED;
+        if machine_wide {
+            crate::metrics::record("reflink", json!(reason));
+        }
+        !machine_wide
+    });
     ordinary_checkout(project, &source_checkout, &worktree, branch).map(|_| ProjectOutcome {
         mode: "worktree",
         strategy: Some("checkout"),
-        note: reflink_reason,
+        note,
     })
 }
 
@@ -1398,7 +1485,7 @@ fn reflink_ineligibility(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .contains(&pair);
     if unsupported {
-        return Ok(Some("reflink unsupported for filesystem pair".into()));
+        return Ok(Some(REFLINK_UNSUPPORTED.into()));
     }
     Ok(source_is_clean_at_sha(source_checkout, sha).err())
 }
@@ -2243,6 +2330,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             let mut clean_projects = None;
             crate::metrics::record("tree", json!(meta.name));
             crate::metrics::record("force", json!(args.force));
+            crate::metrics::record("system_start", crate::metrics::system_load());
             if meta.state != "removing" {
                 if args.force == 0 {
                     let inspect_started = Instant::now();
@@ -2345,6 +2433,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             let mut projects = meta.projects.clone();
             projects.sort_by_key(|project| std::cmp::Reverse(project_depth(&project.path)));
             let mut start = 0;
+            let mut unregistered = HashSet::new();
             while start < projects.len() {
                 let depth = project_depth(&projects[start].path);
                 let end = projects[start..]
@@ -2352,7 +2441,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     .position(|project| project_depth(&project.path) != depth)
                     .map(|offset| start + offset)
                     .unwrap_or(projects.len());
-                pool.install(|| {
+                let removed = pool.install(|| {
                     projects[start..end]
                         .par_iter()
                         .filter(|project| {
@@ -2360,7 +2449,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                                 && meta.root().join(&project.path).exists()
                                 && !project.git_common_dir.is_empty()
                         })
-                        .for_each(|project| {
+                        .filter_map(|project| {
                             let checkout = meta.root().join(&project.path);
                             let _ = bridge::to_gitfile(&checkout.join(".git"));
                             let mut command = Command::new("git");
@@ -2370,9 +2459,15 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                             if locked {
                                 command.arg("--force");
                             }
-                            let _ = command.arg(&checkout).output();
-                        });
+                            command
+                                .arg(&checkout)
+                                .output()
+                                .is_ok_and(|output| output.status.success())
+                                .then(|| project.path.clone())
+                        })
+                        .collect::<Vec<_>>()
                 });
+                unregistered.extend(removed);
                 start = end;
             }
             bridge::remove_manifests(&meta);
@@ -2390,9 +2485,15 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             let mut gitdirs = dedupe_paths(
                 meta.projects
                     .iter()
-                    .filter(|project| project.has_worktree() && !project.git_common_dir.is_empty())
+                    .filter(|project| {
+                        project.has_worktree()
+                            && !project.git_common_dir.is_empty()
+                            && !unregistered.contains(&project.path)
+                            && !returned.contains(&project.path)
+                    })
                     .map(|project| &project.git_common_dir),
             );
+            crate::metrics::record("pruned_git_dirs", json!(gitdirs.len()));
             if let Some(git_dir) = meta
                 .repo_bridge
                 .as_ref()
@@ -2413,6 +2514,13 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             if entry.exists() {
                 fs::remove_dir_all(&entry)
                     .map_err(|error| AppError::io(format!("remove {}", entry.display()), error))?;
+            }
+            crate::metrics::record("system_end", crate::metrics::system_load());
+            if !args.no_pool
+                && pool::maintenance_wanted(&meta)
+                && pool::spawn_maintenance(&meta.source())
+            {
+                crate::metrics::record("pool_maintenance", json!("started"));
             }
             if !quiet {
                 if !returned.is_empty() {
@@ -2503,12 +2611,22 @@ fn return_projects_to_pool(
         .collect::<Vec<_>>();
     let capacity = pool::capacity(registry);
     let entry = meta.registry_entry();
+    let source = meta.source();
+    let context = pool::PoolContext::load(&source, registry, pool::sharing_disabled(meta));
     let give_back = |project: &&ProjectMeta| -> Option<String> {
         let is_clean = match clean {
             Some(clean) => clean.contains(&project.path),
             None => !crate::inspect::inspect_project(&root, &entry, project).dirty,
         };
         if !is_clean {
+            return None;
+        }
+        let facts = pool::ProjectFacts::from_meta(project)
+            .or_else(|| pool::measure_facts(&source, &project.path));
+        let orphan = pool::orphan_reason(&project.path, facts.as_ref(), &context, || {
+            pool::source_is_clean(&source.join(&project.path))
+        });
+        if orphan.is_some() {
             return None;
         }
         let checkout = root.join(&project.path);
@@ -2518,6 +2636,7 @@ fn return_projects_to_pool(
             &project.git_common_dir,
             &checkout,
             capacity,
+            facts.as_ref(),
         ) {
             Ok(true) => Some(project.path.clone()),
             Ok(false) => None,
@@ -3428,6 +3547,7 @@ mod tests {
             remote: None,
             upstream: None,
             populate_ms: None,
+            queue_ms: None,
         }
     }
 

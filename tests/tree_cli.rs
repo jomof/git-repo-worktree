@@ -98,6 +98,8 @@ fn command(fixture: &Fixture) -> Command {
         .env("PATH", &fixture.path_env)
         .env("GRW_TEST_SNAPSHOT", &fixture.snapshot)
         .env("GIT_REPO_WORKTREE_NO_OVERLAY", "1")
+        .env("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE", "1")
+        .env("GRW_TEST_POOL_RESERVE_BYTES", "0")
         .env("HOME", fixture.temp.path())
         .arg("-C")
         .arg(&fixture.client);
@@ -1630,6 +1632,193 @@ fn pool_fill_creates_spares_and_clear_removes_their_registrations() {
     assert!(!worktrees.contains(".pool"), "{worktrees}");
 }
 
+fn pool_entry(listed: &Value, project: &str) -> Value {
+    listed["result"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["project"] == project)
+        .unwrap_or_else(|| panic!("{project} missing from {listed}"))
+        .clone()
+}
+
+#[test]
+fn orphaned_spares_are_reported_cleared_and_reaped_while_pooled_ones_refill() {
+    let fixture = fixture();
+    two_project_snapshot(&fixture);
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["pool", "fill", "--count", "1", "p", "q"])
+        .assert()
+        .success();
+    let listed = output_json(
+        command(&fixture)
+            .args(["pool", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    let q = pool_entry(&listed, "q");
+    assert!(
+        q["orphaned"]
+            .as_str()
+            .unwrap()
+            .starts_with("quick to check out"),
+        "{q}"
+    );
+    let p = pool_entry(&listed, "p");
+    assert!(p["orphaned"].is_null(), "{p}");
+    assert_eq!(p["spares"], 1);
+    assert_eq!(listed["result"]["depth"], 1);
+    assert_eq!(listed["result"]["capacity"], 2);
+    assert_eq!(listed["result"]["orphaned_spares"], 1);
+    command(&fixture)
+        .args(["pool", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("orphaned: quick to check out"))
+        .stdout(predicates::str::contains("depth 1 of 2"));
+
+    let filled = output_json(
+        command(&fixture)
+            .args(["pool", "fill", "--json"])
+            .assert()
+            .success(),
+    );
+    let filled = filled["result"]["filled"].as_array().unwrap();
+    assert_eq!(filled.len(), 1);
+    assert_eq!(filled[0]["project"], "p");
+
+    let cleared = output_json(
+        command(&fixture)
+            .args(["pool", "clear", "--orphaned", "--json"])
+            .assert()
+            .success(),
+    );
+    let cleared = cleared["result"]["cleared"].as_array().unwrap();
+    assert_eq!(cleared.len(), 1);
+    assert_eq!(cleared[0]["project"], "q");
+    let worktrees = git(
+        &fixture.client.join("q"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert!(!worktrees.contains(".pool"), "{worktrees}");
+
+    command(&fixture)
+        .args(["pool", "fill", "--count", "1", "q"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["pool", "clear", "p"])
+        .assert()
+        .success();
+    let maintained = output_json(
+        command(&fixture)
+            .args(["pool", "maintain", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(maintained["result"]["reaped"][0]["project"], "q");
+    let refilled = maintained["result"]["filled"].as_array().unwrap();
+    assert_eq!(refilled.len(), 2, "{maintained}");
+    assert!(refilled.iter().all(|spare| spare["project"] == "p"));
+    let listed = output_json(
+        command(&fixture)
+            .args(["pool", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(listed["result"]["depth"], 2);
+    assert_eq!(listed["result"]["orphaned_spares"], 0);
+}
+
+#[test]
+fn remove_keeps_spares_only_for_projects_a_default_add_pools() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["defaults", "auto", "p"])
+        .assert()
+        .success();
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["returned_to_pool"], serde_json::json!([]));
+    let worktrees = git(
+        &fixture.client.join("p"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert!(!worktrees.contains(".pool"), "{worktrees}");
+}
+
+#[test]
+fn add_refills_the_pool_in_the_background() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture)
+        .env_remove("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE")
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let history = fixture.client.join(".repo/repo-worktrees/history.jsonl");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let maintained = loop {
+        let event = fs::read_to_string(&history)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|event| event["command"] == "pool maintain");
+        if let Some(event) = event {
+            break event;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "background pool maintenance never finished"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert_eq!(maintained["exit_code"], 0, "{maintained}");
+    let add = fs::read_to_string(&history)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| event["command"] == "add")
+        .unwrap();
+    assert_eq!(add["pool_maintenance"], "started");
+    let listed = output_json(
+        command(&fixture)
+            .args(["pool", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(pool_entry(&listed, "p")["spares"], 2, "{listed}");
+    let second = output_json(
+        command(&fixture)
+            .args(["-v", "add", "--json"])
+            .arg(fixture.temp.path().join("second"))
+            .assert()
+            .success(),
+    );
+    assert_eq!(second["result"]["projects"][0]["strategy"], "pool");
+}
+
 #[test]
 fn tree_names_reserved_for_the_registry_are_rejected() {
     let fixture = fixture();
@@ -1758,6 +1947,7 @@ mod overlay_mode {
             ))
             .env("PATH", &fixture.path_env)
             .env("HOME", fixture.temp.path())
+            .env("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE", "1")
             .output()
             .unwrap();
         assert!(
@@ -2059,8 +2249,20 @@ fn history_records_invocations_and_report_summarizes_them() {
     assert_eq!(add["args"], serde_json::json!(["-C", "add", "--name"]));
     assert_eq!(add["session"], "scenario-1");
     assert!(add["phases"]["projects"].is_u64());
+    for phase in [
+        "snapshot-repo-manifest",
+        "snapshot-git-dirs",
+        "snapshot-estimates",
+        "snapshot-preflight",
+        "projects-journal-sync",
+    ] {
+        assert!(add["phases"][phase].is_u64(), "{phase}: {add}");
+    }
     assert!(add["projects"][0]["ms"].is_u64());
+    assert!(add["projects"][0]["queue_ms"].is_u64());
     assert!(add["environment"]["os"].is_string());
+    assert!(add["system_start"].is_object());
+    assert!(add["system_end"].is_object());
 
     let report = output_json(
         command(&fixture)
@@ -2254,10 +2456,6 @@ fn branched_projects_use_the_pool_and_spares_follow_the_pool_size() {
         .assert()
         .success();
     command(&fixture).arg("add").arg(&first).assert().success();
-    command(&fixture)
-        .args(["defaults", "auto", "p"])
-        .assert()
-        .success();
     let filled = output_json(
         command(&fixture)
             .args(["pool", "fill", "--json"])
@@ -2266,6 +2464,17 @@ fn branched_projects_use_the_pool_and_spares_follow_the_pool_size() {
     );
     assert_eq!(filled["result"]["filled"].as_array().unwrap().len(), 1);
     assert_eq!(filled["result"]["filled"][0]["project"], "p");
+    command(&fixture)
+        .args(["defaults", "auto", "p"])
+        .assert()
+        .success();
+    let orphaned = output_json(
+        command(&fixture)
+            .args(["pool", "fill", "--json"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(orphaned["error"]["code"], "E_NO_POOL_PROJECTS");
 }
 
 #[test]

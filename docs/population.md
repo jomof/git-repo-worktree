@@ -77,11 +77,9 @@ Two modes keep large projects fast without sharing the source's files:
   with `git worktree move` and checks out the pinned commit, which rewrites only
   files that differ. `remove` returns a clean pool project to the pool (after
   `git clean -ffdx`) instead of deleting it, keeping up to `pool size` spares
-  per project (default 2). Branched projects use spares too. The first tree pays
-  the full checkout; `git repo-worktree pool fill` creates spares ahead of time
-  for every pooled project, and `pool list` (alias `pool status`) and
-  `pool clear` manage them. Spares must be on the same filesystem as the tree
-  and cost a full checkout of disk each.
+  per project (default 2). Branched projects use spares too. Spares must be on
+  the same filesystem as the tree and cost a full checkout of disk each.
+  See [Keeping the pool full](#keeping-the-pool-full).
 * `overlay` (Linux, requires `fuse-overlayfs`): the project is a real linked
   worktree whose files are a copy-on-write view of the clean source checkout.
   Creation takes well under a second regardless of size, writes never reach the
@@ -91,6 +89,30 @@ Two modes keep large projects fast without sharing the source's files:
   survive a reboot; `repair` remounts them. `materialize` converts a clean
   overlay to a normal checkout. Without FUSE, overlay projects fall back to
   worktrees.
+
+## Keeping the pool full
+
+After `add` and `remove`, a detached `pool maintain` runs in the background at
+the lowest CPU and I/O priority. It refills every pooled project to `pool size`
+spares, one spare per project at a time, so after the first tree a burst of
+`pool size` adds all take spares. It also deletes *orphaned* spares: spares of
+projects a default `add` would no longer take from the pool, for example
+fixed-depth prebuilts that are now overlaid, projects quick enough to check
+out directly, or projects whose default has changed. Refills stop short of
+leaving less than 10% of the filesystem (at most 50 GB) free.
+
+```sh
+git repo-worktree pool list             # spares per project, depth, orphaned spares and their size
+git repo-worktree pool clear --orphaned # delete orphaned spares now
+git repo-worktree pool fill             # fill the pool in the foreground
+git repo-worktree pool size 1           # keep fewer spares per project
+```
+
+`pool list` reports the pool's *depth*: how many consecutive adds can take
+every pooled project from the pool. Set `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE=1`
+to stop background maintenance, for example while measuring pool misses.
+To keep spares for a project the pool would otherwise orphan, give it a
+`pool` default.
 
 ## Checkout speed
 

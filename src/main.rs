@@ -76,6 +76,7 @@ fn command_name(command: &Command) -> &'static str {
             PoolCommand::Size(_) => "pool size",
             PoolCommand::Fill(_) => "pool fill",
             PoolCommand::Clear(_) => "pool clear",
+            PoolCommand::Maintain => "pool maintain",
         },
         Command::Version => "version",
         Command::Completions(_) => "completions",
@@ -208,6 +209,7 @@ const SUBCOMMANDS: &[&str] = &[
     "fill",
     "clear",
     "size",
+    "maintain",
     "hooks",
 ];
 

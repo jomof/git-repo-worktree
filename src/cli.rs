@@ -349,7 +349,7 @@ pub struct PoolArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum PoolCommand {
-    /// List spare worktrees.
+    /// List spares per project, the pool depth, and orphaned spares.
     #[command(visible_alias = "status")]
     List,
     /// Show or set how many spares each pooled project keeps (default 2).
@@ -358,6 +358,10 @@ pub enum PoolCommand {
     Fill(PoolFillArgs),
     /// Delete spare worktrees.
     Clear(PoolClearArgs),
+    /// Delete orphaned spares and refill pooled projects up to the pool size
+    /// (run in the background after add and remove).
+    #[command(hide = true)]
+    Maintain,
 }
 
 #[derive(Debug, Args)]
@@ -382,6 +386,9 @@ pub struct PoolFillArgs {
 pub struct PoolClearArgs {
     /// Projects to clear (default: all).
     pub projects: Vec<String>,
+    /// Delete only spares no default add would use.
+    #[arg(long)]
+    pub orphaned: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]

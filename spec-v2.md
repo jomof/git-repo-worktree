@@ -315,13 +315,64 @@ fewer spares than the pool size (`pool size [N]`, stored as `pool_spares` in
 Failures are warnings; the project is then removed normally. The result adds `returned_to_pool`.
 
 `pool list` (alias `pool status`), `pool size [N]`,
-`pool fill [<path>...] [--count N]`, and `pool clear [<path>...]`. With no
-paths, `fill` covers explicit `pool` defaults, projects that already have spares,
-and projects pooled in any registered tree; `--count` defaults to the pool
-size. `fill` creates spares at the
+`pool fill [<path>...] [--count N]`, and `pool clear [<path>...] [--orphaned]`.
+With no paths, `fill` covers the kept projects (below); `--count` defaults to
+the pool size. `fill` creates spares at the
 source checkout's `HEAD` under a `.filling-` name without holding the registry
 lock and publishes each with `git worktree move` under the lock, retrying lock
 contention.
+
+### 9.1 Kept and orphaned spares
+
+A project's spares are kept only if a default `add` would take them, judged
+with the current `defaults.json` and source checkout. The project is *orphaned*
+when the first of these applies:
+
+1. It is not in `.repo/project.list`.
+2. Its default is anything other than `pool` (a `pool` default always keeps).
+3. Its source checkout is missing.
+4. Its estimated checkout time is under 1.5 s.
+5. It is a fixed-depth (shallow) clone, the client is not all fixed-depth,
+   and its source checkout is clean (`git status --porcelain
+   --untracked-files=all` is empty): a default `add` shares or overlays it.
+
+Candidates are explicit `pool` defaults, projects with a pool directory, and
+worktree projects pooled in any registered tree. The estimate uses facts
+recorded beside the pool in `.pool/<encoded-path>.json` (`est_files`,
+`est_bytes`, `shallow`), else a registered tree's metadata, else
+`git ls-tree -rlz HEAD` and `git rev-parse --is-shallow-repository` in the
+source checkout. `remove` returns a project to the pool only when it is kept,
+and records its facts.
+
+`pool list` reports, besides `spares` (each with `orphaned`), `projects`
+(project, `spares`, `bytes_per_spare` ≈ `est_bytes + 4096 × est_files`, and
+`orphaned` reason or null), `capacity`, `depth` (the fewest spares among kept
+projects: how many consecutive adds take every pooled project from the pool;
+null with no kept projects), `orphaned_spares`, and `orphaned_bytes`.
+`pool clear --orphaned` deletes only orphaned projects' spares, intersected
+with any given paths.
+
+### 9.2 Background maintenance
+
+After `add` (complete or partial) and after `remove` without `--no-pool`, when
+the client has a `.pool` directory or the tree has pooled projects, start
+`git-repo-worktree -C <source> -q pool maintain` detached: in its own process
+group with null standard streams, under `nice -n 19` and
+`ionice -c 3 -t` where those programs exist. The command records
+`pool_maintenance: "started"` in its history. `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE`
+set to a non-empty value other than `0` disables this.
+
+`pool maintain` (hidden) exits at once, recording `skipped`, if another run
+holds `.pool/.maintain.lock`. Otherwise, for up to five rounds, until a round
+changes nothing: plan kept and orphaned projects; delete orphaned projects'
+spares and facts; remove spares beyond the pool size; then refill kept
+projects one spare at a time, bringing every kept project to one spare before
+any gets two, slowest checkout first, with `checkout.workers=2`. A refill is
+published only while the pool is below the pool size, and is skipped
+(`deferred`) when it would leave less free space on the pool's filesystem
+than 10% of its size, capped at 50 GB. History records `reaped`, `trimmed`,
+`filled`, `failed`, `deferred`, `system_start`, `system_end`, and phases
+`plan`, `reap`, `fill`.
 
 ## 10. Overlay mode (Linux)
 
@@ -451,13 +502,22 @@ the client can be discovered from `-C` or the working directory. Commands
 add:
 
 * `add`: `tree`, `state`, `skipped`, `repo_bridge` state, `projects` (path,
-  mode, strategy, state, `ms`, `bytes`, `pooled`, reason), `notes` (population
-  fallbacks), and `environment` (os, arch, kernel, cpus, git, repo, source and
-  tree filesystem types, `overlay_unavailable`).
+  mode, strategy, state, `ms`, `queue_ms` (wait for a worker after becoming
+  ready), `bytes`, `pooled`, reason), `notes` (per-project population
+  fallbacks), `reflink` (a reason that applied to every project, such as an
+  unsupported filesystem pair, recorded once instead of per project),
+  `environment` (os, arch, kernel, cpus, git, repo, source and tree filesystem
+  types, `overlay_unavailable`), and `system_start`/`system_end`. Phases add
+  `snapshot-repo-manifest`, `snapshot-git-dirs`, `snapshot-estimates`, and
+  `snapshot-preflight` (parts of `snapshot`), and `projects-journal-sync` and
+  `projects-meta-write` (time the scheduler spent making batches durable).
 * `remove`: `tree`, `force`, `inspected`, `slow_inspections` (≥ 100 ms, at most
   20), `dirty` (project and reasons) on refusal, `returned_to_pool`, `projects`,
-  and phases `inspect`, `unmount`, `pool-return`, `worktree-remove`, `delete`,
-  `prune`.
+  `pruned_git_dirs`, `system_start`/`system_end`, and phases `inspect`,
+  `unmount`, `pool-return`, `worktree-remove`, `delete`, `prune`.
+* `system_start`/`system_end`: `loadavg` (1, 5, 15 minutes) and, on Linux,
+  `pressure` from `/proc/pressure/{cpu,io,memory}` (`some`/`full` with
+  `avg10`, `avg60`, `avg300`); null where unavailable.
 * `status`: `inspected`, `slow_inspections`. `detach`: `detached`, `failed`.
 * `materialize`: `projects` (path, previous mode, `ms`, ok, reason).
 * `repair`: `trees` (name, `remount_failures`). `pool fill`: `spares`.
@@ -487,7 +547,10 @@ inspections; the most recent `add` environment; and `history_path`.
 7. Subpath resolution for `--full-project` and `defaults`; idempotent
    `materialize`.
 8. Pool reuse, return on `remove` with ignored files cleaned, `--no-pool`,
-   `fill`, and `clear`.
+   `fill`, and `clear`; orphaned spares reported by `pool list`, skipped by
+   `fill` and `remove`, deleted by `clear --orphaned` and `pool maintain`;
+   maintenance refilling to the pool size, and running in the background
+   after `add`.
 9. Linux with FUSE: overlay isolation, upper-only cleanliness, `repair`
    remount, `move`, `materialize`, dirty-source fallback, and repo commands in
    an overlay project.
