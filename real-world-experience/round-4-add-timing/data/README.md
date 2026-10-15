@@ -15,6 +15,15 @@ with `git-repo-worktree 2.0.0 (6025da9bd07d)`. The analysis is in
   `remove` record has `phases` and `returned_to_pool`.
 - **Aggregates**: `*/report.txt` is `git repo-worktree report` output for each
   client after the runs.
+- **Complete usage history**: `*/history-full.jsonl` is each client's entire
+  `.repo/repo-worktrees/history.jsonl`, unfiltered, with every command
+  (`add`, `remove`, `list`, `status`, `pool *`, `repair`, `materialize`,
+  `hooks`, `report`) and their per-project arrays and errors.
+  - studio-main: 457 events from 2026-10-12T23:35Z to 2026-10-15T01:49Z,
+    across tool builds `f5bd402c18ae` (136 events), `5865f3f65006` (85), and
+    `6025da9bd07d` (22); 214 events have no `commit` field. It covers the
+    user's and agents' real day-to-day trees, not just this round's runs.
+  - main: everything from the first `add` attempt at 2026-10-15T00:14Z.
 
 ## `main/` (AOSP, tree `main-wt-report`)
 
