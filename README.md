@@ -44,7 +44,7 @@ Android Studio's `studio-main` client (56 projects, about 660,000 files) on a
 
 | | `repo init` + `repo sync -j 8` | `git repo-worktree add` |
 |---|---|---|
-| Time to a new client | 16 min 50 s | **5.4 s** (about 15 s the very first time) |
+| Time to a new client | 16 min 50 s | **5.1 s** typical, 4.0 s best (about 15 s the very first time) |
 | Disk per client | 141 GB | **about 11 GB** |
 
 A Bazel build of `//tools/base/common:tools.common` in a brand-new tree took
