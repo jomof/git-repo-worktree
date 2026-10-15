@@ -16,6 +16,14 @@ struct Client {
     root: PathBuf,
 }
 
+/// The caller's own `GIT_REPO_WORKTREE_*` settings, which tests must not inherit.
+fn inherited_tool_variables() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| name.to_string_lossy().starts_with("GIT_REPO_WORKTREE_"))
+        .collect()
+}
+
 fn repo_url() -> Option<String> {
     let url = std::env::var("GRW_TEST_REPO_URL").ok()?;
     let has_repo = StdCommand::new("repo")
@@ -154,6 +162,9 @@ fn client(worktree_layout: bool) -> Option<Client> {
 
 fn tool(client: &Client) -> Command {
     let mut command = Command::cargo_bin("git-repo-worktree").unwrap();
+    for name in inherited_tool_variables() {
+        command.env_remove(name);
+    }
     command
         .env("GIT_AUTHOR_NAME", "Test")
         .env("GIT_AUTHOR_EMAIL", "test@example.com")
@@ -354,6 +365,9 @@ fn commands_run_inside_a_tree_target_its_source_client() {
     };
     let tree = add(&client, "tree");
     let mut inside = Command::cargo_bin("git-repo-worktree").unwrap();
+    for name in inherited_tool_variables() {
+        inside.env_remove(name);
+    }
     let listed = json(
         inside
             .current_dir(tree.join("lib/b"))
@@ -363,6 +377,9 @@ fn commands_run_inside_a_tree_target_its_source_client() {
     );
     assert_eq!(listed["result"]["trees"].as_array().unwrap().len(), 1);
     let mut nested = Command::cargo_bin("git-repo-worktree").unwrap();
+    for name in inherited_tool_variables() {
+        nested.env_remove(name);
+    }
     let refused = json(
         nested
             .current_dir(&tree)

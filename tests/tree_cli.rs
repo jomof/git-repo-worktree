@@ -7,6 +7,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use tempfile::TempDir;
 
+/// The caller's own `GIT_REPO_WORKTREE_*` settings, which tests must not inherit.
+fn inherited_tool_variables() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| name.to_string_lossy().starts_with("GIT_REPO_WORKTREE_"))
+        .collect()
+}
+
 struct Fixture {
     temp: TempDir,
     client: PathBuf,
@@ -94,6 +102,9 @@ fn fixture() -> Fixture {
 
 fn command(fixture: &Fixture) -> Command {
     let mut command = Command::cargo_bin("git-repo-worktree").unwrap();
+    for name in inherited_tool_variables() {
+        command.env_remove(name);
+    }
     command
         .env("PATH", &fixture.path_env)
         .env("GRW_TEST_SNAPSHOT", &fixture.snapshot)
@@ -1937,7 +1948,11 @@ mod overlay_mode {
             .spawn()
             .unwrap();
         let tree = fs::canonicalize(&fixture.destination).unwrap();
-        let output = StdCommand::new("sh")
+        let mut remove = StdCommand::new("sh");
+        for name in inherited_tool_variables() {
+            remove.env_remove(name);
+        }
+        let output = remove
             .arg("-c")
             .arg(format!(
                 "'{}' -C '{}' remove --force --json tree # {}",
@@ -2399,7 +2414,11 @@ fn pool_maintenance_waits_for_tree_operations() {
         .success();
     let tree_lock = hold_lock(&fixture.client.join(".repo/repo-worktrees/tree/lock"));
     let guard = tree_lock.try_write().unwrap();
-    let maintain = StdCommand::new(assert_cmd::cargo::cargo_bin("git-repo-worktree"))
+    let mut maintain = StdCommand::new(assert_cmd::cargo::cargo_bin("git-repo-worktree"));
+    for name in inherited_tool_variables() {
+        maintain.env_remove(name);
+    }
+    let maintain = maintain
         .env("PATH", &fixture.path_env)
         .env("HOME", fixture.temp.path())
         .env("GIT_REPO_WORKTREE_NO_OVERLAY", "1")
