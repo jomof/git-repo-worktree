@@ -230,5 +230,24 @@ machine interface deterministic:
     because repo did not know the tool had created it;
   - `remove` refusing a tree whose overlay daemon died, because its files
     could not be read; cleanliness now comes from the upper directory.
+- The second growth added older releases creating trees (upgraded by
+  `repair`), nested projects, submodules, a notdefault project from an
+  included manifest, partial-clone and worktree-layout clients, a fake Gerrit
+  with a recording pre-upload hook, rebase conflicts, shared-branch abandons,
+  random kills, a full disk, read-only projects, unreachable remotes, and a
+  separate race driver (`race.py`) for concurrent operations on one client.
+  It found:
+  - trees with nested projects never removable without `--force`: Git lists a
+    nested repository as untracked in its parent;
+  - submodules broken by `move` (their relative `core.worktree` and `.git`
+    links), which Git's own `worktree move` refuses to attempt;
+  - the second `repo sync` failing in worktree-layout trees, whose manifest
+    checkout needs Git's gitfile and the shared `manifests.git`;
+  - `repair` failing with an I/O error instead of `E_NO_SUCH_TREE` for a tree
+    removed while it waited;
+  - bridge builds failing when another tree wrote the shared manifest config
+    at the same moment;
+  - a lost maintenance request when one arrived while a run was finishing
+    (found while triaging a harness bug that hid it).
 - Each finding became an ordinary test in `tests/`; the harness stays a tool
   for finding the next ones, not part of the suite.

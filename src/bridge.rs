@@ -174,7 +174,7 @@ fn build(meta: &TreeMeta) -> Result<Built, BridgeError> {
             link_object_stores(&tree_repo.join("project-objects"), &objects, &included)?;
         }
     }
-    let manifests = ensure_manifests(&root, &source_repo, &meta.name)?;
+    let manifests = ensure_manifests(&root, &source_repo, &meta.name, &meta.source_layout)?;
     let previous = BridgeFiles::read(&tree_repo);
 
     let paths = included
@@ -569,6 +569,7 @@ fn ensure_manifests(
     root: &Path,
     source_repo: &Path,
     tree_name: &str,
+    source_layout: &str,
 ) -> Result<Option<Manifests>, String> {
     let tree_repo = root.join(".repo");
     let source_git = source_repo.join("manifests.git");
@@ -615,18 +616,13 @@ fn ensure_manifests(
         }
     }
     if let (Some(branch), Some((remote, merge))) = (&branch, &tracking) {
+        let scope = [std::ffi::OsString::from(format!(
+            "--git-dir={}",
+            common.display()
+        ))];
         for (key, value) in [("remote", remote), ("merge", merge)] {
-            let output = Command::new("git")
-                .arg(format!("--git-dir={}", common.display()))
-                .args(["config", &format!("branch.{branch}.{key}"), value])
-                .output()
-                .map_err(|error| format!("configure manifest branch: {error}"))?;
-            if !output.status.success() {
-                return Err(format!(
-                    "configure manifest branch: {}",
-                    exit_reason(&output)
-                ));
-            }
+            crate::util::set_git_config(&scope, &format!("branch.{branch}.{key}"), value)
+                .map_err(|reason| format!("configure manifest branch: {reason}"))?;
         }
     }
     let admin = checkout_git_dir(&checkout)
@@ -638,10 +634,20 @@ fn ensure_manifests(
             common.display()
         ));
     }
-    augment_admin(&admin, &common)?;
     let manifests_git = tree_repo.join("manifests.git");
-    link(&manifests_git, &admin)?;
-    replace_with_symlink(&checkout.join(".git"), Path::new("../manifests.git"))?;
+    if source_layout == "worktree" {
+        // As in the source: repo reads the checkout's HEAD through its gitfile
+        // and the shared repository through `manifests.git`.
+        let dot_git = checkout.join(".git");
+        if fs::symlink_metadata(&dot_git).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            to_gitfile(&dot_git)?;
+        }
+        link(&manifests_git, &common)?;
+    } else {
+        augment_admin(&admin, &common)?;
+        link(&manifests_git, &admin)?;
+        replace_with_symlink(&checkout.join(".git"), Path::new("../manifests.git"))?;
+    }
     Ok(Some(Manifests {
         git_dir: common.to_string_lossy().into_owned(),
         branch,

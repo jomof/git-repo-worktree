@@ -186,13 +186,16 @@ pub fn with_tree_lock<T>(
 ) -> AppResult<T> {
     let registry = registry_path(source_root);
     let selected = select_tree(&registry, selector, cwd)?;
+    let (_held, fresh) = lock_tree(&selected, quiet)?;
+    operation(&registry, fresh)
+}
+
+/// Locks a selected tree and re-reads its metadata. A tree removed while this
+/// waited (its registry entry, lock file included, deleted) is
+/// `E_NO_SUCH_TREE`.
+pub fn lock_tree(selected: &TreeMeta, quiet: bool) -> AppResult<(Held, TreeMeta)> {
     let entry = selected.registry_entry();
-    let _held = acquire(
-        &tree_lock_path(&entry),
-        &format!("tree {}", selected.name),
-        quiet,
-    )?;
-    let fresh = read_meta(&entry.join("meta.json")).map_err(|_| {
+    let removed = || {
         AppError::operational(
             "E_NO_SUCH_TREE",
             format!(
@@ -200,8 +203,15 @@ pub fn with_tree_lock<T>(
                 selected.name
             ),
         )
-    })?;
-    operation(&registry, fresh)
+    };
+    let held = acquire(
+        &tree_lock_path(&entry),
+        &format!("tree {}", selected.name),
+        quiet,
+    )
+    .map_err(|error| if entry.is_dir() { error } else { removed() })?;
+    let fresh = read_meta(&entry.join("meta.json")).map_err(|_| removed())?;
+    Ok((held, fresh))
 }
 
 pub fn load_all(registry: &Path) -> AppResult<Vec<TreeMeta>> {

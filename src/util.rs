@@ -29,6 +29,38 @@ pub fn truncated_stderr(output: &Output) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
 
+/// Sets a Git config value unless it already has it. Trees share their
+/// projects' and the manifest repository's config files, so operations on
+/// different trees can write the same file at once; Git then fails to take the
+/// file's lock, and the write is retried for a few seconds.
+pub fn set_git_config(scope: &[std::ffi::OsString], key: &str, value: &str) -> Result<(), String> {
+    let current = std::process::Command::new("git")
+        .args(scope)
+        .args(["config", "--get", key])
+        .output()
+        .map_err(|error| format!("run git config: {error}"))?;
+    if current.status.success() && String::from_utf8_lossy(&current.stdout).trim() == value {
+        return Ok(());
+    }
+    const ATTEMPTS: u64 = 60;
+    for attempt in 1..=ATTEMPTS {
+        let output = std::process::Command::new("git")
+            .args(scope)
+            .args(["config", key, value])
+            .output()
+            .map_err(|error| format!("run git config: {error}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let reason = exit_reason(&output);
+        if attempt == ATTEMPTS || !reason.contains("could not lock config file") {
+            return Err(reason);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10 * attempt.min(10)));
+    }
+    unreachable!("the last attempt returns")
+}
+
 pub fn exit_reason(output: &Output) -> String {
     let code = output.status.code().unwrap_or(1);
     let stderr = truncated_stderr(output);
@@ -427,6 +459,44 @@ mod tests {
         let error = ensure_safe_destination(tree.path(), Path::new("escape/file")).unwrap_err();
         assert_eq!(error.code, "E_UNSAFE_PATH");
         assert!(!outside.path().join("file").exists());
+    }
+
+    #[test]
+    fn git_config_writes_wait_out_a_held_config_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let repository = temp.path().join("repository");
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .arg(&repository)
+            .status()
+            .unwrap()
+            .success());
+        let lock = repository.join(".git/config.lock");
+        fs::write(&lock, "").unwrap();
+        let releaser = {
+            let lock = lock.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                fs::remove_file(lock).unwrap();
+            })
+        };
+        let scope = [
+            std::ffi::OsString::from("-C"),
+            repository.clone().into_os_string(),
+        ];
+        set_git_config(&scope, "branch.topic.merge", "refs/heads/main").unwrap();
+        releaser.join().unwrap();
+        let value = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repository)
+            .args(["config", "branch.topic.merge"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&value.stdout).trim(),
+            "refs/heads/main"
+        );
+        set_git_config(&scope, "branch.topic.merge", "refs/heads/main").unwrap();
     }
 
     #[test]

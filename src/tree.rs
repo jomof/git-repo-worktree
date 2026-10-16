@@ -1275,19 +1275,10 @@ fn configure_branch_tracking(
     let (Some(remote), Some(upstream)) = (&project.remote, &project.upstream) else {
         return Ok(());
     };
+    let scope = [OsString::from("-C"), worktree.as_os_str().to_owned()];
     for (key, value) in [("remote", remote), ("merge", upstream)] {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(worktree)
-            .args(["config", &format!("branch.{branch}.{key}"), value])
-            .output()
-            .map_err(|error| format!("configure branch tracking: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "configure branch tracking: {}",
-                exit_reason(&output)
-            ));
-        }
+        crate::util::set_git_config(&scope, &format!("branch.{branch}.{key}"), value)
+            .map_err(|reason| format!("configure branch tracking: {reason}"))?;
     }
     Ok(())
 }
@@ -2808,7 +2799,10 @@ fn return_projects_to_pool(
     let give_back = |project: &&ProjectMeta| -> Option<String> {
         let is_clean = match clean {
             Some(clean) => clean.contains(&project.path),
-            None => !crate::inspect::inspect_project(&root, &entry, project).dirty,
+            None => {
+                let children = crate::inspect::nested_children(meta, project);
+                !crate::inspect::inspect_project(&root, &entry, project, &children).dirty
+            }
         };
         if !is_clean || pool::is_full(registry, &project.path, capacity) {
             return None;
@@ -3010,6 +3004,7 @@ pub fn move_tree(args: &MoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 + repair_shared_links(&mut meta)
                 + repair_git_links(&mut meta, default_jobs())
                 + usize::from(bridge::repair_manifests(&meta).is_err());
+            repair_submodules(&meta);
             meta.moving = None;
             meta.state = if old_state == "complete" && warnings == 0 && meta.is_complete() {
                 "complete".into()
@@ -3467,13 +3462,16 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppRes
                 incomplete = true;
                 break;
             }
-            let entry = meta.registry_entry();
-            held.push(crate::registry::acquire(
-                &crate::registry::tree_lock_path(&entry),
-                &format!("tree {}", meta.name),
-                quiet,
-            )?);
-            *meta = crate::util::read_meta(&entry.join("meta.json"))?;
+            let (lock, fresh) = match crate::registry::lock_tree(meta, quiet) {
+                Ok(locked) => locked,
+                Err(error) if error.code == "E_NO_SUCH_TREE" && args.trees.is_empty() => {
+                    meta.name.clear();
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            held.push(lock);
+            *meta = fresh;
             recover_move(meta)?;
             if !meta.root().exists() {
                 if !quiet {
@@ -3496,6 +3494,7 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppRes
             }
             repair_shared_links(meta);
             repair_git_links(meta, jobs);
+            repair_submodules(meta);
             if let Err(reason) = bridge::repair_manifests(meta) {
                 if !quiet {
                     eprintln!("warning: {reason}");
@@ -3520,6 +3519,7 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppRes
                 break;
             }
         }
+        trees.retain(|tree| !tree.name.is_empty());
         let result = if trees.len() == 1 {
             tree_json(&trees[0], verbose)
         } else {
@@ -3561,6 +3561,7 @@ fn recover_move(meta: &mut TreeMeta) -> AppResult<()> {
         repair_shared_links(meta);
         repair_git_links(meta, default_jobs());
         let _ = bridge::repair_manifests(meta);
+        repair_submodules(meta);
     }
     meta.moving = None;
     meta.state = if meta.is_complete() {
@@ -3625,6 +3626,70 @@ fn repair_git_links(meta: &mut TreeMeta, jobs: usize) -> usize {
         }
     }
     failures
+}
+
+/// Re-points initialized submodules of every worktree project at their Git
+/// directories. Both links are relative and break when the tree moves: the
+/// submodule's `core.worktree` (in the project's admin `modules/`) and the
+/// submodule checkout's `.git`. Git's own `worktree move` refuses such trees.
+fn repair_submodules(meta: &TreeMeta) {
+    let root = meta.root();
+    for project in meta
+        .projects
+        .iter()
+        .filter(|project| project.mode == MODE_WORKTREE && project.state != "skipped")
+    {
+        let checkout = root.join(&project.path);
+        if let (Some(admin), Ok(checkout)) = (
+            crate::inspect::checkout_git_dir(&checkout),
+            fs::canonicalize(&checkout),
+        ) {
+            repair_submodule_links(&admin.join("modules"), &checkout);
+        }
+    }
+}
+
+fn repair_submodule_links(modules: &Path, worktree: &Path) {
+    if !modules.is_dir() || !worktree.join(".gitmodules").is_file() {
+        return;
+    }
+    let Ok(output) = Command::new("git")
+        .args(["config", "-f"])
+        .arg(worktree.join(".gitmodules"))
+        .args(["--get-regexp", r"^submodule\..*\.path$"])
+        .output()
+    else {
+        return;
+    };
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((key, path)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some(name) = key
+            .strip_prefix("submodule.")
+            .and_then(|key| key.strip_suffix(".path"))
+        else {
+            continue;
+        };
+        let gitdir = modules.join(name);
+        if !gitdir.join("config").is_file() {
+            continue;
+        }
+        let submodule = worktree.join(path);
+        let _ = Command::new("git")
+            .args(["config", "-f"])
+            .arg(gitdir.join("config"))
+            .arg("core.worktree")
+            .arg(relative_path(&gitdir, &submodule))
+            .output();
+        if submodule.is_dir() {
+            let _ = fs::write(
+                submodule.join(".git"),
+                format!("gitdir: {}\n", relative_path(&submodule, &gitdir).display()),
+            );
+        }
+        repair_submodule_links(&gitdir.join("modules"), &submodule);
+    }
 }
 
 /// Whether Git can read the checkout's `HEAD` through its `.git`.

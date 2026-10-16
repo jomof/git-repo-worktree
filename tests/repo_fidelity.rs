@@ -879,3 +879,23 @@ fn repo_sync_removes_a_linkfile_dropped_from_the_manifest() {
     run(&tree, "repo", &["sync", "-q"]);
     assert!(fs::symlink_metadata(tree.join("A_README")).is_err());
 }
+
+#[test]
+fn repo_sync_keeps_working_in_a_worktree_layout_tree() {
+    let Some(client) = client(true) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    for _ in 0..3 {
+        run(&tree, "repo", &["sync", "-q"]);
+    }
+    assert_eq!(
+        run(
+            &tree.join(".repo/manifests"),
+            "git",
+            &["symbolic-ref", "--short", "HEAD"]
+        ),
+        "repo-worktree/tree"
+    );
+    assert_eq!(repo_projects(&tree), "a\nb");
+}

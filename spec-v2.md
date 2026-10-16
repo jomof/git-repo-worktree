@@ -77,6 +77,9 @@ failure records state `failed` with a reason and leaves the tree `incomplete`.
 
 A whole-directory link left by an older version is replaced by the real
 directory when the bridge is rebuilt (for example by `repair`).
+* For a worktree-layout source, `manifests/.git` stays Git's gitfile and
+  `manifests.git` links to the source's `manifests.git`, as in the source:
+  repo reads the manifest checkout's `HEAD` through the gitfile.
 * `manifests/`: a linked worktree of `<source>/.repo/manifests.git` at the
   source manifest checkout's `HEAD`, on branch `repo-worktree/<tree>` (created
   with `-B`). The branch's `remote` and `merge` are copied from the source
@@ -203,7 +206,12 @@ is recorded as history phase `lock-wait`.
 * Per-tree lock `<entry>/lock`: held for the whole operation by `add`
   (after reservation), `add --continue`, `remove`, `lock`, `unlock`, `move`,
   `materialize`, and `repair` (each selected tree). Metadata is re-read after
-  acquiring it; a tree removed meanwhile fails with `E_NO_SUCH_TREE`. `prune`
+  acquiring it; a tree removed meanwhile (its entry, lock file included, is
+  deleted) fails with `E_NO_SUCH_TREE`, and `repair` without tree arguments
+  skips it. Writes to config shared between trees (a project's or the
+  manifest repository's `branch.*` settings) are skipped when the value is
+  already set and retried for a few seconds when Git cannot take the config
+  file's lock. `prune`
   skips trees whose lock is busy.
 * Registry lock `.repo/repo-worktrees/lock`: held only by `add`'s reservation
   step (quiescence check, destination validation, name check, entry creation,
@@ -392,8 +400,11 @@ group with null standard streams, under `nice -n 19` and
 `pool_maintenance: "started"` in its history. `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE`
 set to a non-empty value other than `0` disables this.
 
-`pool maintain` (hidden) exits at once, recording `skipped`, if another run
-holds `.pool/.maintain.lock`. Otherwise, for up to five rounds, until a round
+`pool maintain` (hidden) first writes `.pool/.maintain.again`, then exits at
+once, recording `skipped`, if another run holds `.pool/.maintain.lock`. The
+holder removes the marker when it starts a pass and, after releasing the
+lock, makes another pass if the marker is back, so a request made while a run
+is finishing is never lost. Otherwise, for up to five rounds, until a round
 changes nothing: plan kept and orphaned projects; delete orphaned projects'
 spares and facts; remove spares beyond the pool size; then refill kept
 projects one spare at a time, bringing every kept project to one spare before
@@ -492,6 +503,16 @@ dead), and `status` reports such a project with `mounted: false` and a
 `warning` naming `repair --mounts-only`. A dead or unmounted overlay is judged
 clean or dirty from its upper directory, which needs no daemon, so `remove`
 removes a tree whose overlay died unless the overlay holds changes.
+
+An untracked entry in a project's `git status` that is, or leads to, another
+of the tree's projects nested inside it is not counted: Git reports nested
+repositories as untracked in their parent, as in any repo client.
+
+After `move`, and in `repair`, initialized submodules of worktree projects are
+re-pointed at their Git directories: each submodule directory's
+`core.worktree` (under the project's admin `modules/`) and the submodule
+checkout's `.git` are rewritten as relative paths, recursively. Both break
+when the tree moves; Git's own `worktree move` refuses such trees.
 
 `status`, `detach`, `checked_out_branches`, and `remove`'s dirty check cover
 every worktree or overlay project that is not skipped and whose checkout

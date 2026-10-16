@@ -1,20 +1,33 @@
 """Stateful fuzzing of git-repo-worktree against real repo clients.
 
-A tiny world (projects a, lib/b, prebuilts/pre with clone-depth, an unused
-remote c, a manifest repository, a source client made with `repo init` +
-`repo sync`, and a reference client) is driven by random sequences of
-upstream, manifest, source, tree, and failure operations. Invariants are
-checked after every step; `repo sync` in a tree is compared with the same sync
-in the reference client. Hypothesis shrinks a failing sequence, and its
-commands are written to the findings directory.
+A small world is driven by random sequences of upstream, manifest, source,
+tree, review, and fault operations; invariants are checked after every step,
+and `repo sync` in a tree is compared with the same sync in a reference
+client. Hypothesis shrinks a failing sequence, and its commands are written to
+the findings directory.
+
+The world: projects `a` (copyfile and linkfile), `lib/b` with `lib/b/nested`
+inside it, `prebuilts/pre` (clone-depth, shared or overlaid), `hooks` (the
+manifest's repo-hooks project, whose pre-upload hook records what it was
+given), `sub` (with a submodule), `extra/grouped` (notdefault group, from an
+included manifest), and `c` (added and removed by manifest changes). Remotes
+have a review URL whose pushes land in local bare "gerrit" repositories.
 
     GRW_BIN=target/debug/git-repo-worktree python fuzz/harness.py [examples]
 
 Modes (environment):
+    GRW_FUZZ_WORLD        plain (default), partial (blob:none partial clones),
+                          or worktree (`repo init --worktree`)
     GRW_FUZZ_OVERLAY      auto (default; on where fuse-overlayfs works), 1, 0
     GRW_FUZZ_MAINTENANCE  1 to let background pool maintenance run
-    GRW_FUZZ_CRASH        1 to crash add and move mid-way (needs a binary
-                          built with --features test-hooks)
+    GRW_FUZZ_CRASH        1 to crash add and move at the tool's crash hooks
+                          (needs a binary built with --features test-hooks)
+    GRW_FUZZ_KILL         1 to kill the tool at random moments (outcomes are
+                          timing-dependent; Hypothesis may report flakiness)
+    GRW_FUZZ_FAULTS       1 for read-only projects and unreachable remotes
+    GRW_FUZZ_DISK         1 to fill the disk (only on a small dedicated
+                          filesystem such as a tmpfs GRW_FUZZ_BASE)
+    GRW_FUZZ_OLD_BINS     name=path,... older releases that create trees
     GRW_FUZZ_STEPS        steps per sequence (default 10)
     GRW_FUZZ_FINDINGS     where reproductions go (default fuzz/findings)
 """
@@ -22,6 +35,7 @@ Modes (environment):
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -45,14 +59,34 @@ HERE = Path(__file__).resolve().parent
 BIN = os.path.abspath(os.environ.get("GRW_BIN", "target/debug/git-repo-worktree"))
 REPO_SRC = os.environ.get("GRW_TEST_REPO_URL", "/tmp/git-repo-src")
 WORKER = os.environ.get("GRW_FUZZ_WORKER", "0")
+VARIANT = os.environ.get("GRW_FUZZ_WORLD", "plain")
 BASE = Path(os.environ.get("GRW_FUZZ_BASE", f"/tmp/grw-fuzz-{WORKER}")).resolve()
 FINDINGS = Path(os.environ.get("GRW_FUZZ_FINDINGS", HERE / "findings"))
 WORLD = BASE / "w"
 CLIENT = WORLD / "client"
-TEMPLATE = BASE / "template.tar"
-EDITABLE = ["a", "lib/b"]
+REF = WORLD / "ref"
+TEMPLATE = BASE / f"template-{VARIANT}.tar"
 MAINTENANCE = os.environ.get("GRW_FUZZ_MAINTENANCE") == "1"
 CRASH = os.environ.get("GRW_FUZZ_CRASH") == "1"
+KILL = os.environ.get("GRW_FUZZ_KILL") == "1"
+FAULTS = os.environ.get("GRW_FUZZ_FAULTS") == "1"
+DISK = os.environ.get("GRW_FUZZ_DISK") == "1"
+OLD_BINS = dict(
+    item.split("=", 1) for item in os.environ.get("GRW_FUZZ_OLD_BINS", "").split(",") if "=" in item
+)
+
+PATHS = {
+    "a": "a",
+    "b": "lib/b",
+    "nested": "lib/b/nested",
+    "pre": "prebuilts/pre",
+    "hooks": "hooks",
+    "sub": "sub",
+    "grouped": "extra/grouped",
+    "c": "c",
+}
+EDITABLE = ["a", "lib/b", "lib/b/nested"]
+GERRIT_HOST = "http://gerrit.invalid/"
 
 
 def overlay_mode():
@@ -67,9 +101,19 @@ def overlay_mode():
 
 
 OVERLAY = overlay_mode()
-ENV = {
-    name: value for name, value in os.environ.items() if not name.startswith("GIT_REPO_WORKTREE_")
-}
+
+
+def git_config_env(pairs):
+    env = {"GIT_CONFIG_COUNT": str(len(pairs))}
+    for index, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
+
+
+BASE_CONFIG = [("protocol.file.allow", "always"), ("advice.detachedHead", "false")]
+UPLOAD_CONFIG = BASE_CONFIG + [(f"url.file://{WORLD}/gerrit/.insteadOf", GERRIT_HOST)]
+ENV = {name: value for name, value in os.environ.items() if not name.startswith("GIT_REPO_WORKTREE_")}
 ENV.update(
     {
         "GIT_AUTHOR_NAME": "fuzz",
@@ -77,6 +121,9 @@ ENV.update(
         "GIT_COMMITTER_NAME": "fuzz",
         "GIT_COMMITTER_EMAIL": "fuzz@example.com",
         "GRW_TEST_POOL_RESERVE_BYTES": "0",
+        "GRW_FUZZ_HOOK_LOG": str(WORLD / "hook.log"),
+        "REPO_IGNORE_SSH_INFO": "1",
+        **git_config_env(BASE_CONFIG),
     }
 )
 if not MAINTENANCE:
@@ -98,89 +145,130 @@ class Finding(AssertionError):
 
 def step(description):
     LOG.append(f"# step: {description}")
-    STATS[description] = STATS.get(description, 0) + 1
+    STATS[description.split("(")[0]] = STATS.get(description.split("(")[0], 0) + 1
 
 
 def run(args, cwd, check=True, env=None):
     """Runs a command, logging it as shell for the reproduction."""
-    shown = " ".join(str(arg) for arg in args).replace(str(BIN), "grw")
+    shown = " ".join(str(arg) for arg in args).replace(BIN, "grw")
     prefix = "".join(f"{key}={value} " for key, value in (env or {}).items())
     LOG.append(f"(cd {cwd} && {prefix}{shown})")
     result = subprocess.run(
-        [str(arg) for arg in args],
-        cwd=cwd,
-        env={**ENV, **(env or {})},
-        capture_output=True,
-        text=True,
+        [str(arg) for arg in args], cwd=cwd, env={**ENV, **(env or {})}, capture_output=True, text=True
     )
     if check and result.returncode != 0:
         raise Finding(f"{shown} in {cwd} exited {result.returncode}:\n{result.stderr[-2000:]}")
     return result
 
 
-def grw(*args, check=True, env=None):
-    return run([BIN, "-C", CLIENT, *args], WORLD, check, env)
+def no_panic(result, what):
+    if result.returncode == 101 or "panicked at" in result.stderr:
+        raise Finding(f"{what} panicked:\n{result.stderr[-2000:]}")
 
 
-def grw_json(*args, check=True, env=None):
-    result = grw(*args, "--json", check=False, env=env)
+def grw(*args, check=True, env=None, binary=None):
+    result = run([binary or BIN, "-C", CLIENT, *args], WORLD, check=False, env=env)
+    no_panic(result, f"grw {' '.join(args)}")
+    if check and result.returncode != 0:
+        raise Finding(f"grw {' '.join(args)} exited {result.returncode}:\n{result.stderr[-2000:]}")
+    return result
+
+
+def grw_json(*args, check=True, env=None, binary=None):
+    result = grw(*args, "--json", check=False, env=env, binary=binary)
     try:
         value = json.loads(result.stdout)
     except json.JSONDecodeError:
-        raise Finding(f"grw {' '.join(args)} printed no JSON (exit {result.returncode}):\n{result.stdout}\n{result.stderr[-2000:]}")
+        raise Finding(
+            f"grw {' '.join(args)} printed no JSON (exit {result.returncode}):\n{result.stdout}\n{result.stderr[-2000:]}"
+        )
     if check and not value["ok"]:
         raise Finding(f"grw {' '.join(args)} failed: {json.dumps(value['error'])}\n{result.stderr[-2000:]}")
     return value
 
 
-def git(cwd, *args, check=True):
-    return run(["git", *args], cwd, check).stdout.strip()
+def git(cwd, *args, check=True, env=None):
+    return run(["git", *args], cwd, check, env).stdout.strip()
 
 
-MANIFEST = """<?xml version="1.0" encoding="UTF-8"?>
-<manifest>
-  <remote name="origin" fetch="file://{world}/remotes"/>
-  <default remote="origin" revision="main"/>
-{projects}</manifest>
-"""
-PROJECT_LINES = {
-    "a": '  <project name="a" path="a">{link}<copyfile src="README" dest="A_COPY"/></project>\n',
-    "b": '  <project name="b" path="lib/b"/>\n',
-    "pre": '  <project name="pre" path="prebuilts/pre" clone-depth="1"/>\n',
-    "c": '  <project name="c" path="c"/>\n',
-}
+# -- world construction ---------------------------------------------------------
+
+HOOK = '''import json, os, subprocess
+
+def main(project_list, worktree_list=None, **kwargs):
+    with open(os.environ["GRW_FUZZ_HOOK_LOG"], "a") as log:
+        for project, worktree in zip(project_list, worktree_list or []):
+            head = subprocess.run(["git", "-C", worktree, "rev-parse", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+            log.write(json.dumps({"project": project, "worktree": os.path.realpath(worktree),
+                                  "head": head}) + "\\n")
+'''
 
 
 def manifest_text(projects, linkfile):
     link = '<linkfile src="README" dest="A_README"/>' if linkfile else ""
-    lines = "".join(PROJECT_LINES[name].format(link=link) for name in ["a", "b", "pre", "c"] if name in projects)
-    return MANIFEST.format(world=WORLD, projects=lines)
+    lines = {
+        "a": f'  <project name="a" path="a">{link}<copyfile src="README" dest="A_COPY"/></project>\n',
+        "b": '  <project name="b" path="lib/b"/>\n',
+        "nested": '  <project name="nested" path="lib/b/nested"/>\n',
+        "pre": '  <project name="pre" path="prebuilts/pre" clone-depth="1"/>\n',
+        "hooks": '  <project name="hooks" path="hooks"/>\n',
+        "sub": '  <project name="sub" path="sub"/>\n',
+        "c": '  <project name="c" path="c"/>\n',
+    }
+    body = "".join(lines[name] for name in lines if name in projects)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="origin" fetch="file://{WORLD}/remotes" review="{GERRIT_HOST}"/>
+  <default remote="origin" revision="main"/>
+{body}  <repo-hooks in-project="hooks" enabled-list="pre-upload"/>
+  <include name="extra.xml"/>
+</manifest>
+"""
+
+
+INITIAL = {"a", "b", "nested", "pre", "hooks", "sub"}
 
 
 def build_template():
     if WORLD.exists():
         shutil.rmtree(WORLD)
     (WORLD / "remotes").mkdir(parents=True)
-    for name in ["a", "b", "pre", "c", "manifest"]:
-        git(WORLD, "init", "-q", "--bare", "-b", "main", WORLD / "remotes" / f"{name}.git")
+    (WORLD / "gerrit").mkdir()
+    names = ["a", "b", "nested", "pre", "hooks", "subtarget", "sub", "grouped", "c", "manifest"]
+    for name in names:
+        remote = WORLD / "remotes" / f"{name}.git"
+        git(WORLD, "init", "-q", "--bare", "-b", "main", remote)
+        git(remote, "config", "uploadpack.allowFilter", "true")
+        git(remote, "config", "uploadpack.allowAnySHA1InWant", "true")
+        git(WORLD, "init", "-q", "--bare", "-b", "main", WORLD / "gerrit" / f"{name}.git")
         seed = WORLD / "seed" / name
         seed.mkdir(parents=True)
         git(seed, "init", "-q", "-b", "main")
         if name == "manifest":
-            (seed / "default.xml").write_text(manifest_text({"a", "b", "pre"}, True))
+            (seed / "default.xml").write_text(manifest_text(INITIAL, True))
+            (seed / "extra.xml").write_text(
+                '<manifest>\n  <project name="grouped" path="extra/grouped" groups="notdefault"/>\n</manifest>\n'
+            )
         else:
             (seed / "README").write_text(f"{name} 0\n")
+            if name == "hooks":
+                (seed / "pre-upload.py").write_text(HOOK)
+            if name == "sub":
+                git(seed, "submodule", "add", "-q", f"file://{WORLD}/remotes/subtarget.git", "lib")
         git(seed, "add", ".")
         git(seed, "commit", "-qm", "init")
-        git(seed, "push", "-q", WORLD / "remotes" / f"{name}.git", "main")
-    for client in ["client", "ref"]:
-        (WORLD / client).mkdir()
-        run(
-            ["repo", "init", "-q", "-u", f"file://{WORLD}/remotes/manifest.git", "-b", "main",
-             "--repo-url", REPO_SRC, "--repo-rev", "main", "--no-repo-verify"],
-            WORLD / client,
-        )
-        run(["repo", "sync", "-q"], WORLD / client)
+        git(seed, "push", "-q", remote, "main")
+    for client in [CLIENT, REF]:
+        client.mkdir()
+        init = ["repo", "init", "-q", "-u", f"file://{WORLD}/remotes/manifest.git", "-b", "main",
+                "--repo-url", REPO_SRC, "--repo-rev", "main", "--no-repo-verify", "-g", "default,notdefault"]
+        if VARIANT == "partial":
+            init += ["--partial-clone", "--clone-filter=blob:none"]
+        elif VARIANT == "worktree":
+            init += ["--worktree"]
+        run(init, client)
+        run(["repo", "sync", "-q"], client)
     with tarfile.open(TEMPLATE, "w") as archive:
         archive.add(WORLD, arcname="w")
 
@@ -194,52 +282,76 @@ def unmount_all():
         subprocess.run(["fusermount3", "-uz", point], capture_output=True)
 
 
+def stop_background():
+    subprocess.run(["pkill", "-9", "-f", "--", f"{CLIENT} -q pool maintain"], capture_output=True)
+
+
 def fresh_world():
-    subprocess.run(["pkill", "-f", f"-C {CLIENT} -q pool maintain"], capture_output=True)
+    stop_background()
     unmount_all()
-    if WORLD.exists():
-        subprocess.run(["chmod", "-R", "u+w", WORLD], capture_output=True)
-        shutil.rmtree(WORLD, ignore_errors=True)
-    for pattern in ["t[0-9]*", "t-moved-*", ".git-repo-worktree-trash-*"]:
-        for stray in BASE.glob(pattern):
-            shutil.rmtree(stray, ignore_errors=True)
+    for victim in [WORLD, *BASE.glob("t[0-9]*"), *BASE.glob("t-moved-*"), *BASE.glob(".git-repo-worktree-trash-*"), BASE / "filler"]:
+        if victim.exists():
+            subprocess.run(["chmod", "-R", "u+w", victim], capture_output=True)
+            if victim.is_dir():
+                shutil.rmtree(victim, ignore_errors=True)
+            else:
+                victim.unlink()
     with tarfile.open(TEMPLATE) as archive:
         archive.extractall(BASE, filter="fully_trusted")
 
 
 def source_snapshot():
     snapshot = {}
-    for path in ["a", "lib/b", "prebuilts/pre", "c"]:
+    for path in PATHS.values():
         checkout = CLIENT / path
-        if checkout.is_dir():
+        if (checkout / ".git").exists():
             snapshot[path] = (
                 git(checkout, "rev-parse", "HEAD"),
-                git(checkout, "status", "--porcelain", "--untracked-files=all"),
+                git(checkout, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=all"),
             )
     return snapshot
 
 
 def maintenance_running():
-    result = subprocess.run(
-        ["pgrep", "-f", f"-C {CLIENT} -q pool maintain"], capture_output=True, text=True
-    )
+    result = subprocess.run(["pgrep", "-f", "--", f"{CLIENT} -q pool maintain"], capture_output=True)
+    if result.returncode > 1:
+        raise RuntimeError(f"pgrep failed: {result.stderr!r}")
     return result.returncode == 0
 
 
 def owned_projects(root):
-    """Projects the tree checks out itself: real directories, not shared links."""
-    owned = set()
-    for name, path in [("a", "a"), ("b", "lib/b"), ("pre", "prebuilts/pre"), ("c", "c")]:
-        checkout = root / path
-        if checkout.is_symlink() or not checkout.is_dir():
-            continue
-        owned.add(name)
-    return owned
+    """Projects the tree checks out itself: real directories with a .git."""
+    return {
+        name
+        for name, path in PATHS.items()
+        if (root / path).is_dir() and not (root / path).is_symlink() and os.path.lexists(root / path / ".git")
+    }
 
 
 def repo_list(root):
     result = run(["repo", "list", "-n"], root, check=False)
     return result, set(result.stdout.split())
+
+
+def rebasing(checkout):
+    return any(
+        Path(checkout, git(checkout, "rev-parse", "--git-path", name)).exists()
+        for name in ("rebase-merge", "rebase-apply")
+    )
+
+
+def current_layout_problems(root):
+    """Ways a bridged tree's .repo differs from what this build creates."""
+    problems = []
+    repo_dir = root / ".repo"
+    objects = repo_dir / ("worktrees" if VARIANT == "worktree" else "project-objects")
+    if objects.is_symlink():
+        problems.append(f"{objects.name} is a whole-directory link")
+    if not (repo_dir / "copy-link-files.json").is_file():
+        problems.append("copy-link-files.json is missing")
+    if not (repo_dir / "local_manifests" / "zz-git-repo-worktree.xml").is_file():
+        problems.append("the generated local manifest is missing")
+    return problems
 
 
 class TreeWorld(RuleBasedStateMachine):
@@ -253,19 +365,84 @@ class TreeWorld(RuleBasedStateMachine):
         self.live = {}
         self.unbranched = {}
         self.branches = {}
+        self.dirty_readme = {}
         self.dead = set()
-        self.manifest_projects = {"a", "b", "pre"}
+        self.legacy = set()
+        self.fault = None
+        self.manifest_projects = set(INITIAL)
         self.linkfile = True
 
     def teardown(self):
-        subprocess.run(["pkill", "-f", f"-C {CLIENT} -q pool maintain"], capture_output=True)
+        self.clear_fault()
+        stop_background()
         unmount_all()
+
+    # -- helpers -----------------------------------------------------------------
+
+    def tool_step(self, operation):
+        if self.fault and self.fault[0] == "disk":
+            return operation()
+        before = source_snapshot()
+        result = operation()
+        after = source_snapshot()
+        if before != after and not self.fault:
+            raise Finding(f"the source client changed:\nbefore {before}\nafter {after}")
+        return result
+
+    def new_tree(self, name, path):
+        self.live[name] = path
+        self.unbranched[name] = False
+        self.branches[name] = {}
+        self.dirty_readme[name] = False
+
+    def checked(self, name):
+        return name in self.live and name not in self.dead and name not in self.legacy
+
+    def recover(self):
+        """Brings every registered tree back to a usable state after a fault."""
+        trees = grw_json("list")["result"]["trees"]
+        for tree in trees:
+            name = tree["name"]
+            if tree["state"] in ("creating", "incomplete") and name not in self.live:
+                value = grw_json("add", "--continue", name, check=False)
+                if not value["ok"]:
+                    grw_json("remove", "--force", "--force", name)
+                    continue
+                self.new_tree(name, Path(tree["path"]))
+            elif name not in self.live:
+                self.new_tree(name, Path(tree["path"]))
+        registered = {tree["name"] for tree in grw_json("list")["result"]["trees"]}
+        for name in list(self.live):
+            if name not in registered:
+                del self.live[name]
+        if self.live:
+            grw_json("repair")
+            self.dead.clear()
+            self.legacy.clear()
+        trees = {tree["name"]: tree for tree in grw_json("list")["result"]["trees"]}
+        for name in self.live:
+            self.live[name] = Path(trees[name]["path"])
+
+    def clear_fault(self):
+        fault, self.fault = self.fault, None
+        if fault is None:
+            return
+        kind, target = fault
+        if kind == "readonly":
+            subprocess.run(["chmod", "-R", "u+w", target], capture_output=True)
+        elif kind == "unreachable":
+            if Path(target + ".away").exists():
+                os.rename(target + ".away", target)
+        elif kind == "disk":
+            Path(target).unlink(missing_ok=True)
 
     # -- upstream, manifest, and source actors ---------------------------------
 
-    @rule(name=st.sampled_from(["a", "b", "pre", "c"]))
+    @rule(name=st.sampled_from(["a", "b", "nested", "pre", "c", "grouped"]))
     def upstream_commit(self, name):
         step(f"upstream_commit({name})")
+        if self.fault and self.fault[0] in ("disk", "unreachable"):
+            return
         seed = WORLD / "seed" / name
         self.count += 1
         (seed / "README").write_text(f"{name} {self.count}\n")
@@ -275,8 +452,9 @@ class TreeWorld(RuleBasedStateMachine):
     @rule(change=st.sampled_from(["add c", "remove c", "remove b", "restore b", "toggle linkfile"]))
     def manifest_change(self, change):
         step(f"manifest_change({change})")
-        projects = set(self.manifest_projects)
-        linkfile = self.linkfile
+        if self.fault and self.fault[0] in ("disk", "unreachable"):
+            return
+        projects, linkfile = set(self.manifest_projects), self.linkfile
         if change == "add c":
             projects.add("c")
         elif change == "remove c":
@@ -293,67 +471,94 @@ class TreeWorld(RuleBasedStateMachine):
         (seed / "default.xml").write_text(manifest_text(projects, linkfile))
         git(seed, "commit", "-qam", f"manifest: {change}")
         git(seed, "push", "-q", WORLD / "remotes" / "manifest.git", "main")
-        self.manifest_projects = projects
-        self.linkfile = linkfile
+        self.manifest_projects, self.linkfile = projects, linkfile
 
     @rule()
     def source_sync(self):
         step("source_sync()")
-        result = run(["repo", "sync", "-q"], CLIENT, check=False)
-        if result.returncode != 0 and "lib/b" not in result.stderr:
-            raise Finding(f"repo sync failed in the source:\n{result.stderr[-2000:]}")
+        if self.fault and self.fault[0] == "disk":
+            return
+        run(["repo", "sync", "-q"], CLIENT, check=False)
 
     @rule(path=st.sampled_from(EDITABLE))
     def source_commit(self, path):
         step(f"source_commit({path})")
+        if self.fault and self.fault[0] == "disk":
+            return
         checkout = CLIENT / path
-        if not checkout.is_dir():
+        if not (checkout / ".git").exists():
             return
         self.count += 1
         (checkout / f"local{self.count}").write_text("x\n")
-        git(checkout, "add", ".")
+        git(checkout, "add", f"local{self.count}")
         git(checkout, "commit", "-qm", f"source {self.count}")
 
     # -- tool operations -------------------------------------------------------
 
-    def tool_step(self, operation):
-        before = source_snapshot()
-        result = operation()
-        after = source_snapshot()
-        if before != after:
-            raise Finding(f"the source client changed:\nbefore {before}\nafter {after}")
-        return result
-
-    def new_tree(self, name, path):
-        self.live[name] = path
-        self.unbranched[name] = False
-        self.branches[name] = set()
-
     @initialize(target=trees)
     def first_tree(self):
-        return self.add()
+        return self.add(False)
 
-    @rule(target=trees)
-    def add(self):
-        step("add()")
+    @rule(target=trees, submodules=st.booleans())
+    def add(self, submodules):
+        step(f"add(submodules={submodules})")
         self.count += 1
         name = f"t{self.count}"
         path = BASE / name
-        self.tool_step(lambda: grw_json("add", "--name", name, str(path)))
+        args = ["add", "--name", name, str(path)] + (["--submodules"] if submodules else [])
+        if self.fault:
+            value = self.tool_step(lambda: grw_json(*args, check=False))
+            if value["ok"] or value.get("exit_code") == 3:
+                self.new_tree(name, path)
+            return name
+        self.tool_step(lambda: grw_json(*args))
         self.new_tree(name, path)
+        if submodules and (path / "sub").is_dir() and not (path / "sub").is_symlink():
+            status = git(path / "sub", "submodule", "status")
+            if status.startswith("-"):
+                raise Finding(f"add --submodules left the submodule uninitialized:\n{status}")
         return name
 
+    @precondition(lambda self: bool(OLD_BINS))
+    @rule(target=trees, version=st.sampled_from(sorted(OLD_BINS) or ["none"]))
+    def add_with_old_release(self, version):
+        step(f"add_with_old_release({version})")
+        self.count += 1
+        name = f"t{self.count}"
+        path = BASE / name
+        result = grw("add", "--name", name, str(path), check=False, binary=OLD_BINS[version])
+        registered = {tree["name"] for tree in grw_json("list")["result"]["trees"]}
+        if name in registered:
+            self.new_tree(name, path)
+            self.legacy.add(name)
+        elif result.returncode == 0:
+            raise Finding(f"{version} created {name}, but this build does not list it")
+        return name
+
+    @rule(tree=trees)
+    def upgrade(self, tree):
+        step(f"upgrade({tree})")
+        if tree not in self.live or self.fault:
+            return
+        self.tool_step(lambda: grw_json("repair", tree))
+        self.legacy.discard(tree)
+        self.dead.discard(tree)
+        problems = current_layout_problems(self.live[tree])
+        if problems:
+            raise Finding(f"repair left {tree} with an old layout: {problems}")
+
     @precondition(lambda self: CRASH)
-    @rule(target=trees, after=st.integers(1, 3))
+    @rule(target=trees, after=st.integers(1, 5))
     def add_crash_and_continue(self, after):
         step(f"add_crash_and_continue(after={after})")
         self.count += 1
         name = f"t{self.count}"
         path = BASE / name
         crashed = grw("add", "--name", name, str(path), check=False, env={"GRW_TEST_CRASH_AFTER": str(after)})
-        if crashed.returncode != 0:
+        if crashed.returncode != 0 and not self.fault:
             self.tool_step(lambda: grw_json("add", "--continue", name))
-        self.new_tree(name, path)
+        if crashed.returncode == 0 or not self.fault:
+            self.new_tree(name, path)
         return name
 
     @rule(tree=consumes(trees), force=st.booleans())
@@ -366,7 +571,12 @@ class TreeWorld(RuleBasedStateMachine):
         if value["ok"]:
             del self.live[tree]
             self.dead.discard(tree)
-        elif value["error"]["code"] == "E_DIRTY" and self.unbranched[tree] and not force:
+            self.legacy.discard(tree)
+        elif self.fault:
+            pass
+        elif value["error"]["code"] == "E_DIRTY" and not force and (
+            self.unbranched[tree] or self.dirty_readme[tree] or tree in self.legacy
+        ):
             pass
         else:
             raise Finding(f"remove {tree} failed: {json.dumps(value['error'])}")
@@ -374,17 +584,21 @@ class TreeWorld(RuleBasedStateMachine):
     @rule(tree=trees)
     def repair(self, tree):
         step(f"repair({tree})")
-        if tree in self.live:
-            self.tool_step(lambda: grw_json("repair", tree))
+        if tree not in self.live:
+            return
+        value = self.tool_step(lambda: grw_json("repair", tree, check=not self.fault))
+        if value["ok"]:
             self.dead.discard(tree)
+            self.legacy.discard(tree)
 
     @precondition(lambda self: self.live)
     @rule()
     def repair_all(self):
         step("repair_all()")
-        if self.live:
-            self.tool_step(lambda: grw_json("repair"))
+        value = self.tool_step(lambda: grw_json("repair", check=not self.fault))
+        if value["ok"]:
             self.dead.clear()
+            self.legacy.clear()
 
     @rule(tree=trees)
     def move(self, tree):
@@ -393,14 +607,15 @@ class TreeWorld(RuleBasedStateMachine):
             return
         self.count += 1
         target = BASE / f"t-moved-{self.count}"
-        self.tool_step(lambda: grw_json("move", tree, str(target)))
-        self.live[tree] = target
+        value = self.tool_step(lambda: grw_json("move", tree, str(target), check=not self.fault))
+        if value["ok"]:
+            self.live[tree] = target
 
     @precondition(lambda self: CRASH)
     @rule(tree=trees)
     def move_crash_and_repair(self, tree):
         step(f"move_crash_and_repair({tree})")
-        if tree not in self.live or tree in self.dead:
+        if tree not in self.live or tree in self.dead or self.fault:
             return
         self.count += 1
         target = BASE / f"t-moved-{self.count}"
@@ -408,11 +623,12 @@ class TreeWorld(RuleBasedStateMachine):
         self.tool_step(lambda: grw_json("repair", tree))
         trees = {entry["name"]: entry for entry in grw_json("list")["result"]["trees"]}
         self.live[tree] = Path(trees[tree]["path"])
+        self.legacy.discard(tree)
 
     @rule(path=st.sampled_from(EDITABLE), mode=st.sampled_from(["pool", "auto"]))
     def set_default(self, path, mode):
         step(f"set_default({path}, {mode})")
-        self.tool_step(lambda: grw_json("defaults", mode, path))
+        self.tool_step(lambda: grw_json("defaults", mode, path, check=not self.fault))
 
     @precondition(lambda self: OVERLAY)
     @rule(tree=trees)
@@ -421,8 +637,7 @@ class TreeWorld(RuleBasedStateMachine):
         if tree not in self.live:
             return
         overlays = CLIENT / ".repo/repo-worktrees" / tree / "overlays"
-        killed = run(["pkill", "-9", "-f", f"fuse-overlayfs.*{overlays}"], WORLD, check=False)
-        if killed.returncode == 0:
+        if run(["pkill", "-9", "-f", "--", f"fuse-overlayfs.*{overlays}"], WORLD, check=False).returncode == 0:
             time.sleep(0.3)
             self.dead.add(tree)
 
@@ -430,7 +645,7 @@ class TreeWorld(RuleBasedStateMachine):
     @rule(tree=trees)
     def repair_mounts(self, tree):
         step(f"repair_mounts({tree})")
-        if tree in self.live:
+        if tree in self.live and not self.fault:
             self.tool_step(lambda: grw_json("repair", "--mounts-only", tree))
             self.dead.discard(tree)
 
@@ -443,35 +658,111 @@ class TreeWorld(RuleBasedStateMachine):
             if time.time() > deadline:
                 raise Finding("background maintenance did not finish within 180 s")
             time.sleep(0.2)
+        if self.fault:
+            return
         trash = CLIENT / ".repo/repo-worktrees/.trash"
         if trash.is_dir() and any(trash.iterdir()):
             raise Finding(f"trash not emptied: {sorted(p.name for p in trash.iterdir())}")
         pool = grw_json("pool", "list")["result"]
-        capacity = pool["capacity"]
         for project in pool["projects"]:
-            if project["spares"] > capacity:
+            if project["spares"] > pool["capacity"]:
                 raise Finding(f"pool over capacity: {json.dumps(project)}")
         for spare in pool["spares"]:
             spare_path = Path(spare["path"])
             status = git(spare_path, "status", "--porcelain", "--untracked-files=all")
             if status:
                 raise Finding(f"dirty spare {spare_path}:\n{status}")
-            source = CLIENT / spare["project"]
-            listing = git(source, "worktree", "list", "--porcelain")
+            listing = git(CLIENT / spare["project"], "worktree", "list", "--porcelain")
             if str(spare_path.resolve()) not in listing and str(spare_path) not in listing:
                 raise Finding(f"spare {spare_path} is not registered:\n{listing}")
 
+    # -- faults ----------------------------------------------------------------
+
+    @precondition(lambda self: KILL)
+    @rule(operation=st.sampled_from(["add", "remove", "repair", "move"]), delay=st.integers(0, 1500))
+    def kill_tool(self, operation, delay):
+        step(f"kill_tool({operation}, {delay}ms)")
+        if self.fault:
+            return
+        self.count += 1
+        target = next(iter(self.live), None)
+        if operation == "add":
+            args = ["add", "--name", f"t{self.count}", str(BASE / f"t{self.count}")]
+        elif target is None:
+            return
+        elif operation == "remove":
+            args = ["remove", "--force", target]
+        elif operation == "move":
+            args = ["move", target, str(BASE / f"t-moved-{self.count}")]
+        else:
+            args = ["repair", target]
+        shown = " ".join(args)
+        LOG.append(f"(cd {WORLD} && grw -C {CLIENT} {shown} & sleep {delay / 1000}; kill -9 $!)")
+        process = subprocess.Popen([BIN, "-C", str(CLIENT), *args], cwd=WORLD, env=ENV,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(delay / 1000)
+        process.send_signal(signal.SIGKILL)
+        process.wait()
+        self.recover()
+
+    @precondition(lambda self: FAULTS)
+    @rule(tree=trees, path=st.sampled_from(EDITABLE))
+    def make_readonly(self, tree, path):
+        step(f"make_readonly({tree}, {path})")
+        if self.fault or tree not in self.live or not (self.live[tree] / path).is_dir():
+            return
+        target = str(self.live[tree] / path)
+        subprocess.run(["chmod", "-R", "a-w", target], capture_output=True)
+        self.fault = ("readonly", target)
+
+    @precondition(lambda self: FAULTS)
+    @rule(name=st.sampled_from(["a", "b", "manifest"]))
+    def make_remote_unreachable(self, name):
+        step(f"make_remote_unreachable({name})")
+        if self.fault:
+            return
+        target = str(WORLD / "remotes" / f"{name}.git")
+        os.rename(target, target + ".away")
+        self.fault = ("unreachable", target)
+
+    @precondition(lambda self: DISK)
+    @rule()
+    def fill_disk(self):
+        step("fill_disk()")
+        if self.fault:
+            return
+        filler = BASE / "filler"
+        with open(filler, "wb") as handle:
+            chunk = b"\0" * (1 << 20)
+            try:
+                while True:
+                    handle.write(chunk)
+                    handle.flush()
+            except OSError:
+                pass
+        self.fault = ("disk", str(filler))
+
+    @precondition(lambda self: self.fault is not None)
+    @rule()
+    def clear_fault_and_recover(self):
+        step("clear_fault_and_recover()")
+        self.clear_fault()
+        self.recover()
+
     # -- work inside trees -----------------------------------------------------
 
-    @rule(tree=trees, path=st.sampled_from(EDITABLE))
-    def tree_commit(self, tree, path):
-        step(f"tree_commit({tree}, {path})")
-        if tree not in self.live or not (self.live[tree] / path).is_dir():
+    @rule(tree=trees, path=st.sampled_from(EDITABLE), readme=st.booleans())
+    def tree_commit(self, tree, path, readme):
+        step(f"tree_commit({tree}, {path}, readme={readme})")
+        if not self.checked(tree) or self.fault or not (self.live[tree] / path / ".git").exists():
             return
         checkout = self.live[tree] / path
+        if rebasing(checkout):
+            return
         self.count += 1
-        (checkout / f"work{self.count}").write_text("x\n")
-        git(checkout, "add", ".")
+        name = "README" if readme else f"work{self.count}"
+        (checkout / name).write_text(f"tree {self.count}\n")
+        git(checkout, "add", name)
         git(checkout, "commit", "-qm", f"tree {self.count}")
         if git(checkout, "symbolic-ref", "-q", "HEAD", check=False) == "":
             self.unbranched[tree] = True
@@ -479,56 +770,132 @@ class TreeWorld(RuleBasedStateMachine):
     @rule(tree=trees, path=st.sampled_from(EDITABLE))
     def tree_start(self, tree, path):
         step(f"tree_start({tree}, {path})")
-        if tree not in self.live or not (self.live[tree] / path).is_dir():
+        if not self.checked(tree) or self.fault or not (self.live[tree] / path / ".git").exists():
             return
         self.count += 1
-        run(["repo", "start", f"topic{self.count}", path], self.live[tree])
-        self.branches[tree].add(path)
+        branch = f"topic{self.count}"
+        run(["repo", "start", branch, path], self.live[tree])
+        self.branches[tree][path] = branch
 
-    @rule(tree=trees)
-    def tree_sync(self, tree):
-        step(f"tree_sync({tree})")
-        if tree not in self.live or tree in self.dead:
+    @rule(tree=trees, rebase=st.booleans())
+    def tree_sync(self, tree, rebase):
+        step(f"tree_sync({tree}, rebase={rebase})")
+        if not self.checked(tree) or self.fault:
             return
         root = self.live[tree]
-        result = run(["repo", "sync", "-q"], root, check=False)
-        reference = run(["repo", "sync", "-q"], WORLD / "ref", check=False)
+        result = run(["repo", "sync", "-q"] + (["--rebase"] if rebase else []), root, check=False)
+        reference = run(["repo", "sync", "-q"], REF, check=False)
         if result.returncode != 0:
+            self.dirty_readme[tree] = True
             if self.unbranched[tree] or self.branches[tree] or reference.returncode != 0:
                 return
             raise Finding(f"repo sync failed in {tree} but not in a fresh client:\n{result.stderr[-2000:]}")
+        if reference.returncode != 0:
+            return
         _, ours = repo_list(root)
-        _, theirs = repo_list(WORLD / "ref")
-        shared = {
-            name
-            for name, path in [("a", "a"), ("b", "lib/b"), ("pre", "prebuilts/pre"), ("c", "c")]
-            if (root / path).is_symlink()
-        }
+        _, theirs = repo_list(REF)
+        shared = {name for name, path in PATHS.items() if (root / path).is_symlink()}
         if ours != theirs - shared:
             raise Finding(f"after repo sync, {tree} lists {sorted(ours)}; a fresh client lists {sorted(theirs)} (shared {sorted(shared)})")
         for name in ["A_README", "A_COPY"]:
-            if (root / name).exists() != (WORLD / "ref" / name).exists():
-                raise Finding(f"after repo sync, {tree}/{name} exists={ (root / name).exists() } but a fresh client has exists={ (WORLD / 'ref' / name).exists() }")
+            if os.path.lexists(root / name) != os.path.lexists(REF / name):
+                raise Finding(f"after repo sync, {tree}/{name} exists={os.path.lexists(root / name)}; a fresh client: {os.path.lexists(REF / name)}")
         for path in EDITABLE:
-            checkout = root / path
-            if not checkout.is_dir() or not (WORLD / "ref" / path).is_dir():
+            checkout, reference_checkout = root / path, REF / path
+            if not (checkout / ".git").exists() or not (reference_checkout / ".git").exists():
                 continue
             if git(checkout, "symbolic-ref", "-q", "HEAD", check=False) != "":
                 continue
             ours_head = git(checkout, "rev-parse", "HEAD")
-            ref_head = git(WORLD / "ref" / path, "rev-parse", "HEAD")
+            ref_head = git(reference_checkout, "rev-parse", "HEAD")
             if ours_head != ref_head and not self.unbranched[tree]:
-                raise Finding(f"after repo sync, {tree}/{path} is at {ours_head} but a fresh client is at {ref_head}")
+                raise Finding(f"after repo sync, {tree}/{path} is at {ours_head}; a fresh client is at {ref_head}")
+
+    @rule(tree=trees, how=st.sampled_from(["theirs", "ours", "abort"]))
+    def resolve_conflicts(self, tree, how):
+        step(f"resolve_conflicts({tree}, {how})")
+        if not self.checked(tree) or self.fault:
+            return
+        for path in EDITABLE:
+            checkout = self.live[tree] / path
+            if not (checkout / ".git").exists() or not rebasing(checkout):
+                continue
+            if how == "abort":
+                git(checkout, "rebase", "--abort")
+                continue
+            for _ in range(10):
+                conflicted = git(checkout, "diff", "--name-only", "--diff-filter=U").split()
+                for name in conflicted:
+                    git(checkout, "checkout", f"--{how}", "--", name)
+                    git(checkout, "add", name)
+                result = run(["git", "-c", "core.editor=true", "rebase", "--continue"], checkout, check=False)
+                if result.returncode == 0:
+                    break
+                if "nothing to commit" in result.stdout + result.stderr:
+                    git(checkout, "rebase", "--skip", check=False)
+                    break
+
+    @rule(tree=trees, path=st.sampled_from(EDITABLE))
+    def tree_upload(self, tree, path):
+        step(f"tree_upload({tree}, {path})")
+        branch = self.branches.get(tree, {}).get(path)
+        if not self.checked(tree) or self.fault or branch is None:
+            return
+        root = self.live[tree]
+        checkout = root / path
+        if git(checkout, "symbolic-ref", "-q", "--short", "HEAD", check=False) != branch:
+            return
+        if git(checkout, "rev-list", "--count", f"{branch}@{{upstream}}..{branch}", check=False) in ("", "0"):
+            return
+        log = WORLD / "hook.log"
+        log.unlink(missing_ok=True)
+        result = run(["repo", "upload", "--yes", "--verify", f"--br={branch}", "-t", path], root,
+                     check=False, env=git_config_env(UPLOAD_CONFIG))
+        if result.returncode != 0:
+            raise Finding(f"repo upload of {branch} in {tree}/{path} failed:\n{result.stdout[-1000:]}\n{result.stderr[-2000:]}")
+        name = next(name for name, candidate in PATHS.items() if candidate == path)
+        head = git(checkout, "rev-parse", branch)
+        refs = git(WORLD / "gerrit" / f"{name}.git", "for-each-ref", "--format=%(objectname) %(refname)")
+        if not any(line.startswith(head) and "refs/for/main" in line for line in refs.splitlines()):
+            raise Finding(f"repo upload of {tree}/{path} did not push {head}; gerrit has:\n{refs}")
+        entries = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+        mine = [entry for entry in entries if entry["project"] == name]
+        if not mine:
+            raise Finding(f"the pre-upload hook did not run for {name}: {entries}")
+        if Path(mine[-1]["worktree"]) != checkout.resolve() or mine[-1]["head"] != head:
+            raise Finding(f"the pre-upload hook saw {mine[-1]}, expected {checkout.resolve()} at {head}")
+
+    @rule(tree=trees, owner=trees)
+    def abandon_shared_branch(self, tree, owner):
+        step(f"abandon_shared_branch({tree}, {owner})")
+        if not self.checked(tree) or self.fault or not self.branches.get(owner):
+            return
+        path, branch = next(iter(self.branches[owner].items()))
+        run(["repo", "abandon", branch], self.live[tree], check=False)
+        if owner in self.live:
+            self.unbranched[owner] = True
+            checkout = self.live[owner] / path
+            exists = (checkout / ".git").exists() and run(
+                ["git", "rev-parse", "-q", "--verify", f"refs/heads/{branch}"], checkout, check=False
+            ).returncode == 0
+            if not exists:
+                self.branches[owner].pop(path, None)
 
     # -- invariants ------------------------------------------------------------
 
     @invariant()
     def repo_works_in_every_tree(self):
+        if self.fault:
+            return
         for name, root in self.live.items():
-            if name in self.dead:
+            if not self.checked(name):
                 continue
-            expected = owned_projects(root)
+            # A project dropped from the manifest can linger (repo refuses to
+            # delete a checkout with a nested project in it), as in any client.
+            declared = self.manifest_projects | {"grouped"}
+            expected = owned_projects(root) & declared
             result, listed = repo_list(root)
+            listed &= declared
             if result.returncode != 0 or listed != expected:
                 raise Finding(
                     f"repo list in {name} gave {sorted(listed)} (exit {result.returncode}), "
@@ -537,7 +904,7 @@ class TreeWorld(RuleBasedStateMachine):
 
     @invariant()
     def tool_state_matches_git(self):
-        if not self.live:
+        if not self.live or self.fault:
             return
         listed = grw_json("list")["result"]["trees"]
         names = {tree["name"]: tree for tree in listed}
@@ -547,6 +914,8 @@ class TreeWorld(RuleBasedStateMachine):
             if name in self.dead:
                 if "prebuilts/pre" not in tree.get("overlays_unmounted", []):
                     raise Finding(f"tree {name} has a dead overlay that list does not report: {json.dumps(tree)}")
+                continue
+            if name in self.legacy:
                 continue
             if tree["state"] != "complete" or tree["failed_projects"]:
                 raise Finding(f"tree {name}: {json.dumps(tree)}")
@@ -558,23 +927,28 @@ class TreeWorld(RuleBasedStateMachine):
                 head = git(checkout, "rev-parse", "HEAD")
                 if project["head"] != head:
                     raise Finding(f"status says {name}/{project['path']} is at {project['head']}, git says {head}")
+            for entry in tree["checked_out_branches"]:
+                actual = git(self.live[name] / entry["project"], "symbolic-ref", "-q", "--short", "HEAD", check=False)
+                if actual != entry["branch"]:
+                    raise Finding(f"list says {name}/{entry['project']} has {entry['branch']} checked out; git says {actual!r}")
 
     @invariant()
     def no_stale_registrations(self):
-        for path in ["a", "lib/b", "prebuilts/pre", "c"]:
+        if self.fault:
+            return
+        for name, path in PATHS.items():
             checkout = CLIENT / path
-            if not checkout.is_dir():
+            if not (checkout / ".git").exists():
                 continue
             listing = git(checkout, "worktree", "list", "--porcelain")
-            name = {"a": "a", "lib/b": "b", "prebuilts/pre": "pre", "c": "c"}[path]
             for block in listing.split("\n\n"):
                 if "prunable" not in block:
                     continue
                 if MAINTENANCE and ".pool/" in block:
                     continue
-                if name not in self.manifest_projects:
-                    # repo sync in a tree deletes a project dropped from the
-                    # manifest; its registration is pruned when the tree goes.
+                if name not in self.manifest_projects and name in PATHS:
+                    continue
+                if any(str(root) in block for tree, root in self.live.items() if tree in self.legacy):
                     continue
                 raise Finding(f"stale worktree registration in {path}:\n{block}")
 
@@ -588,7 +962,10 @@ def main():
     examples = int(sys.argv[1]) if len(sys.argv) > 1 else 50
     steps = int(os.environ.get("GRW_FUZZ_STEPS", "10"))
     version = describe_binary()
-    modes = f"overlay={OVERLAY} maintenance={MAINTENANCE} crash={CRASH}"
+    modes = (
+        f"world={VARIANT} overlay={OVERLAY} maintenance={MAINTENANCE} crash={CRASH} "
+        f"kill={KILL} faults={FAULTS} disk={DISK} old={','.join(sorted(OLD_BINS)) or '-'}"
+    )
     print(f"{version}; {modes}", flush=True)
     BASE.mkdir(parents=True, exist_ok=True)
     if not TEMPLATE.exists():
@@ -623,6 +1000,7 @@ def main():
             )
             print(f"FINDING {index}: {str(failure).splitlines()[0][:200]}\n  reproduction: {path}")
         print(f"after {time.time() - started:.0f}s")
+        print("steps run:", json.dumps(dict(sorted(STATS.items(), key=lambda item: -item[1]))))
         sys.exit(1)
     print(f"no findings in {examples} examples ({time.time() - started:.0f}s)")
     print("steps run:", json.dumps(dict(sorted(STATS.items(), key=lambda item: -item[1]))))

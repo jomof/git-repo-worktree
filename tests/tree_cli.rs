@@ -1028,6 +1028,114 @@ fn a_fixed_depth_parent_of_another_project_is_materialized() {
 }
 
 #[test]
+fn populated_submodules_keep_working_after_move() {
+    let fixture = fixture();
+    let target = fixture.temp.path().join("subtarget");
+    fs::create_dir(&target).unwrap();
+    git(&target, &["init", "-q", "-b", "main"]);
+    fs::write(target.join("lib.txt"), "library\n").unwrap();
+    git(&target, &["add", "."]);
+    git(&target, &["commit", "-qm", "library"]);
+    let project = fixture.client.join("p");
+    git(
+        &project,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            target.to_str().unwrap(),
+            "lib",
+        ],
+    );
+    git(&project, &["commit", "-qm", "add submodule"]);
+    let sha = git(&project, &["rev-parse", "HEAD"]);
+    write_fixture_snapshot(&fixture, &sha);
+    let allow_file = |command: &mut Command| {
+        command
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
+            .env("GIT_CONFIG_VALUE_0", "always");
+    };
+    let mut add = command(&fixture);
+    allow_file(&mut add);
+    add.args(["add", "--submodules"])
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/lib/lib.txt")).unwrap(),
+        "library\n"
+    );
+    let moved = fixture.temp.path().join("moved");
+    command(&fixture)
+        .args(["move", "tree"])
+        .arg(&moved)
+        .assert()
+        .success();
+    assert_eq!(git(&moved.join("p"), &["status", "--porcelain"]), "");
+    assert_eq!(
+        git(&moved.join("p/lib"), &["rev-parse", "--show-toplevel"]),
+        fs::canonicalize(moved.join("p/lib"))
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    let status = output_json(
+        command(&fixture)
+            .args(["status", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(status["result"]["dirty"], false, "{status}");
+}
+
+#[test]
+fn a_tree_with_nested_projects_is_clean_and_removable() {
+    let fixture = fixture();
+    let child_sha = init_project(
+        &fixture.client,
+        "p/child",
+        &[("child.txt", "nested project\n")],
+    );
+    fs::write(fixture.client.join(".repo/project.list"), "p\np/child\n").unwrap();
+    let p_sha = git(&fixture.client.join("p"), &["rev-parse", "HEAD"]);
+    fs::write(
+        &fixture.snapshot,
+        format!(
+            r#"<manifest><project name="platform/p" path="p" revision="{p_sha}"/><project name="platform/child" path="p/child" revision="{child_sha}"/></manifest>"#
+        ),
+    )
+    .unwrap();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let status = output_json(
+        command(&fixture)
+            .args(["status", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(status["result"]["dirty"], false, "{status}");
+    fs::write(fixture.destination.join("p/scratch.txt"), "untracked\n").unwrap();
+    let refused = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(refused["error"]["code"], "E_DIRTY");
+    fs::remove_file(fixture.destination.join("p/scratch.txt")).unwrap();
+    command(&fixture)
+        .args(["remove", "tree"])
+        .assert()
+        .success();
+}
+
+#[test]
 fn repair_restores_shared_links_but_preserves_unexpected_real_data() {
     let fixture = fixture();
     enable_clone_depth_sharing(&fixture, false);
@@ -2579,6 +2687,80 @@ fn remove_deletes_files_in_the_background() {
             .code(1),
     );
     assert_eq!(refused["error"]["code"], "E_BAD_NAME");
+}
+
+#[test]
+fn repair_of_a_tree_removed_while_waiting_reports_it_missing() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let entry = fixture.client.join(".repo/repo-worktrees/tree");
+    for (args, expect_ok) in [
+        (vec!["repair", "--json", "tree"], false),
+        (vec!["repair", "--json"], true),
+    ] {
+        if !entry.is_dir() {
+            command(&fixture)
+                .args(["add", "--force"])
+                .arg(&fixture.destination)
+                .assert()
+                .success();
+        }
+        let saved = fixture.temp.path().join("saved-entry");
+        let lock = hold_lock(&entry.join("lock"));
+        let guard = lock.try_write().unwrap();
+        let mut repair = StdCommand::new(assert_cmd::cargo::cargo_bin("git-repo-worktree"));
+        for name in inherited_tool_variables() {
+            repair.env_remove(name);
+        }
+        let repair = repair
+            .env("PATH", &fixture.path_env)
+            .env("HOME", fixture.temp.path())
+            .env("GIT_REPO_WORKTREE_NO_OVERLAY", "1")
+            .env("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE", "1")
+            .arg("-C")
+            .arg(&fixture.client)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        fs::rename(&entry, &saved).unwrap();
+        drop(guard);
+        let output = repair.wait_with_output().unwrap();
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["ok"], expect_ok, "{args:?}: {value}");
+        if !expect_ok {
+            assert_eq!(value["error"]["code"], "E_NO_SUCH_TREE", "{value}");
+        }
+        fs::rename(&saved, &entry).unwrap();
+    }
+}
+
+#[test]
+fn a_maintenance_request_made_while_another_runs_is_not_lost() {
+    let fixture = fixture();
+    let pool = fixture.client.join(".repo/repo-worktrees/.pool");
+    fs::create_dir_all(&pool).unwrap();
+    let lock = hold_lock(&pool.join(".maintain.lock"));
+    let guard = lock.try_write().unwrap();
+    let skipped = output_json(
+        command(&fixture)
+            .args(["pool", "maintain", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(skipped["result"]["skipped"].is_string(), "{skipped}");
+    assert!(pool.join(".maintain.again").exists());
+    drop(guard);
+    command(&fixture)
+        .args(["pool", "maintain", "--json"])
+        .assert()
+        .success();
+    assert!(!pool.join(".maintain.again").exists());
 }
 
 #[test]

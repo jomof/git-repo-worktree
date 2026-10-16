@@ -37,6 +37,10 @@ pub const STRATEGY: &str = "pool";
 pub const DIR_NAME: &str = ".pool";
 const FILLING_PREFIX: &str = ".filling-";
 const MAINTAIN_LOCK: &str = ".maintain.lock";
+/// Written by every maintenance run before it tries the lock, and removed by
+/// the run that holds it when it starts a pass. The holder checks for it after
+/// releasing the lock and runs again if a later request arrived meanwhile.
+const MAINTAIN_AGAIN: &str = ".maintain.again";
 /// Disables the background `pool maintain` that follows `add` and `remove`.
 pub const NO_MAINTENANCE_ENV: &str = "GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE";
 /// Maintenance re-plans after each round so returns and takes made while it
@@ -964,10 +968,8 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     }
     fs::create_dir_all(&directory)
         .map_err(|error| AppError::io(format!("create {}", directory.display()), error))?;
-    let Some(_held) = try_acquire(&directory.join(MAINTAIN_LOCK), "pool maintenance")? else {
-        crate::metrics::record("skipped", json!("another maintenance run is active"));
-        return Ok(json!({"skipped": "another maintenance run is active"}));
-    };
+    let again = directory.join(MAINTAIN_AGAIN);
+    let _ = fs::write(&again, "");
     crate::metrics::record("system_start", crate::metrics::system_load());
     let capacity = capacity(registry);
     let mut reaped = Vec::new();
@@ -976,87 +978,104 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     let mut failed = Vec::new();
     let mut deferred = BTreeSet::new();
     let mut trees_deleted = 0;
-    for _ in 0..MAINTENANCE_ROUNDS {
-        if crate::INTERRUPTED.load(Ordering::SeqCst) {
+    let mut passes = 0;
+    loop {
+        let Some(held) = try_acquire(&directory.join(MAINTAIN_LOCK), "pool maintenance")? else {
+            if passes == 0 {
+                crate::metrics::record("skipped", json!("another maintenance run is active"));
+                return Ok(json!({"skipped": "another maintenance run is active"}));
+            }
             break;
-        }
-        let mut worked = false;
-        let step = Instant::now();
-        crate::metrics::phase("paused", wait_for_quiet_trees(registry));
-        let deleted = crate::trash::empty(registry, |command| {
-            run_yielding(command, registry).is_ok_and(|(status, stopped_ms)| {
-                crate::metrics::phase("paused", stopped_ms);
-                status.success()
-            })
-        });
-        crate::metrics::phase("trash", crate::metrics::elapsed_ms(step));
-        if deleted > 0 {
-            worked = true;
-            trees_deleted += deleted;
-        }
-        let step = Instant::now();
-        let plan = plan(source, registry)?;
-        crate::metrics::phase("plan", crate::metrics::elapsed_ms(step));
-        let step = Instant::now();
-        for orphan in &plan.orphaned {
+        };
+        let _ = fs::remove_file(&again);
+        passes += 1;
+        for _ in 0..MAINTENANCE_ROUNDS {
+            if crate::INTERRUPTED.load(Ordering::SeqCst) {
+                break;
+            }
+            let mut worked = false;
+            let step = Instant::now();
             crate::metrics::phase("paused", wait_for_quiet_trees(registry));
-            let cleared = clear_project(source, registry, &orphan.project)?;
-            if !cleared.is_empty() {
+            let deleted = crate::trash::empty(registry, |command| {
+                run_yielding(command, registry).is_ok_and(|(status, stopped_ms)| {
+                    crate::metrics::phase("paused", stopped_ms);
+                    status.success()
+                })
+            });
+            crate::metrics::phase("trash", crate::metrics::elapsed_ms(step));
+            if deleted > 0 {
                 worked = true;
-                reaped.push(json!({
+                trees_deleted += deleted;
+            }
+            let step = Instant::now();
+            let plan = plan(source, registry)?;
+            crate::metrics::phase("plan", crate::metrics::elapsed_ms(step));
+            let step = Instant::now();
+            for orphan in &plan.orphaned {
+                crate::metrics::phase("paused", wait_for_quiet_trees(registry));
+                let cleared = clear_project(source, registry, &orphan.project)?;
+                if !cleared.is_empty() {
+                    worked = true;
+                    reaped.push(json!({
                     "project": orphan.project,
                     "spares": cleared.len(),
                     "reason": orphan.reason,
                     "bytes": orphan.facts.map(|facts| facts.disk_bytes().saturating_mul(cleared.len() as u64)),
                 }));
+                }
             }
-        }
-        for (project, _) in &plan.kept {
-            let removed = trim_project(source, registry, project, capacity);
-            if removed > 0 {
-                worked = true;
-                trimmed.push(json!({"project": project, "spares": removed}));
+            for (project, _) in &plan.kept {
+                let removed = trim_project(source, registry, project, capacity);
+                if removed > 0 {
+                    worked = true;
+                    trimmed.push(json!({"project": project, "spares": removed}));
+                }
             }
-        }
-        crate::metrics::phase("reap", crate::metrics::elapsed_ms(step));
-        let step = Instant::now();
-        let mut blocked = HashSet::new();
-        for level in 1..=capacity {
-            for (project, facts) in &plan.kept {
-                if blocked.contains(project) || slots(registry, project).len() >= level {
-                    continue;
-                }
-                if crate::INTERRUPTED.load(Ordering::SeqCst) {
-                    break;
-                }
-                crate::metrics::phase("paused", wait_for_quiet_trees(registry));
-                if !has_room(&directory, facts.disk_bytes()) {
-                    deferred.insert(project.clone());
-                    blocked.insert(project.clone());
-                    continue;
-                }
-                let started = Instant::now();
-                match fill_one(source, registry, project, true, Some(capacity)) {
-                    Ok(Some(_)) => {
-                        worked = true;
-                        filled.push(json!({
-                            "project": project,
-                            "ms": crate::metrics::elapsed_ms(started),
-                        }));
+            crate::metrics::phase("reap", crate::metrics::elapsed_ms(step));
+            let step = Instant::now();
+            let mut blocked = HashSet::new();
+            for level in 1..=capacity {
+                for (project, facts) in &plan.kept {
+                    if blocked.contains(project) || slots(registry, project).len() >= level {
+                        continue;
                     }
-                    Ok(None) => {}
-                    Err(reason) => {
+                    if crate::INTERRUPTED.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    crate::metrics::phase("paused", wait_for_quiet_trees(registry));
+                    if !has_room(&directory, facts.disk_bytes()) {
+                        deferred.insert(project.clone());
                         blocked.insert(project.clone());
-                        failed.push(json!({"project": project, "reason": reason}));
+                        continue;
+                    }
+                    let started = Instant::now();
+                    match fill_one(source, registry, project, true, Some(capacity)) {
+                        Ok(Some(_)) => {
+                            worked = true;
+                            filled.push(json!({
+                                "project": project,
+                                "ms": crate::metrics::elapsed_ms(started),
+                            }));
+                        }
+                        Ok(None) => {}
+                        Err(reason) => {
+                            blocked.insert(project.clone());
+                            failed.push(json!({"project": project, "reason": reason}));
+                        }
                     }
                 }
             }
+            crate::metrics::phase("fill", crate::metrics::elapsed_ms(step));
+            if !worked {
+                break;
+            }
         }
-        crate::metrics::phase("fill", crate::metrics::elapsed_ms(step));
-        if !worked {
+        drop(held);
+        if !again.exists() || crate::INTERRUPTED.load(Ordering::SeqCst) {
             break;
         }
     }
+    crate::metrics::record("passes", json!(passes));
     let deferred = deferred.into_iter().collect::<Vec<_>>();
     crate::metrics::record("reaped", json!(reaped));
     crate::metrics::record("trimmed", json!(trimmed));

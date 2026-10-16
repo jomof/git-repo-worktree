@@ -111,7 +111,8 @@ pub fn inspect_tree(meta: &TreeMeta, jobs: usize) -> Vec<ProjectInspection> {
             .par_iter()
             .map(|project| {
                 let started = std::time::Instant::now();
-                let mut inspection = inspect_project(&root, &entry, project);
+                let children = nested_children(meta, project);
+                let mut inspection = inspect_project(&root, &entry, project, &children);
                 inspection.ms = crate::metrics::elapsed_ms(started);
                 inspection
             })
@@ -123,7 +124,23 @@ pub fn inspect_tree(meta: &TreeMeta, jobs: usize) -> Vec<ProjectInspection> {
     }
 }
 
-pub fn inspect_project(root: &Path, entry: &Path, project: &ProjectMeta) -> ProjectInspection {
+/// Paths, relative to `project`, of the tree's projects nested inside it. Git
+/// reports each as untracked in the parent, as it does in any repo client.
+pub fn nested_children(meta: &TreeMeta, project: &ProjectMeta) -> Vec<String> {
+    let prefix = format!("{}/", project.path);
+    meta.projects
+        .iter()
+        .filter(|other| other.state != "skipped")
+        .filter_map(|other| other.path.strip_prefix(&prefix).map(str::to_owned))
+        .collect()
+}
+
+pub fn inspect_project(
+    root: &Path,
+    entry: &Path,
+    project: &ProjectMeta,
+    children: &[String],
+) -> ProjectInspection {
     let checkout = root.join(&project.path);
     let mut inspection = ProjectInspection {
         path: project.path.clone(),
@@ -206,7 +223,7 @@ pub fn inspect_project(root: &Path, entry: &Path, project: &ProjectMeta) -> Proj
             return inspection.finish();
         }
     };
-    parse_status_v2(&output.stdout, &mut inspection);
+    parse_status_v2(&output.stdout, &mut inspection, children);
     match count_unbranched(&project.git_common_dir, inspection.head.as_deref(), project) {
         Ok(count) => inspection.unbranched_commits = count,
         Err(error) => inspection.error = Some(error),
@@ -214,7 +231,7 @@ pub fn inspect_project(root: &Path, entry: &Path, project: &ProjectMeta) -> Proj
     inspection.finish()
 }
 
-fn parse_status_v2(stdout: &[u8], inspection: &mut ProjectInspection) {
+fn parse_status_v2(stdout: &[u8], inspection: &mut ProjectInspection, children: &[String]) {
     let mut records = stdout.split(|byte| *byte == 0);
     while let Some(record) = records.next() {
         if record.is_empty() {
@@ -234,8 +251,17 @@ fn parse_status_v2(stdout: &[u8], inspection: &mut ProjectInspection) {
         } else if text.starts_with("2 ") {
             inspection.modified += 1;
             records.next();
-        } else if text.starts_with("? ") {
-            inspection.untracked += 1;
+        } else if let Some(path) = text.strip_prefix("? ") {
+            let path = path.trim_end_matches('/');
+            let nested = children.iter().any(|child| {
+                child == path
+                    || child
+                        .strip_prefix(path)
+                        .is_some_and(|rest| rest.starts_with('/'))
+            });
+            if !nested {
+                inspection.untracked += 1;
+            }
         }
     }
 }
@@ -364,7 +390,7 @@ mod tests {
 1 .M N... 100644 100644 100644 a b file\0\
 2 R. N... 100644 100644 100644 a b R100 new\0old\0\
 ? untracked\0? other\0";
-        parse_status_v2(stdout, &mut inspection);
+        parse_status_v2(stdout, &mut inspection, &[]);
         assert_eq!(inspection.branch.as_deref(), Some("topic"));
         assert_eq!(inspection.modified, 2);
         assert_eq!(inspection.untracked, 2);
@@ -372,8 +398,20 @@ mod tests {
         parse_status_v2(
             b"# branch.oid abc\0# branch.head (detached)\0",
             &mut detached,
+            &[],
         );
         assert_eq!(detached.branch, None);
         assert_eq!(detached.head.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn nested_projects_are_not_untracked_files_of_their_parent() {
+        let mut inspection = ProjectInspection::default();
+        parse_status_v2(
+            b"? nested/\0? tools/\0? scratch.txt\0? toolbox/\0",
+            &mut inspection,
+            &["nested".into(), "tools/deep".into()],
+        );
+        assert_eq!(inspection.untracked, 2);
     }
 }
