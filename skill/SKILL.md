@@ -6,8 +6,9 @@ description: >-
   Codex needs a disposable second checkout of an entire repo client for parallel
   work, hotfixes, review, experiments, or clean builds; when users mention
   repo-wide worktrees, AOSP or manifest-checkout isolation, working without
-  disturbing an active client, configuring per-project population defaults, or
-  managing an existing git-repo-worktree. Also use before modifying a repo
+  disturbing an active client, choosing how projects are checked out
+  (`defaults`), or managing an existing tree (`status`, `repair`,
+  `materialize`, `remove`, `restore`). Also use before modifying a repo
   client concurrently used by another session, even if the user does not
   explicitly request a worktree. Prefer this over copying a repo client, syncing
   a disposable second client, or creating worktrees project by project.
@@ -309,6 +310,13 @@ dead (every access fails with "Transport endpoint is not connected"). `list
 which changes nothing else. `status` also lists projects the tree records as
 failed, with the recorded state in `recorded`, next to what the project
 actually shows.
+
+If a build reports a file missing inside a tree, run `ls -l` on that exact
+path before anything else (map a build label to its path first; the project
+may be a subdirectory of the package). If the file is there and `status
+--json <tree>` shows the project `mounted: true`, the tree is intact and the
+failure was transient: re-run the build. If the file is gone, or the overlay
+is unmounted or dead, run `repair --mounts-only <tree>`.
 
 Persistent defaults are local source-client policy: `symlink`, `worktree`,
 `pool` (worktrees taken from pre-populated spares), `overlay` (Linux
