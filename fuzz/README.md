@@ -9,9 +9,11 @@ manifest changes), plus a source client, a reference client, and local bare
 "gerrit" repositories that receive `repo upload`.
 
 * `harness.py` (Hypothesis stateful testing) runs random sequences of
-  upstream, manifest, source, tree, review, and fault operations, checks
-  invariants after every step, compares `repo sync` in a tree with a fresh
-  client, and shrinks a failure to a minimal sequence written to `findings/`.
+  upstream, manifest, source, tree, review, archive, and fault operations,
+  checks invariants after every step, compares `repo sync` in a tree with a
+  fresh client, checks that `restore` reproduces every project's HEAD,
+  branch, index, and files as they were before `remove`, and shrinks a
+  failure to a minimal sequence written to `findings/`.
   Modes are set by environment variables documented at the top of the file:
   world variant (`plain`, `partial`, `worktree`), overlays, background
   maintenance, crash hooks, random kills, faults, a full disk, and older
