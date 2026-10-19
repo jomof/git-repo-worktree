@@ -106,6 +106,12 @@ is their sum. `dropped` lists state that `--force` let the archive omit
 The manifest repository gets a ref `refs/repo-worktree/archive/<id>` to the
 tree's manifest checkout commit, when the tree has one.
 
+The record is written before any ref, with `"complete": false`, and rewritten
+with `"complete": true` once every ref exists. Listing and selection ignore
+incomplete records; retention deletes incomplete records older than an hour,
+with their refs, and reserved directories that never got a record. A capture
+killed at any point therefore never leaves refs that nothing lists.
+
 ## 2. `remove`
 
 ### 2.1 Behavior
@@ -169,7 +175,8 @@ archives, every tree that:
 * is not locked, and its state is `complete` or `incomplete` (not `creating`,
   `moving`, or `removing`);
 * has no process using it (working directory inside it, or arguments naming
-  it; the same check `remove` reports as `lingering_processes`);
+  it; the same check `remove` reports as `lingering_processes`), not counting
+  the tree's own `fuse-overlayfs` daemons;
 * has had no activity for at least `<duration>` (`30m`, `24h`, `7d`).
 
 *Activity* is the newest of: the mtimes of each project's per-worktree
