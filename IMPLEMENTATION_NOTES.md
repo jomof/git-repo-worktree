@@ -251,3 +251,22 @@ machine interface deterministic:
     (found while triaging a harness bug that hid it).
 - Each finding became an ordinary test in `tests/`; the harness stays a tool
   for finding the next ones, not part of the suite.
+
+## Archived trees (`spec-archive.md`)
+
+- `remove` archives before deleting, so cleanup never needs to judge whether
+  work matters; `--discard` is the only destructive option. `restore`
+  recreates the tree through `add` with the archived snapshot and commits.
+- Index and working tree are stored as trees of a commit (parents: HEAD and an
+  index commit) built with a temporary index and `git add -A`, so restore can
+  set HEAD, index, and working tree exactly with two `read-tree` calls instead
+  of replaying `git stash`, which does not round-trip every combination.
+- Refs are written only for projects that need them (changes, unbranched
+  commits, or a moved HEAD), so archiving a clean tree costs one status per
+  project and no repository writes, and expiry deletes few refs.
+- Projects with archived changes, a branch, or a moved HEAD are forced to
+  worktree mode on restore: an overlay or shared checkout shows the source's
+  files, not the archived commit's.
+- Inspections run `git status` with `GIT_OPTIONAL_LOCKS=0` so that `status`
+  does not rewrite indexes and make every tree look recently active to
+  `remove --idle`.

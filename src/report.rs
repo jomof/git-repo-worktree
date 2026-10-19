@@ -269,6 +269,13 @@ fn summarize(events: &[Value], trees: &[crate::model::TreeMeta]) -> Value {
         "remove": {
             "returned_to_pool": removes.iter().filter_map(|event| event["returned_to_pool"].as_u64()).sum::<u64>(),
             "dirty_reasons": dirty_reasons,
+            "archives": {
+                "created": removes.iter().filter(|event| event["archive_id"].is_string()).count(),
+                "with_changes": removes.iter().filter(|event| event["archive_projects_with_changes"].as_u64().unwrap_or(0) > 0).count(),
+                "bytes": removes.iter().filter_map(|event| event["archive_bytes"].as_u64()).sum::<u64>(),
+                "dropped_items": removes.iter().filter_map(|event| event["archive_dropped"].as_u64()).sum::<u64>(),
+                "expired": removes.iter().filter_map(|event| event["archives_expired"].as_u64()).sum::<u64>(),
+            },
         },
         "slow_inspections": slow_inspections,
         "hooks": hooks,
@@ -363,6 +370,7 @@ fn print_human(report: &Value) {
         "dirty refusals (remove)",
         &report["remove"]["dirty_reasons"],
     );
+    section("archives (remove)", &report["remove"]["archives"]);
     for (event, summary) in report["hooks"].as_object().into_iter().flatten() {
         println!(
             "\nhook {event}: p50 {} ms, p90 {} ms, statuses {}",

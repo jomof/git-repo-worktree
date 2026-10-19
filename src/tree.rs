@@ -1,12 +1,11 @@
 use crate::bridge;
 use crate::cli::{
     AddArgs, ListArgs, LockArgs, MaterializeArgs, MoveArgs, PruneArgs, RemoveArgs, RepairArgs,
-    UnlockArgs,
+    RestoreArgs, UnlockArgs,
 };
 use crate::defaults;
 use crate::discovery::{check_git_version, check_repo_version, discover_client};
 use crate::error::{AppError, AppResult};
-use crate::inspect::inspect_tree;
 use crate::manifest::{parse_snapshot_file, project_depth};
 use crate::model::{
     default_heavy_jobs, DirectiveMeta, LockMeta, MovingMeta, ProjectMeta, TreeMeta, FORMAT_VERSION,
@@ -76,7 +75,24 @@ fn format_elapsed(elapsed: Duration) -> String {
     }
 }
 
+/// An archive `add` recreates a tree from (`restore`).
+struct Restoring<'a> {
+    record: &'a crate::archive::Record,
+    snapshot: PathBuf,
+    results: Mutex<Vec<Value>>,
+}
+
 pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Value> {
+    add_with(args, cwd, quiet, verbose, None)
+}
+
+fn add_with(
+    args: &AddArgs,
+    cwd: &Path,
+    quiet: bool,
+    verbose: u8,
+    restoring: Option<&Restoring>,
+) -> AppResult<Value> {
     let operation_started = Instant::now();
     let jobs = args.jobs.unwrap_or_else(default_jobs);
     if args.resume
@@ -172,6 +188,7 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 quiet,
                 verbose,
                 operation_started,
+                &mut |_| {},
             )
         });
     }
@@ -199,7 +216,10 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
                 "tree name is empty after sanitization",
             ));
         }
-        if name == pool::DIR_NAME || name == crate::trash::DIR_NAME {
+        if name == pool::DIR_NAME
+            || name == crate::trash::DIR_NAME
+            || name == crate::archive::DIR_NAME
+        {
             return Err(AppError::operational(
                 "E_BAD_NAME",
                 format!("{name} is reserved; pass --name"),
@@ -213,6 +233,14 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             ));
         }
         let source_defaults = defaults::load(registry)?;
+        if restoring.is_none() && !quiet {
+            if let Some(record) = crate::archive::newest_with_changes_at(registry, &destination) {
+                eprintln!(
+                    "note: {} was archived from this path with changes at {}; `git repo-worktree restore {}` brings it back",
+                    record.tree, record.archived_at, record.id
+                );
+            }
+        }
         fs::create_dir(&entry)
             .map_err(|error| AppError::io(format!("create {}", entry.display()), error))?;
         fs::set_permissions(&entry, fs::Permissions::from_mode(0o755))
@@ -262,26 +290,39 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         phase_start(quiet, verbose, "snapshot");
         let snapshot = entry.join("snapshot.xml");
         let step = Instant::now();
-        let output = match Command::new("repo")
-            .current_dir(&client.root)
-            .args(["manifest", "-r", "-o"])
-            .arg(&snapshot)
-            .output()
-        {
-            Ok(output) => output,
-            Err(error) => {
+        if let Some(restoring) = restoring {
+            if let Err(error) = fs::copy(&restoring.snapshot, &snapshot) {
                 let _ = fs::remove_dir_all(&entry);
                 return Err(AppError::operational(
-                    "E_REPO_MISSING",
-                    format!("repo is not available on PATH: {error}"),
+                    "E_ARCHIVE",
+                    format!(
+                        "archive {} has no readable snapshot ({error})",
+                        restoring.record.id
+                    ),
                 ));
             }
-        };
-        crate::metrics::phase("snapshot-repo-manifest", crate::metrics::elapsed_ms(step));
-        if !output.status.success() {
-            let error = crate::manifest::snapshot_command_failure(&output);
-            let _ = fs::remove_dir_all(&entry);
-            return Err(error);
+        } else {
+            let output = match Command::new("repo")
+                .current_dir(&client.root)
+                .args(["manifest", "-r", "-o"])
+                .arg(&snapshot)
+                .output()
+            {
+                Ok(output) => output,
+                Err(error) => {
+                    let _ = fs::remove_dir_all(&entry);
+                    return Err(AppError::operational(
+                        "E_REPO_MISSING",
+                        format!("repo is not available on PATH: {error}"),
+                    ));
+                }
+            };
+            crate::metrics::phase("snapshot-repo-manifest", crate::metrics::elapsed_ms(step));
+            if !output.status.success() {
+                let error = crate::manifest::snapshot_command_failure(&output);
+                let _ = fs::remove_dir_all(&entry);
+                return Err(error);
+            }
         }
         let parsed = match parse_snapshot_file(&client.root, &snapshot, jobs) {
             Ok(parsed) => parsed,
@@ -293,16 +334,22 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         meta.projects = parsed.projects;
         meta.copyfiles = parsed.copyfiles;
         meta.linkfiles = parsed.linkfiles;
-        meta.default_modes = meta
-            .projects
-            .iter()
-            .filter_map(|project| {
-                source_defaults
-                    .projects
-                    .get(&project.path)
-                    .map(|mode| (project.path.clone(), mode.clone()))
-            })
-            .collect();
+        meta.default_modes = match restoring {
+            Some(restoring) => restoring.record.options.default_modes.clone(),
+            None => meta
+                .projects
+                .iter()
+                .filter_map(|project| {
+                    source_defaults
+                        .projects
+                        .get(&project.path)
+                        .map(|mode| (project.path.clone(), mode.clone()))
+                })
+                .collect(),
+        };
+        let isolated = restoring.map_or_else(HashSet::new, |restoring| {
+            pin_archived_commits(&mut meta, restoring)
+        });
         let step = Instant::now();
         if let Err(error) = configure_population_modes(
             &mut meta,
@@ -314,6 +361,11 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
         ) {
             let _ = fs::remove_dir_all(&entry);
             return Err(error);
+        }
+        for project in &mut meta.projects {
+            if isolated.contains(&project.path) {
+                project.mode = MODE_WORKTREE.into();
+            }
         }
         crate::metrics::phase("snapshot-preflight", crate::metrics::elapsed_ms(step));
         append_journal(&entry, "pin", "done", None, None, None)?;
@@ -376,7 +428,206 @@ pub fn add(args: &AddArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Va
             quiet,
             verbose,
             operation_started,
+            &mut |meta| {
+                if let Some(restoring) = restoring {
+                    apply_archived_state(meta, restoring, jobs);
+                }
+            },
         )
+    }
+}
+
+/// Pins each archived project to its archived HEAD and returns the projects
+/// that must be isolated worktrees: those whose state differs from a fresh
+/// checkout of the source.
+fn pin_archived_commits(meta: &mut TreeMeta, restoring: &Restoring) -> HashSet<String> {
+    let mut isolated = HashSet::new();
+    let mut results = restoring.results.lock().expect("restore results lock");
+    for archived in &restoring.record.projects {
+        match meta
+            .projects
+            .iter_mut()
+            .find(|project| project.path == archived.path)
+        {
+            Some(project) => {
+                if archived.mode == MODE_WORKTREE
+                    || archived.archive.is_some()
+                    || archived.branch.is_some()
+                    || archived.head != project.sha
+                {
+                    isolated.insert(project.path.clone());
+                }
+                project.sha = archived.head.clone();
+            }
+            None => results.push(json!({
+                "path": archived.path,
+                "ok": false,
+                "reason": "the project is no longer in the source client",
+            })),
+        }
+    }
+    isolated
+}
+
+/// Applies each archived project's index, working tree, and branch to the
+/// freshly populated tree, and points its manifest checkout back at the
+/// archived manifest commit.
+fn apply_archived_state(meta: &mut TreeMeta, restoring: &Restoring, jobs: usize) {
+    let root = meta.root();
+    let record = restoring.record;
+    let states = meta
+        .projects
+        .iter()
+        .map(|project| {
+            (
+                project.path.clone(),
+                (project.state.clone(), project.reason.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let apply = |archived: &crate::archive::Project| -> Value {
+        let mut result = json!({
+            "path": archived.path,
+            "changes_applied": false,
+            "branch": archived.branch,
+            "branch_restored": false,
+            "reason": null,
+            "ok": true,
+        });
+        match states.get(&archived.path) {
+            Some((state, _)) if state == "done" => {}
+            Some((state, reason)) => {
+                result["ok"] = json!(false);
+                result["reason"] = json!(format!(
+                    "not populated ({state}{})",
+                    reason
+                        .as_ref()
+                        .map(|reason| format!(": {reason}"))
+                        .unwrap_or_default()
+                ));
+                return result;
+            }
+            None => return Value::Null,
+        }
+        let checkout = root.join(&archived.path);
+        if let (Some(index), Some(worktree)) = (&archived.index, &archived.worktree) {
+            let applied = git_in(&checkout, &["read-tree", "-u", "--reset", worktree])
+                .and_then(|_| git_in(&checkout, &["read-tree", "--reset", index]));
+            if let Err(reason) = applied {
+                result["ok"] = json!(false);
+                result["reason"] = json!(format!("could not apply archived changes: {reason}"));
+                return result;
+            }
+            let _ = git_in(&checkout, &["update-index", "-q", "--refresh"]);
+            result["changes_applied"] = json!(true);
+        }
+        if let Some(branch) = &archived.branch {
+            let (restored, reason) = restore_branch(&checkout, branch, &archived.head);
+            result["branch_restored"] = json!(restored);
+            result["reason"] = json!(reason);
+        }
+        result
+    };
+    let applied = match ThreadPoolBuilder::new().num_threads(jobs.max(1)).build() {
+        Ok(workers) => {
+            workers.install(|| record.projects.par_iter().map(apply).collect::<Vec<_>>())
+        }
+        Err(_) => record.projects.iter().map(apply).collect(),
+    };
+    let mut results = restoring.results.lock().expect("restore results lock");
+    for result in applied.into_iter().filter(|result| !result.is_null()) {
+        if result["ok"] == json!(false) && result["changes_applied"] == json!(false) {
+            if let Some(project) = meta
+                .projects
+                .iter_mut()
+                .find(|project| Some(project.path.as_str()) == result["path"].as_str())
+            {
+                if project.state == "done" {
+                    project.state = "failed".into();
+                    project.reason = result["reason"].as_str().map(str::to_owned);
+                }
+            }
+        }
+        results.push(result);
+    }
+    meta.branch = record.options.branch.clone();
+    meta.branch_projects = record.options.branch_projects.clone();
+    if let Some(manifests) = &record.manifests {
+        let checkout = root.join(".repo/manifests");
+        let on_tree_branch = meta
+            .repo_bridge
+            .as_ref()
+            .and_then(|bridge| bridge.manifests_branch.as_deref())
+            .is_some_and(|branch| {
+                git_in(&checkout, &["symbolic-ref", "-q", "HEAD"])
+                    .is_ok_and(|head| head == format!("refs/heads/{branch}"))
+            });
+        if on_tree_branch {
+            let _ = git_in(&checkout, &["reset", "-q", "--keep", &manifests.commit]);
+        }
+    }
+}
+
+/// Checks `branch` out again without touching the index or working tree when
+/// it still points at `head` (or no longer exists, in which case it is
+/// recreated there). Returns whether HEAD is on the branch, and why not.
+fn restore_branch(checkout: &Path, branch: &str, head: &str) -> (bool, Option<String>) {
+    let current = git_in(
+        checkout,
+        &[
+            "rev-parse",
+            "-q",
+            "--verify",
+            &format!("refs/heads/{branch}^{{commit}}"),
+        ],
+    )
+    .ok();
+    let mut note = None;
+    match current {
+        Some(commit) if commit != head => {
+            return (
+                false,
+                Some(format!(
+                    "branch {branch} has moved to {}; left detached at the archived commit",
+                    &commit[..commit.len().min(12)]
+                )),
+            );
+        }
+        Some(_) => {}
+        None => {
+            if let Err(reason) = git_in(checkout, &["branch", branch, head]) {
+                return (
+                    false,
+                    Some(format!("could not recreate branch {branch}: {reason}")),
+                );
+            }
+            note = Some(format!(
+                "branch {branch} no longer existed and was recreated"
+            ));
+        }
+    }
+    match git_in(checkout, &["switch", "-q", "--no-guess", branch]) {
+        Ok(_) => (true, note),
+        Err(reason) => (
+            false,
+            Some(format!(
+                "branch {branch} could not be checked out: {reason}"
+            )),
+        ),
+    }
+}
+
+fn git_in(directory: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(args)
+        .output()
+        .map_err(|error| format!("run git: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(exit_reason(&output))
     }
 }
 
@@ -590,6 +841,7 @@ fn run_add_phases(
     quiet: bool,
     verbose: u8,
     operation_started: Instant,
+    before_hook: &mut dyn FnMut(&mut TreeMeta),
 ) -> AppResult<Value> {
     let entry = meta.registry_entry();
     let source = meta.source();
@@ -692,6 +944,7 @@ fn run_add_phases(
         append_journal(&entry, "repo-bridge", &state, None, None, None)?;
         phase_done(quiet, verbose, "repo-bridge", bridge_started, Some(&state));
     }
+    before_hook(meta);
     if meta.is_complete() {
         let hook_started = Instant::now();
         if crate::hooks::run_post_add(meta, quiet) {
@@ -2449,255 +2702,429 @@ fn print_porcelain(trees: &[TreeMeta], registry: &Path, nul: bool) -> AppResult<
 }
 
 pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
+    if let Some(idle) = &args.idle {
+        return remove_idle(args, idle, cwd, quiet);
+    }
+    let selector = args
+        .tree
+        .as_deref()
+        .ok_or_else(|| AppError::usage("remove requires a tree, or --idle"))?;
     check_git_version()?;
     let client = discover_client(cwd, true)?;
-    with_tree_lock(
-        &client.root,
-        &args.tree,
-        cwd,
-        quiet,
-        |registry, mut meta| {
-            let jobs = args.jobs.unwrap_or_else(default_jobs);
-            let mut clean_projects = None;
-            crate::metrics::record("tree", json!(meta.name));
-            crate::metrics::record("force", json!(args.force));
-            crate::metrics::record("system_start", crate::metrics::system_load());
-            if meta.state != "removing" {
-                if args.force == 0 {
-                    let inspect_started = Instant::now();
-                    let inspections = inspect_tree(&meta, jobs);
-                    crate::metrics::phase("inspect", crate::metrics::elapsed_ms(inspect_started));
-                    record_slow_inspections(&inspections);
-                    let dirty = inspections
-                        .iter()
-                        .filter(|inspection| inspection.dirty)
-                        .collect::<Vec<_>>();
-                    if !dirty.is_empty() {
-                        crate::metrics::record(
-                        "dirty",
-                        Value::Array(
-                            dirty
-                                .iter()
-                                .map(|inspection| {
-                                    json!({"project": inspection.path, "reasons": inspection.reasons})
-                                })
-                                .collect(),
-                        ),
-                    );
-                        let shown = dirty
-                            .iter()
-                            .take(10)
-                            .map(|inspection| {
-                                format!("{} ({})", inspection.path, inspection.reasons.join(", "))
-                            })
-                            .collect::<Vec<_>>();
-                        let extra = dirty.len().saturating_sub(shown.len());
-                        return Err(AppError::operational(
-                        "E_DIRTY",
+    with_tree_lock(&client.root, selector, cwd, quiet, |registry, mut meta| {
+        let jobs = args.jobs.unwrap_or_else(default_jobs);
+        let mut clean_projects = None;
+        let mut archived = None;
+        crate::metrics::record("tree", json!(meta.name));
+        crate::metrics::record("force", json!(args.force));
+        crate::metrics::record("system_start", crate::metrics::system_load());
+        if meta.state != "removing" {
+            if let Some(lock) = &meta.locked {
+                if args.force < 2 {
+                    return Err(AppError::operational(
+                        "E_TREE_LOCKED",
                         format!(
-                            "tree has dirty projects: {}{}; inspect with `status`, or pass --force to discard",
-                            shown.join(", "),
-                            if extra > 0 {
-                                format!(" (+{extra} more)")
-                            } else {
-                                String::new()
-                            }
+                            "tree is locked ({}); pass --force --force to remove",
+                            lock.reason
                         ),
-                    )
-                    .with_details(json!({"dirty_projects": dirty})));
-                    }
-                    clean_projects = Some(
-                        inspections
-                            .into_iter()
-                            .map(|inspection| inspection.path)
-                            .collect::<HashSet<_>>(),
-                    );
-                }
-                if let Some(lock) = &meta.locked {
-                    if args.force < 2 {
-                        return Err(AppError::operational(
-                            "E_TREE_LOCKED",
-                            format!(
-                                "tree is locked ({}); pass --force --force to remove",
-                                lock.reason
-                            ),
-                        ));
-                    }
+                    ));
                 }
             }
-            if meta.state != "removing" {
+            if !args.discard {
+                let root = meta.root();
+                if meta.projects.iter().any(|project| {
+                    project.mode == MODE_OVERLAY
+                        && project.state != "skipped"
+                        && !overlay::is_live(&root.join(&project.path))
+                }) {
+                    remount_overlays(&mut meta);
+                }
                 let step = Instant::now();
-                if let Some(record) = crate::hooks::run(crate::hooks::PRE_REMOVE, &meta, quiet) {
-                    crate::metrics::phase("hook-pre-remove", crate::metrics::elapsed_ms(step));
-                    meta.hooks.insert(crate::hooks::PRE_REMOVE.into(), record);
-                }
+                let captured =
+                    crate::archive::capture(&meta, registry, "remove", args.force > 0, jobs)?;
+                crate::metrics::phase("archive", crate::metrics::elapsed_ms(step));
+                crate::metrics::record("archive_id", json!(captured.record.id));
+                crate::metrics::record("archive_bytes", json!(captured.record.bytes));
+                crate::metrics::record(
+                    "archive_projects_with_changes",
+                    json!(captured.record.projects_with_changes()),
+                );
+                crate::metrics::record("archive_dropped", json!(captured.record.dropped.len()));
+                clean_projects = Some(captured.clean);
+                archived = Some(captured.record);
             }
+        }
+        if meta.state != "removing" {
             let step = Instant::now();
-            release_overlays(&meta, args.force > 0)?;
-            crate::metrics::phase("unmount", crate::metrics::elapsed_ms(step));
-            if meta.state != "removing" {
-                meta.state = "removing".into();
-                write_meta(&meta)?;
+            if let Some(record) = crate::hooks::run(crate::hooks::PRE_REMOVE, &meta, quiet) {
+                crate::metrics::phase("hook-pre-remove", crate::metrics::elapsed_ms(step));
+                meta.hooks.insert(crate::hooks::PRE_REMOVE.into(), record);
             }
-            let pool = ThreadPoolBuilder::new()
-                .num_threads(jobs)
-                .build()
-                .map_err(|error| AppError::io("create worker pool", error))?;
-            let step = Instant::now();
-            let returned = if args.no_pool {
-                Vec::new()
-            } else {
-                return_projects_to_pool(&meta, registry, clean_projects.as_ref(), jobs, quiet)
-            };
-            crate::metrics::phase("pool-return", crate::metrics::elapsed_ms(step));
-            crate::metrics::record("returned_to_pool", json!(returned.len()));
-            crate::metrics::record(
-                "projects",
-                json!(meta
-                    .projects
-                    .iter()
-                    .filter(|project| project.state != "skipped")
-                    .count()),
-            );
-            let step = Instant::now();
-            let locked = meta.locked.is_some();
-            let background = !pool::maintenance_disabled();
-            let mut projects = meta.projects.clone();
-            projects.sort_by_key(|project| std::cmp::Reverse(project_depth(&project.path)));
-            let mut start = 0;
-            let mut unregistered = HashSet::new();
-            while start < projects.len() {
-                let depth = project_depth(&projects[start].path);
-                let end = projects[start..]
-                    .iter()
-                    .position(|project| project_depth(&project.path) != depth)
-                    .map(|offset| start + offset)
-                    .unwrap_or(projects.len());
-                let removed = pool.install(|| {
-                    projects[start..end]
-                        .par_iter()
-                        .filter(|project| {
-                            project.mode == MODE_WORKTREE
-                                && meta.root().join(&project.path).exists()
-                                && !project.git_common_dir.is_empty()
-                        })
-                        .filter_map(|project| {
-                            let checkout = meta.root().join(&project.path);
-                            if background && unregister_linked_worktree(&checkout) {
-                                return Some(project.path.clone());
-                            }
-                            let _ = bridge::to_gitfile(&checkout.join(".git"));
-                            let mut command = Command::new("git");
-                            command
-                                .arg(format!("--git-dir={}", project.git_common_dir))
-                                .args(["worktree", "remove", "--force"]);
-                            if locked {
-                                command.arg("--force");
-                            }
-                            command
-                                .arg(&checkout)
-                                .output()
-                                .is_ok_and(|output| output.status.success())
-                                .then(|| project.path.clone())
-                        })
-                        .collect::<Vec<_>>()
-                });
-                unregistered.extend(removed);
-                start = end;
-            }
-            bridge::remove_manifests(&meta);
-            crate::metrics::phase("worktree-remove", crate::metrics::elapsed_ms(step));
-            let lingering = crate::inspect::processes_referencing(&meta.root());
-            crate::metrics::record("lingering_processes", json!(lingering.len()));
-            let step = Instant::now();
-            let stashed = meta.root().exists()
-                && background
-                && crate::trash::stash(registry, &meta.root()).is_ok();
-            if meta.root().exists() {
-                fs::remove_dir_all(meta.root()).map_err(|error| {
-                    AppError::io(format!("remove tree {}", meta.root().display()), error)
-                })?;
-            }
-            crate::metrics::phase("delete", crate::metrics::elapsed_ms(step));
-            crate::metrics::record("deleting_in_background", json!(stashed));
-            let step = Instant::now();
-            let mut gitdirs = dedupe_paths(
-                meta.projects
-                    .iter()
+        }
+        let step = Instant::now();
+        release_overlays(&meta, args.force > 0)?;
+        crate::metrics::phase("unmount", crate::metrics::elapsed_ms(step));
+        if meta.state != "removing" {
+            meta.state = "removing".into();
+            write_meta(&meta)?;
+        }
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(jobs)
+            .build()
+            .map_err(|error| AppError::io("create worker pool", error))?;
+        let step = Instant::now();
+        let returned = if args.no_pool {
+            Vec::new()
+        } else {
+            return_projects_to_pool(&meta, registry, clean_projects.as_ref(), jobs, quiet)
+        };
+        crate::metrics::phase("pool-return", crate::metrics::elapsed_ms(step));
+        crate::metrics::record("returned_to_pool", json!(returned.len()));
+        crate::metrics::record(
+            "projects",
+            json!(meta
+                .projects
+                .iter()
+                .filter(|project| project.state != "skipped")
+                .count()),
+        );
+        let step = Instant::now();
+        let locked = meta.locked.is_some();
+        let background = !pool::maintenance_disabled();
+        let mut projects = meta.projects.clone();
+        projects.sort_by_key(|project| std::cmp::Reverse(project_depth(&project.path)));
+        let mut start = 0;
+        let mut unregistered = HashSet::new();
+        while start < projects.len() {
+            let depth = project_depth(&projects[start].path);
+            let end = projects[start..]
+                .iter()
+                .position(|project| project_depth(&project.path) != depth)
+                .map(|offset| start + offset)
+                .unwrap_or(projects.len());
+            let removed = pool.install(|| {
+                projects[start..end]
+                    .par_iter()
                     .filter(|project| {
-                        project.has_worktree()
+                        project.mode == MODE_WORKTREE
+                            && meta.root().join(&project.path).exists()
                             && !project.git_common_dir.is_empty()
-                            && !unregistered.contains(&project.path)
-                            && !returned.contains(&project.path)
                     })
-                    .map(|project| &project.git_common_dir),
-            );
-            crate::metrics::record("pruned_git_dirs", json!(gitdirs.len()));
-            if let Some(git_dir) = meta
-                .repo_bridge
-                .as_ref()
-                .and_then(|bridge| bridge.manifests_git_dir.clone())
-            {
-                gitdirs.push(git_dir);
-            }
-            pool.install(|| {
-                gitdirs.par_iter().for_each(|gitdir| {
-                    let _ = Command::new("git")
-                        .arg(format!("--git-dir={gitdir}"))
-                        .args(["worktree", "prune"])
-                        .output();
-                });
+                    .filter_map(|project| {
+                        let checkout = meta.root().join(&project.path);
+                        if background && unregister_linked_worktree(&checkout) {
+                            return Some(project.path.clone());
+                        }
+                        let _ = bridge::to_gitfile(&checkout.join(".git"));
+                        let mut command = Command::new("git");
+                        command
+                            .arg(format!("--git-dir={}", project.git_common_dir))
+                            .args(["worktree", "remove", "--force"]);
+                        if locked {
+                            command.arg("--force");
+                        }
+                        command
+                            .arg(&checkout)
+                            .output()
+                            .is_ok_and(|output| output.status.success())
+                            .then(|| project.path.clone())
+                    })
+                    .collect::<Vec<_>>()
             });
-            crate::metrics::phase("prune", crate::metrics::elapsed_ms(step));
-            let entry = meta.registry_entry();
-            if entry.exists() {
-                fs::remove_dir_all(&entry)
-                    .map_err(|error| AppError::io(format!("remove {}", entry.display()), error))?;
+            unregistered.extend(removed);
+            start = end;
+        }
+        bridge::remove_manifests(&meta);
+        crate::metrics::phase("worktree-remove", crate::metrics::elapsed_ms(step));
+        let lingering = crate::inspect::processes_referencing(&meta.root());
+        crate::metrics::record("lingering_processes", json!(lingering.len()));
+        let step = Instant::now();
+        let stashed = meta.root().exists()
+            && background
+            && crate::trash::stash(registry, &meta.root()).is_ok();
+        if meta.root().exists() {
+            fs::remove_dir_all(meta.root()).map_err(|error| {
+                AppError::io(format!("remove tree {}", meta.root().display()), error)
+            })?;
+        }
+        crate::metrics::phase("delete", crate::metrics::elapsed_ms(step));
+        crate::metrics::record("deleting_in_background", json!(stashed));
+        let step = Instant::now();
+        let mut gitdirs = dedupe_paths(
+            meta.projects
+                .iter()
+                .filter(|project| {
+                    project.has_worktree()
+                        && !project.git_common_dir.is_empty()
+                        && !unregistered.contains(&project.path)
+                        && !returned.contains(&project.path)
+                })
+                .map(|project| &project.git_common_dir),
+        );
+        crate::metrics::record("pruned_git_dirs", json!(gitdirs.len()));
+        if let Some(git_dir) = meta
+            .repo_bridge
+            .as_ref()
+            .and_then(|bridge| bridge.manifests_git_dir.clone())
+        {
+            gitdirs.push(git_dir);
+        }
+        pool.install(|| {
+            gitdirs.par_iter().for_each(|gitdir| {
+                let _ = Command::new("git")
+                    .arg(format!("--git-dir={gitdir}"))
+                    .args(["worktree", "prune"])
+                    .output();
+            });
+        });
+        crate::metrics::phase("prune", crate::metrics::elapsed_ms(step));
+        let entry = meta.registry_entry();
+        if entry.exists() {
+            fs::remove_dir_all(&entry)
+                .map_err(|error| AppError::io(format!("remove {}", entry.display()), error))?;
+        }
+        let expired = crate::archive::apply_retention(registry, false, true).unwrap_or_default();
+        crate::metrics::record("archives_expired", json!(expired.len()));
+        crate::metrics::record("system_end", crate::metrics::system_load());
+        if (stashed || (!args.no_pool && pool::needs_refill(&meta)))
+            && pool::spawn_maintenance(&meta.source())
+        {
+            crate::metrics::record("pool_maintenance", json!("started"));
+        }
+        if !quiet {
+            if !returned.is_empty() {
+                eprintln!("returned {} project(s) to the pool", returned.len());
             }
-            crate::metrics::record("system_end", crate::metrics::system_load());
-            if (stashed || (!args.no_pool && pool::needs_refill(&meta)))
-                && pool::spawn_maintenance(&meta.source())
-            {
-                crate::metrics::record("pool_maintenance", json!("started"));
+            if stashed {
+                eprintln!(
+                    "removed {} ({}); its files are being deleted in the background",
+                    meta.name, meta.path
+                );
+            } else {
+                eprintln!("removed {} ({})", meta.name, meta.path);
             }
-            if !quiet {
-                if !returned.is_empty() {
-                    eprintln!("returned {} project(s) to the pool", returned.len());
-                }
-                if stashed {
+            if let Some(record) = &archived {
+                let changes = record.projects_with_changes();
+                eprintln!(
+                    "archived as {}{}; `git repo-worktree restore {}` brings it back",
+                    record.id,
+                    if changes > 0 {
+                        format!(
+                            " ({changes} project(s) with changes, {})",
+                            crate::archive::human_bytes(record.bytes)
+                        )
+                    } else {
+                        String::new()
+                    },
+                    record.tree
+                );
+                for item in &record.dropped {
                     eprintln!(
-                        "removed {} ({}); its files are being deleted in the background",
-                        meta.name, meta.path
+                        "warning: not archived: {} ({}: {})",
+                        item.project, item.kind, item.detail
                     );
-                } else {
-                    eprintln!("removed {} ({})", meta.name, meta.path);
                 }
-                if !lingering.is_empty() {
-                    eprintln!(
+            }
+            if !lingering.is_empty() {
+                eprintln!(
                     "warning: {} process(es) still use the removed tree; stop them if they are no longer needed:",
                     lingering.len()
                 );
-                    for process in &lingering {
-                        eprintln!(
-                            "  pid {} ({}): {}",
-                            process["pid"],
-                            process["reason"].as_str().unwrap_or(""),
-                            process["command"].as_str().unwrap_or("")
-                        );
-                    }
+                for process in &lingering {
+                    eprintln!(
+                        "  pid {} ({}): {}",
+                        process["pid"],
+                        process["reason"].as_str().unwrap_or(""),
+                        process["command"].as_str().unwrap_or("")
+                    );
                 }
             }
-            Ok(json!({
-                "name": meta.name,
-                "path": meta.path,
-                "removed": true,
-                "deleting_in_background": stashed,
-                "returned_to_pool": returned,
-                "lingering_processes": lingering,
-                "hooks": meta.hooks,
-            }))
-        },
-    )
+        }
+        Ok(json!({
+            "name": meta.name,
+            "path": meta.path,
+            "removed": true,
+            "deleting_in_background": stashed,
+            "returned_to_pool": returned,
+            "lingering_processes": lingering,
+            "hooks": meta.hooks,
+            "archive": archived.as_ref().map(|record| json!({
+                "id": record.id,
+                "bytes": record.bytes,
+                "projects_with_changes": record.projects_with_changes(),
+                "dropped": record.dropped,
+            })),
+            "archives_expired": expired,
+        }))
+    })
+}
+
+/// Removes, with archives, every tree that is unlocked, not in use, and idle
+/// for at least `idle`.
+fn remove_idle(args: &RemoveArgs, idle: &str, cwd: &Path, quiet: bool) -> AppResult<Value> {
+    let threshold = crate::archive::parse_duration(idle).map_err(AppError::usage)?;
+    check_git_version()?;
+    let client = discover_client(cwd, true)?;
+    let registry = registry_path(&client.root);
+    let jobs = args.jobs.unwrap_or_else(default_jobs);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let mut removed = Vec::new();
+    let mut skipped = Vec::new();
+    for tree in load_all(&registry)? {
+        let skip = |reason: String| json!({"name": tree.name, "path": tree.path, "reason": reason});
+        if tree.locked.is_some() {
+            skipped.push(skip("locked".into()));
+            continue;
+        }
+        if tree.state != "complete" && tree.state != "incomplete" {
+            skipped.push(skip(format!("state {}", tree.state)));
+            continue;
+        }
+        if crate::registry::is_locked(&crate::registry::tree_lock_path(&tree.registry_entry())) {
+            skipped.push(skip("another command is using it".into()));
+            continue;
+        }
+        let processes = crate::inspect::processes_referencing(&tree.root());
+        if !processes.is_empty() {
+            let mut entry = skip(format!("{} process(es) use it", processes.len()));
+            entry["processes"] = json!(processes);
+            skipped.push(entry);
+            continue;
+        }
+        let idle_secs = now.saturating_sub(crate::inspect::last_activity(&tree, jobs));
+        if idle_secs < threshold {
+            skipped.push(skip(format!(
+                "active {} ago",
+                crate::archive::human_duration(idle_secs)
+            )));
+            continue;
+        }
+        if args.dry_run {
+            if !quiet {
+                eprintln!(
+                    "would remove {} ({}), idle {}",
+                    tree.name,
+                    tree.path,
+                    crate::archive::human_duration(idle_secs)
+                );
+            }
+            removed.push(json!({"name": tree.name, "path": tree.path, "idle_secs": idle_secs}));
+            continue;
+        }
+        let single = RemoveArgs {
+            tree: Some(tree.name.clone()),
+            force: 0,
+            discard: false,
+            idle: None,
+            dry_run: false,
+            no_pool: args.no_pool,
+            jobs: args.jobs,
+        };
+        match remove(&single, cwd, quiet) {
+            Ok(mut result) => {
+                result["idle_secs"] = json!(idle_secs);
+                removed.push(result);
+            }
+            Err(error) => {
+                if !quiet {
+                    eprintln!("skipped {}: {}", tree.name, error.message);
+                }
+                let mut entry = skip(format!("{}: {}", error.code, error.message));
+                entry["details"] = json!(error.details);
+                skipped.push(entry);
+            }
+        }
+    }
+    if !quiet {
+        eprintln!(
+            "{} {} idle tree(s); skipped {}",
+            if args.dry_run {
+                "would remove"
+            } else {
+                "removed"
+            },
+            removed.len(),
+            skipped.len()
+        );
+    }
+    Ok(json!({"removed": removed, "skipped": skipped, "dry_run": args.dry_run}))
+}
+
+/// Recreates a removed tree from its archive.
+pub fn restore(args: &RestoreArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppResult<Value> {
+    check_git_version()?;
+    let client = discover_client(cwd, false)?;
+    let registry = registry_path(&client.root);
+    let record = crate::archive::select(&registry, &args.archive, cwd)?;
+    let options = &record.options;
+    let add_args = AddArgs {
+        path: Some(args.path.clone().unwrap_or_else(|| record.path.clone())),
+        name: Some(args.name.clone().unwrap_or_else(|| record.tree.clone())),
+        branch: None,
+        projects: Vec::new(),
+        all_projects: false,
+        git_only: options.git_only,
+        detach: false,
+        submodules: options.submodules,
+        lock: false,
+        reason: None,
+        resume: false,
+        force: false,
+        jobs: args.jobs,
+        full: options.full,
+        full_projects: options.full_projects.clone(),
+        no_reflink: options.no_reflink,
+        no_overlay: options.no_overlay,
+        heavy_jobs: Some(options.heavy_jobs),
+        fail_fast: false,
+    };
+    let restoring = Restoring {
+        record: &record,
+        snapshot: crate::archive::snapshot_path(&registry, &record.id),
+        results: Mutex::new(Vec::new()),
+    };
+    let outcome = add_with(&add_args, cwd, quiet, verbose, Some(&restoring));
+    let mut restored = restoring
+        .results
+        .into_inner()
+        .expect("restore results lock");
+    restored.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+    let complete = outcome.is_ok() && restored.iter().all(|result| result["ok"] != json!(false));
+    let kept = args.keep || !complete;
+    if !kept {
+        let _held = crate::archive::lock(&registry, quiet)?;
+        crate::archive::drop_record(&registry, &record)?;
+    }
+    if !quiet {
+        for result in &restored {
+            if let Some(reason) = result["reason"].as_str() {
+                eprintln!("{}: {reason}", result["path"].as_str().unwrap_or(""));
+            }
+        }
+        if kept && !args.keep {
+            eprintln!(
+                "kept archive {}; remove the partial tree with `git repo-worktree remove --discard` before restoring again",
+                record.id
+            );
+        }
+    }
+    let attach = |mut value: Value| {
+        if value.is_object() {
+            value["restored"] = json!(restored);
+            value["archive"] = json!({"id": record.id, "kept": kept});
+        }
+        value
+    };
+    match outcome {
+        Ok(value) if complete => Ok(attach(value)),
+        Ok(value) => Err(AppError::partial(attach(value))),
+        Err(mut error) => {
+            error.result = attach(std::mem::take(&mut error.result));
+            Err(error)
+        }
+    }
 }
 
 /// Deletes the Git administrative directory of the linked worktree at
@@ -3386,9 +3813,12 @@ pub fn prune(args: &PruneArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             if !prunable || tree.locked.is_some() {
                 continue;
             }
+            let mut archive_id = None;
             if args.dry_run {
                 println!("would prune {} ({})", tree.name, tree.path);
             } else {
+                archive_id =
+                    crate::archive::capture_orphaned(&tree, registry).map(|record| record.id);
                 gitdirs.extend(
                     tree.projects
                         .iter()
@@ -3413,7 +3843,7 @@ pub fn prune(args: &PruneArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                     eprintln!("pruned {} ({})", tree.name, tree.path);
                 }
             }
-            pruned.push(json!({"name": tree.name, "path": tree.path}));
+            pruned.push(json!({"name": tree.name, "path": tree.path, "archive": archive_id}));
         }
         if !args.dry_run {
             let mut unique = HashSet::new();

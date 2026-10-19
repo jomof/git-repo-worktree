@@ -19,6 +19,12 @@ pub struct ProjectDefaults {
     /// Spares kept per pooled project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool_spares: Option<usize>,
+    /// Seconds after which archives of removed trees expire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_expire_secs: Option<u64>,
+    /// Bytes unexpired archives may keep alive before the oldest expire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_budget_bytes: Option<u64>,
 }
 
 impl Default for ProjectDefaults {
@@ -27,8 +33,16 @@ impl Default for ProjectDefaults {
             format_version: DEFAULTS_FORMAT_VERSION,
             projects: BTreeMap::new(),
             pool_spares: None,
+            archive_expire_secs: None,
+            archive_budget_bytes: None,
         }
     }
+}
+
+pub fn save(registry: &Path, defaults: &ProjectDefaults) -> AppResult<()> {
+    let bytes = serde_json::to_vec_pretty(defaults)
+        .map_err(|error| AppError::io("serialize defaults.json", error))?;
+    write_atomic(&path(registry), &bytes, 0o644)
 }
 
 pub fn path(registry: &Path) -> PathBuf {
@@ -189,9 +203,7 @@ fn mutate(
                 }
             }
         }
-        let bytes = serde_json::to_vec_pretty(&defaults)
-            .map_err(|error| AppError::io("serialize defaults.json", error))?;
-        write_atomic(&path(registry), &bytes, 0o644)?;
+        save(registry, &defaults)?;
         if !quiet {
             match mode {
                 Some(mode) => {

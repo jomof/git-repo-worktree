@@ -3,6 +3,7 @@
 #[cfg(not(unix))]
 compile_error!("git-repo-worktree supports Linux and macOS only");
 
+mod archive;
 mod bridge;
 mod cli;
 mod defaults;
@@ -26,7 +27,8 @@ mod util;
 
 use clap::{error::ErrorKind, CommandFactory, Parser};
 use cli::{
-    Cli, Command, CompletionShell, DefaultsCommand, HooksCommand, PoolCommand, SkillCommand,
+    ArchiveCommand, Cli, Command, CompletionShell, DefaultsCommand, HooksCommand, PoolCommand,
+    SkillCommand,
 };
 use error::{AppError, AppResult, Envelope};
 use serde_json::{json, Value};
@@ -54,6 +56,15 @@ fn command_name(command: &Command) -> &'static str {
         Command::Status(_) => "status",
         Command::Detach(_) => "detach",
         Command::Remove(_) => "remove",
+        Command::Restore(_) => "restore",
+        Command::Archive(args) => match &args.command {
+            ArchiveCommand::List => "archive list",
+            ArchiveCommand::Show(_) => "archive show",
+            ArchiveCommand::Drop(_) => "archive drop",
+            ArchiveCommand::Keep(_) => "archive keep",
+            ArchiveCommand::Prune(_) => "archive prune",
+            ArchiveCommand::Policy(_) => "archive policy",
+        },
         Command::Lock(_) => "lock",
         Command::Unlock(_) => "unlock",
         Command::Move(_) => "move",
@@ -108,6 +119,8 @@ fn execute(cli: &Cli, cwd: &std::path::Path) -> AppResult<Value> {
         Command::Status(args) => status::status(args, cwd, cli.json, cli.verbose),
         Command::Detach(args) => status::detach(args, cwd, cli.json, cli.quiet),
         Command::Remove(args) => tree::remove(args, cwd, cli.quiet),
+        Command::Restore(args) => tree::restore(args, cwd, cli.quiet, cli.verbose),
+        Command::Archive(args) => archive::run(&args.command, cwd, cli.json, cli.quiet),
         Command::Lock(args) => tree::lock(args, cwd, cli.quiet),
         Command::Unlock(args) => tree::unlock(args, cwd, cli.quiet),
         Command::Move(args) => tree::move_tree(args, cwd, cli.quiet),
@@ -190,6 +203,11 @@ const SUBCOMMANDS: &[&str] = &[
     "status",
     "detach",
     "remove",
+    "restore",
+    "archive",
+    "drop",
+    "keep",
+    "policy",
     "lock",
     "unlock",
     "move",
@@ -304,7 +322,10 @@ fn main() -> ExitCode {
     });
     if INTERRUPTED.load(Ordering::SeqCst)
         && result.is_ok()
-        && !matches!(&cli.command, Command::Add(_) | Command::Repair(_))
+        && !matches!(
+            &cli.command,
+            Command::Add(_) | Command::Repair(_) | Command::Restore(_)
+        )
     {
         result = Err(AppError::operational(
             "E_INTERRUPTED",
@@ -365,6 +386,12 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
         }
         return "hooks".into();
     }
+    if let Some(index) = values.iter().position(|value| *value == "archive") {
+        if let Some(subcommand) = values.get(index + 1) {
+            return format!("archive {subcommand}");
+        }
+        return "archive".into();
+    }
     if let Some(index) = values.iter().position(|value| *value == "pool") {
         if let Some(subcommand) = values.get(index + 1) {
             return format!("pool {subcommand}");
@@ -383,6 +410,7 @@ fn infer_command(args: &[std::ffi::OsString]) -> String {
         "status",
         "detach",
         "remove",
+        "restore",
         "lock",
         "unlock",
         "move",

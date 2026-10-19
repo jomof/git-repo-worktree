@@ -59,11 +59,21 @@ pub fn status(args: &StatusArgs, cwd: &Path, json_output: bool, verbose: u8) -> 
                 shared.len()
             );
         }
+        let jobs = args.jobs.unwrap_or_else(default_jobs);
+        let last_activity = crate::inspect::last_activity(&meta, jobs);
+        let idle_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs())
+            .saturating_sub(last_activity);
         Ok(json!({
             "name": meta.name,
             "path": meta.path,
             "state": meta.state,
             "dirty": dirty,
+            "locked": meta.locked,
+            "last_activity_unix": last_activity,
+            "idle_secs": idle_secs,
+            "processes": crate::inspect::processes_referencing(&meta.root()),
             "repo_bridge": meta.repo_bridge,
             "projects": projects,
             "shared": shared,

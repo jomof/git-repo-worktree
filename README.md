@@ -30,7 +30,8 @@ When you're done, clean up:
 
 ```console
 $ cd ~/projects/studio-main
-$ git repo-worktree remove studio-feature   # refuses if anything is unsaved
+$ git repo-worktree remove studio-feature    # archives unsaved work first
+$ git repo-worktree restore studio-feature   # changed your mind? it's back
 ```
 
 Branches you create outlive the tree, and your original client's files are

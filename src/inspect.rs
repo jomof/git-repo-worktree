@@ -60,6 +60,9 @@ pub struct ProjectInspection {
     pub modified: usize,
     pub untracked: usize,
     pub unbranched_commits: usize,
+    /// Populated submodules with uncommitted changes of their own.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub submodule_changes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mounted: Option<bool>,
     /// The tree's recorded state and reason, when the tree does not record
@@ -204,6 +207,7 @@ pub fn inspect_project(
     let output = Command::new("git")
         .arg("-C")
         .arg(&checkout)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .args([
             "status",
             "--porcelain=v2",
@@ -248,8 +252,10 @@ fn parse_status_v2(stdout: &[u8], inspection: &mut ProjectInspection, children: 
             }
         } else if text.starts_with("1 ") || text.starts_with("u ") {
             inspection.modified += 1;
+            note_submodule_changes(&text, 9, inspection);
         } else if text.starts_with("2 ") {
             inspection.modified += 1;
+            note_submodule_changes(&text, 10, inspection);
             records.next();
         } else if let Some(path) = text.strip_prefix("? ") {
             let path = path.trim_end_matches('/');
@@ -264,6 +270,78 @@ fn parse_status_v2(stdout: &[u8], inspection: &mut ProjectInspection, children: 
             }
         }
     }
+}
+
+/// Records a changed-entry line's path when it is a submodule with tracked or
+/// untracked changes inside it (`S.M.`, `S..U`); a moved submodule commit is
+/// visible in the parent and needs no note.
+fn note_submodule_changes(text: &str, fields: usize, inspection: &mut ProjectInspection) {
+    let parts = text.splitn(fields, ' ').collect::<Vec<_>>();
+    let (Some(sub), Some(path)) = (parts.get(2), parts.get(fields - 1)) else {
+        return;
+    };
+    let sub = sub.as_bytes();
+    if sub.len() == 4 && sub[0] == b'S' && (sub[2] == b'M' || sub[3] == b'U') {
+        inspection.submodule_changes.push((*path).to_string());
+    }
+}
+
+/// Seconds since the epoch of the newest sign of work in a tree: its metadata,
+/// each project's HEAD, index, and HEAD reflog, and files Git reports as
+/// modified or untracked. Never refreshes an index, so inspecting a tree does
+/// not make it look active.
+pub fn last_activity(meta: &TreeMeta, jobs: usize) -> u64 {
+    let root = meta.root();
+    let modified = |path: &Path| {
+        fs::symlink_metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |elapsed| elapsed.as_secs())
+    };
+    let projects = meta
+        .projects
+        .iter()
+        .filter(|project| project.has_worktree() && project.state != "skipped")
+        .filter(|project| root.join(&project.path).exists())
+        .collect::<Vec<_>>();
+    let newest_in = |project: &&ProjectMeta| -> u64 {
+        let checkout = root.join(&project.path);
+        let mut newest = 0;
+        if let Some(git_dir) = checkout_git_dir(&checkout) {
+            for name in ["HEAD", "index", "logs/HEAD"] {
+                newest = newest.max(modified(&git_dir.join(name)));
+            }
+        }
+        let Ok(output) = Command::new("git")
+            .arg("-C")
+            .arg(&checkout)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .args(["status", "--porcelain=v1", "-z", "--untracked-files=normal"])
+            .output()
+        else {
+            return newest;
+        };
+        let mut records = output.stdout.split(|byte| *byte == 0);
+        let mut seen = 0;
+        while let Some(record) = records.next() {
+            if record.len() < 4 || seen == 2_000 {
+                continue;
+            }
+            seen += 1;
+            if record[0] == b'R' || record[0] == b'C' {
+                records.next();
+            }
+            let path = String::from_utf8_lossy(&record[3..]);
+            newest = newest.max(modified(&checkout.join(path.trim_end_matches('/'))));
+        }
+        newest
+    };
+    let from_projects = match ThreadPoolBuilder::new().num_threads(jobs.max(1)).build() {
+        Ok(pool) => pool.install(|| projects.par_iter().map(newest_in).max()),
+        Err(_) => projects.iter().map(newest_in).max(),
+    };
+    modified(&meta.registry_entry().join("meta.json")).max(from_projects.unwrap_or(0))
 }
 
 /// Counts commits reachable from HEAD but not from the pinned revision or any
@@ -402,6 +480,24 @@ mod tests {
         );
         assert_eq!(detached.branch, None);
         assert_eq!(detached.head.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn submodules_with_changes_of_their_own_are_noted() {
+        let mut inspection = ProjectInspection::default();
+        parse_status_v2(
+            b"1 .M S.M. 160000 160000 160000 a a sub/edited\0\
+1 .M S..U 160000 160000 160000 a a sub/untracked\0\
+1 M. SC.. 160000 160000 160000 a b sub/moved\0\
+1 .M N... 100644 100644 100644 a a plain file\0",
+            &mut inspection,
+            &[],
+        );
+        assert_eq!(inspection.modified, 4);
+        assert_eq!(
+            inspection.submodule_changes,
+            ["sub/edited", "sub/untracked"]
+        );
     }
 
     #[test]

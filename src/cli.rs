@@ -64,8 +64,14 @@ pub enum Command {
     /// Detach checked-out branches so they can be checked out elsewhere.
     #[command(long_about = DETACH_LONG_ABOUT)]
     Detach(DetachArgs),
-    /// Remove a whole-tree worktree.
+    /// Remove a whole-tree worktree, archiving its state so `restore` can bring it back.
+    #[command(long_about = REMOVE_LONG_ABOUT)]
     Remove(RemoveArgs),
+    /// Recreate a removed tree from its archive.
+    #[command(long_about = RESTORE_LONG_ABOUT)]
+    Restore(RestoreArgs),
+    /// List, show, drop, keep, and expire archives of removed trees.
+    Archive(ArchiveArgs),
     /// Lock a tree against removal, move, and prune.
     Lock(LockArgs),
     /// Unlock a tree.
@@ -252,16 +258,130 @@ pub struct DetachArgs {
     pub dry_run: bool,
 }
 
+const REMOVE_LONG_ABOUT: &str =
+    "Remove a whole-tree worktree, archiving its state so `restore` can bring it back.\n\n\
+Before deleting anything, `remove` archives every worktree project's HEAD, \
+branch, index, and working tree (untracked files included, ignored files not), \
+so removing a tree never loses work. `git repo-worktree restore <name-or-path>` \
+recreates it; `git repo-worktree archive list` shows archives, which expire \
+after 30 days or beyond 2 GiB (see `archive policy`).\n\n\
+An in-progress rebase or merge, unresolved conflicts, a submodule's own \
+uncommitted changes, and projects `repo sync` added inside the tree cannot be \
+archived: `remove` refuses (E_ARCHIVE_INCOMPLETE) unless `--force`, which \
+archives the rest and records what was dropped. `--discard` deletes without \
+archiving.\n\n\
+`--idle <DURATION>` removes, with archives, every tree that is unlocked, not \
+used by any process (Linux), and has shown no activity for DURATION; add \
+`--dry-run` to list them first.";
+
+const RESTORE_LONG_ABOUT: &str = "Recreate a removed tree from its archive.\n\n\
+Select the archive by id, `<tree>@{n}` (newest first), tree name, or the \
+tree's former path. The tree is created at its former path and name (override \
+with PATH and --name), with every project at its archived commit, then the \
+archived index and working tree are applied and each archived branch is \
+checked out again if it still points at that commit; otherwise the project \
+stays detached and `restored[].reason` says why. On success the archive is \
+deleted unless --keep.";
+
 #[derive(Debug, Args)]
 pub struct RemoveArgs {
-    pub tree: String,
+    /// Tree name or path.
+    #[arg(required_unless_present = "idle", conflicts_with = "idle")]
+    pub tree: Option<String>,
+    /// Proceed past busy overlays and state an archive cannot hold (recorded
+    /// as dropped); twice also removes a locked tree.
     #[arg(long, action = ArgAction::Count)]
     pub force: u8,
+    /// Delete without archiving, discarding uncommitted changes and
+    /// unbranched commits.
+    #[arg(long, conflicts_with = "idle")]
+    pub discard: bool,
+    /// Remove every unlocked tree not in use and idle for at least DURATION
+    /// (e.g. 24h, 7d).
+    #[arg(long, value_name = "DURATION", conflicts_with = "force")]
+    pub idle: Option<String>,
+    /// With --idle, list the trees that would be removed.
+    #[arg(short = 'n', long, requires = "idle")]
+    pub dry_run: bool,
     /// Delete pool-mode projects instead of returning clean ones to the pool.
     #[arg(long)]
     pub no_pool: bool,
     #[arg(short = 'j', long, value_parser = parse_jobs)]
     pub jobs: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+pub struct RestoreArgs {
+    /// Archive id, <tree>@{n}, tree name, or the tree's former path.
+    pub archive: String,
+    /// Destination (default: the tree's former path).
+    pub path: Option<String>,
+    /// Tree name (default: the archived tree's name).
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Keep the archive after a successful restore.
+    #[arg(long)]
+    pub keep: bool,
+    #[arg(short = 'j', long, value_parser = parse_jobs)]
+    pub jobs: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+pub struct ArchiveArgs {
+    #[command(subcommand)]
+    pub command: ArchiveCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ArchiveCommand {
+    /// List archives, newest first.
+    List,
+    /// Show an archive's projects and changes.
+    Show(ArchiveSelector),
+    /// Delete archives.
+    Drop(ArchiveSelectors),
+    /// Exempt an archive from expiry.
+    Keep(ArchiveKeepArgs),
+    /// Expire archives under the retention policy now.
+    Prune(ArchivePruneArgs),
+    /// Show or set the retention policy.
+    Policy(ArchivePolicyArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ArchiveSelector {
+    /// Archive id, <tree>@{n}, tree name, or the tree's former path.
+    pub archive: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ArchiveSelectors {
+    #[arg(required = true)]
+    pub archives: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ArchiveKeepArgs {
+    pub archive: String,
+    /// Let the archive expire again.
+    #[arg(long)]
+    pub unkeep: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ArchivePruneArgs {
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ArchivePolicyArgs {
+    /// Expire archives older than this (e.g. 30d, 2w).
+    #[arg(long, value_name = "DURATION")]
+    pub expire: Option<String>,
+    /// Expire the oldest archives once those kept alive exceed this (e.g. 2G).
+    #[arg(long, value_name = "SIZE")]
+    pub budget: Option<String>,
 }
 
 #[derive(Debug, Args)]

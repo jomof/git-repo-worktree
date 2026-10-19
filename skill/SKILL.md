@@ -246,19 +246,49 @@ still work and `repair` rebuilds the bridge.
 ### Clean up
 
 ```bash
-git repo-worktree remove --json mywork             # refuses if any project is dirty
-git repo-worktree remove --force mywork            # discard dirty work knowingly
+git repo-worktree remove --json mywork                  # archives, then removes
+git repo-worktree remove --idle 24h --dry-run --json    # list idle trees
+git repo-worktree remove --idle 24h --json              # remove them, with archives
 ```
 
-A refusal is `E_DIRTY` with every dirty project, and why, in
-`error.details.dirty_projects`. When `deleting_in_background` is true the
-tree is already gone and unregistered; its files are deleted in the
-background, so disk space returns shortly after. After removing, read `lingering_processes`:
-programs you started in the tree (build servers, watchers) keep running until
-you stop them. Use `--force` only after explicit confirmation
-that the listed work may be discarded. Locked trees need `--force --force` and
-the same explicit confirmation. If a tree was deleted with `rm -rf` instead,
-run `git repo-worktree prune` to reap the stale registration.
+Removing a tree is safe: `remove` first archives every project's commit,
+branch, staged and unstaged changes, and untracked files (not ignored files),
+and `restore` brings them back. So when asked to clean up, remove any tree you
+are not using; you do not need to judge whether its changes matter. Leave
+alone trees another chat may be using: `--idle` skips trees that are locked,
+used by a process, or recently active, and `status --json <tree>` reports
+`idle_secs` and `processes` for one tree. Lock a tree that must be kept as is.
+
+`remove` refuses with `E_ARCHIVE_INCOMPLETE` only for state an archive cannot
+hold, listed in `error.details.items`: a rebase or merge in progress,
+unresolved conflicts, a submodule's own uncommitted changes, or projects
+`repo sync` added inside the tree. Finish or abort the operation, or pass
+`--force` to archive the rest (the omissions are recorded in
+`archive.dropped`). `--discard` deletes without archiving; use it only after
+explicit confirmation. Locked trees need `--force --force` and the same
+confirmation.
+
+When `deleting_in_background` is true the tree is already gone and
+unregistered; its files are deleted in the background. After removing, read
+`lingering_processes`: programs you started in the tree (build servers,
+watchers) keep running until you stop them. If a tree was deleted with
+`rm -rf` instead, run `git repo-worktree prune`, which archives its commits
+and reaps the stale registration.
+
+### If your tree is gone
+
+If the tree you were working in no longer exists (removed while you were
+away), restore it from the source client and continue:
+
+```bash
+git repo-worktree restore --json <tree-name-or-path>
+git repo-worktree archive list --json          # if unsure which archive
+```
+
+The tree returns at its former path with every project at its archived
+commit and your changes applied. Check `restored[]`: `branch_restored: false`
+means the branch moved since (the project is detached at your commit; read
+`reason`). Archives expire after 30 days (`archive keep <id>` exempts one).
 
 ### Other operations
 
@@ -309,8 +339,9 @@ running commands and use `report --session <label>`.
 | 4 | a lock stayed busy past `--lock-timeout` (default 300 s), or an active `repo sync` was detected | retry later; the message names the process holding the lock; use `--force` only after confirming sync detection is stale or a false positive |
 
 Common error codes: `E_NO_REPO_CLIENT`, `E_NO_SUCH_TREE`, `E_NAME_EXISTS`,
-`E_DEST_NOT_EMPTY`, `E_DIRTY`, `E_TREE_LOCKED`, `E_LOCKED`, `E_SYNC_ACTIVE`,
-`E_UNKNOWN_PROJECT`, `E_BRANCH_NEEDS_PROJECT_SCOPE`, `E_OVERLAY_BUSY`.
+`E_DEST_NOT_EMPTY`, `E_ARCHIVE_INCOMPLETE`, `E_NO_SUCH_ARCHIVE`,
+`E_TREE_LOCKED`, `E_LOCKED`, `E_SYNC_ACTIVE`, `E_UNKNOWN_PROJECT`,
+`E_BRANCH_NEEDS_PROJECT_SCOPE`, `E_OVERLAY_BUSY`.
 
 ## Rules that prevent damage
 
@@ -324,8 +355,8 @@ Common error codes: `E_NO_REPO_CLIENT`, `E_NO_SUCH_TREE`, `E_NAME_EXISTS`,
 - Treat `"mode": "symlink-shared"` projects as read-only because their files
   are the source checkout's files. Materialize a shared project before editing,
   building into, or running Git anywhere below its path.
-- Before `remove`, check `status` for `unbranched-commits`; branch any work you
-  need to keep.
+- Never use `remove --discard` without explicit confirmation; plain `remove`
+  keeps an archive.
 - Do not `mv` a tree by hand; use `move`. If someone already did, `mv` it back
   and then use `move`.
 

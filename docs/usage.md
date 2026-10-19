@@ -115,15 +115,64 @@ git repo-worktree repair [<tree>...]
 git repo-worktree prune --dry-run
 git repo-worktree prune
 git repo-worktree remove <tree>
+git repo-worktree remove --idle 7d --dry-run
+git repo-worktree restore <tree-name-or-path>
+git repo-worktree archive list
 ```
 
 `status` reports each project's HEAD, branch, and dirtiness. A project counts as
 dirty when it has modified or untracked files, or commits on a detached `HEAD`
 that no branch, remote-tracking ref, or tag contains; those commits would be
-lost with the tree's reflog. Normal removal refuses dirty projects and returns
-the full list under `error.details.dirty_projects` in JSON mode. One `--force`
-deliberately discards dirty work. A locked tree is protected from prune and
-requires `--force --force` for removal.
+lost with the tree's reflog. `status --json` also reports `idle_secs` (time
+since the last sign of work in the tree) and the `processes` using it.
+
+## Remove and restore
+
+`remove` never loses work. Before deleting a tree it archives each project's
+commit, branch, index, and working tree (untracked files included, ignored
+files not) in the project's own repository, under
+`refs/repo-worktree/archive/<id>`, and `restore` recreates the tree from that
+archive:
+
+```sh
+git repo-worktree remove my-feature           # archived as my-feature-20261019T185012Z
+git repo-worktree restore my-feature          # same path, same commits, same changes
+git repo-worktree restore my-feature@{1} /tmp/older --name older
+```
+
+`restore` accepts an archive id, `<tree>@{n}` (newest first), a tree name, or
+the tree's former path. It creates the tree with the archived commits (not the
+source's current ones) using the pool and overlays as `add` does, applies the
+archived index and working tree, and checks out each archived branch again if
+the branch still points at the archived commit; otherwise the project stays
+detached and the result says why. The archive is deleted after a successful
+restore unless `--keep`.
+
+Some state cannot be archived: a rebase, merge, cherry-pick, or bisect in
+progress, unresolved conflicts, a submodule's own uncommitted changes, and
+projects `repo sync` added inside the tree. `remove` refuses those with
+`E_ARCHIVE_INCOMPLETE`; `--force` archives everything else and records what
+was dropped. `--discard` deletes without archiving. A locked tree is protected
+from prune and requires `--force --force` for removal.
+
+`remove --idle <duration>` removes, with archives, every tree that is
+unlocked, not in use by a process (Linux), and idle for at least the duration;
+`--dry-run` lists them. `prune` archives the commits of trees deleted by hand
+before reaping them.
+
+```sh
+git repo-worktree archive list
+git repo-worktree archive show my-feature
+git repo-worktree archive keep my-feature     # never expire this one
+git repo-worktree archive drop my-feature@{1}
+git repo-worktree archive policy --expire 30d --budget 2G
+```
+
+Archives expire after 30 days, and the oldest expire first once the objects
+they alone keep alive exceed 2 GiB; kept archives never expire. Expiry runs
+after each `remove` and on `archive prune`. Projects left at their starting
+commit with no changes need no ref, so archiving a clean tree writes nothing
+to its repositories.
 
 `remove` returns once the tree is unregistered and moved aside: its files are
 deleted afterwards by background maintenance (see

@@ -285,7 +285,7 @@ fn branch_collision_is_resumable_without_repinning() {
 }
 
 #[test]
-fn dirty_remove_and_prune_match_git_semantics() {
+fn dirty_remove_archives_and_prune_records_heads() {
     let fixture = fixture();
     command(&fixture)
         .arg("add")
@@ -293,34 +293,45 @@ fn dirty_remove_and_prune_match_git_semantics() {
         .assert()
         .success();
     fs::write(fixture.destination.join("p/untracked"), "dirty").unwrap();
-    let dirty = output_json(
+    let removed = output_json(
         command(&fixture)
             .arg("remove")
             .arg(&fixture.destination)
             .arg("--json")
             .assert()
-            .code(1),
+            .success(),
     );
-    assert_eq!(dirty["error"]["code"], "E_DIRTY");
-    command(&fixture)
-        .args(["remove", "--force"])
-        .arg(&fixture.destination)
-        .assert()
-        .success();
+    assert_eq!(removed["result"]["archive"]["projects_with_changes"], 1);
+    assert!(!fixture.destination.exists());
 
     let second = fixture.temp.path().join("prunable");
     command(&fixture).arg("add").arg(&second).assert().success();
+    fs::write(second.join("p/source.txt"), "stranded\n").unwrap();
+    git(&second.join("p"), &["commit", "-qam", "stranded work"]);
+    let stranded = git(&second.join("p"), &["rev-parse", "HEAD"]);
     fs::remove_dir_all(&second).unwrap();
     command(&fixture)
         .args(["prune", "--dry-run"])
         .assert()
         .success()
         .stdout(predicates::str::contains("would prune prunable"));
-    command(&fixture).arg("prune").assert().success();
+    let pruned = output_json(
+        command(&fixture)
+            .args(["prune", "--json"])
+            .assert()
+            .success(),
+    );
     assert!(!fixture
         .client
         .join(".repo/repo-worktrees/prunable")
         .exists());
+    let archive = pruned["result"]["pruned"][0]["archive"].as_str().unwrap();
+    git(&fixture.client.join("p"), &["gc", "-q", "--prune=now"]);
+    command(&fixture)
+        .args(["restore", archive])
+        .assert()
+        .success();
+    assert_eq!(git(&second.join("p"), &["rev-parse", "HEAD"]), stranded);
 }
 
 #[test]
@@ -1121,18 +1132,43 @@ fn a_tree_with_nested_projects_is_clean_and_removable() {
     );
     assert_eq!(status["result"]["dirty"], false, "{status}");
     fs::write(fixture.destination.join("p/scratch.txt"), "untracked\n").unwrap();
-    let refused = output_json(
+    let removed = output_json(
         command(&fixture)
             .args(["remove", "--json", "tree"])
             .assert()
-            .code(1),
+            .success(),
     );
-    assert_eq!(refused["error"]["code"], "E_DIRTY");
-    fs::remove_file(fixture.destination.join("p/scratch.txt")).unwrap();
+    assert_eq!(
+        removed["result"]["archive"]["dropped"],
+        serde_json::json!([])
+    );
+    let shown = output_json(
+        command(&fixture)
+            .args(["archive", "show", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(shown["result"]["projects"][0]["path"], "p", "{shown}");
+    assert_eq!(shown["result"]["projects"][0]["untracked"], 1, "{shown}");
     command(&fixture)
-        .args(["remove", "tree"])
+        .args(["restore", "tree"])
         .assert()
         .success();
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/scratch.txt")).unwrap(),
+        "untracked\n"
+    );
+    assert_eq!(
+        git(
+            &fixture.destination.join("p/child"),
+            &["status", "--porcelain"]
+        ),
+        ""
+    );
+    assert_eq!(
+        git(&fixture.destination.join("p"), &["status", "--porcelain"]),
+        "?? child/\n?? scratch.txt"
+    );
 }
 
 #[test]
@@ -1503,7 +1539,7 @@ fn two_project_snapshot(fixture: &Fixture) {
 }
 
 #[test]
-fn remove_reports_structured_dirty_details_including_stranded_commits() {
+fn remove_archives_stranded_commits_and_restore_brings_them_back() {
     let fixture = fixture();
     command(&fixture)
         .arg("add")
@@ -1527,39 +1563,43 @@ fn remove_reports_structured_dirty_details_including_stranded_commits() {
     assert_eq!(inspected["untracked"], 1);
     assert_eq!(inspected["branch"], Value::Null);
 
-    let refused = output_json(
+    let detached = git(&project, &["rev-parse", "HEAD"]);
+    let removed = output_json(
         command(&fixture)
             .args(["remove", "--json"])
             .arg(&fixture.destination)
             .assert()
-            .code(1),
+            .success(),
     );
-    assert_eq!(refused["error"]["code"], "E_DIRTY");
-    let dirty = &refused["error"]["details"]["dirty_projects"][0];
-    assert_eq!(dirty["path"], "p");
-    assert_eq!(
-        dirty["reasons"],
-        serde_json::json!(["untracked", "unbranched-commits"])
-    );
-    assert!(refused["error"]["message"]
+    let id = removed["result"]["archive"]["id"]
         .as_str()
         .unwrap()
-        .contains("unbranched-commits"));
-
-    fs::remove_file(project.join("scratch.txt")).unwrap();
-    git(&project, &["branch", "keep"]);
-    command(&fixture)
-        .arg("remove")
-        .arg(&fixture.destination)
-        .assert()
-        .success();
+        .to_string();
+    assert!(removed["result"]["archive"]["bytes"].as_u64().unwrap() > 0);
+    let source = fixture.client.join("p");
     assert_eq!(
         git(
-            &fixture.client.join("p"),
-            &["log", "-1", "--format=%s", "keep"]
+            &source,
+            &["rev-parse", &format!("refs/repo-worktree/archive/{id}^1")]
         ),
-        "detached work"
+        detached
     );
+    git(&source, &["gc", "-q", "--prune=now"]);
+    let shown = output_json(
+        command(&fixture)
+            .args(["archive", "show", "tree@{0}", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(shown["result"]["projects"][0]["unbranched_commits"], 1);
+
+    command(&fixture).args(["restore", &id]).assert().success();
+    assert_eq!(git(&project, &["rev-parse", "HEAD"]), detached);
+    assert_eq!(
+        fs::read_to_string(project.join("scratch.txt")).unwrap(),
+        "untracked\n"
+    );
+    assert_eq!(git(&source, &["for-each-ref", "refs/repo-worktree"]), "");
 }
 
 #[test]
@@ -2184,7 +2224,6 @@ mod overlay_mode {
         );
         assert_eq!(status["result"]["projects"][0]["modified"], 1);
         assert_eq!(status["result"]["projects"][0]["mounted"], true);
-        command(&fixture).arg("remove").arg("tree").assert().code(1);
 
         let source = fixture.client.join("p");
         let source_head = git(&source, &["rev-parse", "HEAD"]);
@@ -2273,6 +2312,58 @@ mod overlay_mode {
             .success();
         let listing = git(&source, &["worktree", "list", "--porcelain"]);
         assert!(!listing.contains(p.to_str().unwrap()), "{listing}");
+    }
+
+    #[test]
+    fn overlay_changes_survive_remove_and_restore_even_with_a_dead_mount() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        command(&fixture)
+            .arg("add")
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+        let p = fixture.destination.join("p");
+        fs::write(p.join("source.txt"), "overlay edit\n").unwrap();
+        fs::write(p.join("new.txt"), "overlay new\n").unwrap();
+        let upper = fixture
+            .client
+            .join(".repo/repo-worktrees/tree/overlays/p/upper");
+        assert!(StdCommand::new("pkill")
+            .args(["-9", "-f"])
+            .arg(format!("fuse-overlayfs.*{}", upper.display()))
+            .status()
+            .unwrap()
+            .success());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let removed = output_json(
+            command(&fixture)
+                .args(["remove", "--json", "tree"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(
+            removed["result"]["archive"]["projects_with_changes"], 1,
+            "{removed}"
+        );
+        command(&fixture)
+            .args(["restore", "tree"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(p.join("source.txt")).unwrap(),
+            "overlay edit\n"
+        );
+        assert_eq!(
+            fs::read_to_string(p.join("new.txt")).unwrap(),
+            "overlay new\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.client.join("p/source.txt")).unwrap(),
+            "snapshot\n"
+        );
     }
 
     #[test]
@@ -2510,12 +2601,10 @@ fn history_records_invocations_and_report_summarizes_them() {
         .arg(&fixture.destination)
         .assert()
         .success();
-    fs::write(fixture.destination.join("p/scratch"), "x").unwrap();
     tagged(&fixture)
-        .args(["remove", "secret-name"])
+        .args(["remove", "missing-tree"])
         .assert()
         .code(1);
-    fs::remove_file(fixture.destination.join("p/scratch")).unwrap();
     tagged(&fixture)
         .args(["remove", "secret-name"])
         .assert()
@@ -2585,8 +2674,8 @@ fn history_records_invocations_and_report_summarizes_them() {
     let result = &report["result"];
     assert_eq!(result["events"], 6);
     assert_eq!(result["commands"]["add"]["latency"]["count"], 4);
-    assert_eq!(result["commands"]["remove"]["errors"]["E_DIRTY"], 1);
-    assert_eq!(result["remove"]["dirty_reasons"]["untracked"], 1);
+    assert_eq!(result["commands"]["remove"]["errors"]["E_NO_SUCH_TREE"], 1);
+    assert_eq!(result["remove"]["archives"]["created"], 1);
     assert_eq!(result["remove"]["returned_to_pool"], 1);
     assert_eq!(
         result["add"]["pool"],
@@ -3168,4 +3257,507 @@ fn failing_and_slow_hooks_are_recorded_and_repair_retries_post_add() {
     assert!(skipped_path.join("ran").exists());
     assert!(repaired["result"].get("projects").is_none());
     assert!(repaired["result"]["project_counts"]["worktree"].is_u64());
+}
+
+/// Status, staged diff, unstaged diff, and file contents: everything a
+/// restore must reproduce.
+type WorktreeState = (String, String, String, Vec<(String, Vec<u8>, bool)>);
+
+fn worktree_state(checkout: &Path) -> WorktreeState {
+    let mut files = fs::read_dir(checkout)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name() != ".git")
+        .map(|entry| {
+            let metadata = fs::metadata(entry.path()).unwrap();
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                fs::read(entry.path()).unwrap(),
+                metadata.permissions().mode() & 0o111 != 0,
+            )
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    (
+        git(checkout, &["status", "--porcelain=v2", "--branch"]),
+        git(checkout, &["diff", "--cached", "--stat", "--summary"]),
+        git(checkout, &["diff", "--stat", "--summary"]),
+        files,
+    )
+}
+
+#[test]
+fn remove_and_restore_round_trip_every_kind_of_change() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let project = fixture.destination.join("p");
+    git(&project, &["switch", "-q", "-c", "topic"]);
+    for (name, contents) in [
+        ("a.txt", "a\n"),
+        ("b.txt", "b\n"),
+        ("c.txt", "c\n"),
+        ("d.sh", "echo d\n"),
+        (".gitignore", "*.log\n"),
+    ] {
+        fs::write(project.join(name), contents).unwrap();
+    }
+    git(&project, &["add", "."]);
+    git(&project, &["commit", "-qm", "topic work"]);
+    fs::write(project.join("a.txt"), "a staged\n").unwrap();
+    git(&project, &["add", "a.txt"]);
+    fs::write(project.join("a.txt"), "a staged then edited\n").unwrap();
+    fs::write(project.join("b.txt"), "b unstaged\n").unwrap();
+    fs::remove_file(project.join("c.txt")).unwrap();
+    git(&project, &["mv", "source.txt", "renamed.txt"]);
+    fs::set_permissions(project.join("d.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(project.join("new.txt"), "untracked\n").unwrap();
+    fs::write(project.join("staged-new.txt"), "added\n").unwrap();
+    git(&project, &["add", "staged-new.txt"]);
+    fs::write(project.join("build.log"), "ignored\n").unwrap();
+    let before = worktree_state(&project);
+
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["archive"]["projects_with_changes"], 1);
+    assert!(!fixture.destination.exists());
+    let listed = output_json(
+        command(&fixture)
+            .args(["archive", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(listed["result"]["archives"][0]["tree"], "tree");
+
+    let restored = output_json(
+        command(&fixture)
+            .args(["restore", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    let project_result = &restored["result"]["restored"][0];
+    assert_eq!(project_result["changes_applied"], true, "{restored}");
+    assert_eq!(project_result["branch_restored"], true, "{restored}");
+    assert_eq!(restored["result"]["archive"]["kept"], false);
+    fs::remove_file(project.join("build.log")).ok();
+    let mut expected = before;
+    expected.3.retain(|(name, _, _)| name != "build.log");
+    assert_eq!(worktree_state(&project), expected);
+    assert!(output_json(
+        command(&fixture)
+            .args(["archive", "list", "--json"])
+            .assert()
+            .success()
+    )["result"]["archives"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn restore_leaves_a_moved_branch_detached_and_recreates_a_deleted_one() {
+    let fixture = fixture();
+    let source = fixture.client.join("p");
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let project = fixture.destination.join("p");
+    git(&project, &["switch", "-q", "-c", "moving"]);
+    fs::write(project.join("source.txt"), "tree work\n").unwrap();
+    git(&project, &["commit", "-qam", "tree work"]);
+    let work = git(&project, &["rev-parse", "HEAD"]);
+    command(&fixture)
+        .args(["remove", "tree"])
+        .assert()
+        .success();
+    git(&source, &["branch", "-f", "moving", "HEAD"]);
+    let restored = output_json(
+        command(&fixture)
+            .args(["restore", "--json", "--keep"])
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    let result = &restored["result"]["restored"][0];
+    assert_eq!(result["branch_restored"], false, "{restored}");
+    assert!(result["reason"].as_str().unwrap().contains("has moved"));
+    assert_eq!(git(&project, &["rev-parse", "HEAD"]), work);
+    assert_eq!(
+        git(&project, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "HEAD"
+    );
+    assert_eq!(restored["result"]["archive"]["kept"], true);
+
+    let renamed = output_json(
+        command(&fixture)
+            .args(["restore", "tree@{0}", "--json"])
+            .arg(fixture.temp.path().join("elsewhere"))
+            .assert()
+            .code(1),
+    );
+    assert_eq!(renamed["error"]["code"], "E_NAME_EXISTS");
+    command(&fixture)
+        .args(["remove", "--discard", "tree"])
+        .assert()
+        .success();
+    git(&source, &["branch", "-D", "moving"]);
+    let recreated = output_json(
+        command(&fixture)
+            .args(["restore", "tree@{0}", "--name", "again", "--json"])
+            .arg(fixture.temp.path().join("elsewhere"))
+            .assert()
+            .success(),
+    );
+    let result = &recreated["result"]["restored"][0];
+    assert_eq!(result["branch_restored"], true, "{recreated}");
+    assert!(result["reason"].as_str().unwrap().contains("recreated"));
+    assert_eq!(
+        git(
+            &fixture.temp.path().join("elsewhere/p"),
+            &["rev-parse", "moving"]
+        ),
+        work
+    );
+    assert_eq!(git(&source, &["for-each-ref", "refs/repo-worktree"]), "");
+}
+
+#[test]
+fn remove_refuses_state_an_archive_cannot_hold_unless_forced() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let project = fixture.destination.join("p");
+    git(&project, &["switch", "-q", "-c", "side"]);
+    fs::write(project.join("source.txt"), "side\n").unwrap();
+    git(&project, &["commit", "-qam", "side"]);
+    git(&project, &["switch", "-q", "--detach", "HEAD~1"]);
+    fs::write(project.join("source.txt"), "main\n").unwrap();
+    git(&project, &["commit", "-qam", "main"]);
+    let merge = StdCommand::new("git")
+        .current_dir(&project)
+        .args(["merge", "side"])
+        .output()
+        .unwrap();
+    assert!(!merge.status.success());
+
+    let refused = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(refused["error"]["code"], "E_ARCHIVE_INCOMPLETE");
+    let kinds = refused["error"]["details"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["kind"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(kinds.contains(&"in-progress".to_string()), "{kinds:?}");
+    assert!(kinds.contains(&"conflicts".to_string()), "{kinds:?}");
+    assert!(project.exists());
+    assert!(output_json(
+        command(&fixture)
+            .args(["archive", "list", "--json"])
+            .assert()
+            .success()
+    )["result"]["archives"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let forced = output_json(
+        command(&fixture)
+            .args(["remove", "--force", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert!(!forced["result"]["archive"]["dropped"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    command(&fixture)
+        .args(["restore", "tree"])
+        .assert()
+        .success();
+    assert!(fs::read_to_string(project.join("source.txt"))
+        .unwrap()
+        .contains("<<<<<<<"));
+
+    let discarded = output_json(
+        command(&fixture)
+            .args(["remove", "--discard", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(discarded["result"]["archive"], Value::Null);
+}
+
+#[test]
+fn remove_idle_skips_locked_and_recently_active_trees() {
+    let fixture = fixture();
+    let second = fixture.temp.path().join("kept");
+    for destination in [&fixture.destination, &second] {
+        command(&fixture)
+            .arg("add")
+            .arg(destination)
+            .assert()
+            .success();
+    }
+    command(&fixture).args(["lock", "kept"]).assert().success();
+    let recent = output_json(
+        command(&fixture)
+            .args(["remove", "--idle", "1d", "--dry-run", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(recent["result"]["removed"].as_array().unwrap().is_empty());
+    let reasons = recent["result"]["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["name"].as_str().unwrap().to_string(),
+                entry["reason"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        reasons.contains(&("kept".into(), "locked".into())),
+        "{reasons:?}"
+    );
+    assert!(
+        reasons
+            .iter()
+            .any(|(name, reason)| name == "tree" && reason.starts_with("active")),
+        "{reasons:?}"
+    );
+
+    let status = output_json(
+        command(&fixture)
+            .args(["status", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(status["result"]["idle_secs"].as_u64().unwrap() < 600);
+
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--idle", "0s", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["removed"][0]["name"], "tree", "{removed}");
+    assert!(removed["result"]["removed"][0]["archive"]["id"].is_string());
+    assert!(!fixture.destination.exists());
+    assert!(second.exists());
+}
+
+#[test]
+fn archives_expire_by_age_and_budget_unless_kept() {
+    let fixture = fixture();
+    let dirty_tree = |name: &str| {
+        let destination = fixture.temp.path().join(name);
+        command(&fixture)
+            .arg("add")
+            .arg(&destination)
+            .assert()
+            .success();
+        fs::write(destination.join("p/source.txt"), format!("{name}\n")).unwrap();
+        git(&destination.join("p"), &["commit", "-qam", name]);
+        command(&fixture).args(["remove", name]).assert().success();
+    };
+    let ids = |fixture: &Fixture| {
+        output_json(
+            command(fixture)
+                .args(["archive", "list", "--json"])
+                .assert()
+                .success(),
+        )["result"]["archives"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|archive| archive["tree"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    dirty_tree("first");
+    dirty_tree("second");
+    command(&fixture)
+        .args(["archive", "keep", "first"])
+        .assert()
+        .success();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["remove", "tree"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["archive", "policy", "--budget", "0"])
+        .assert()
+        .success();
+    let pruned = output_json(
+        command(&fixture)
+            .args(["archive", "prune", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        pruned["result"]["expired"].as_array().unwrap().len(),
+        1,
+        "{pruned}"
+    );
+    assert_eq!(ids(&fixture), ["tree", "first"]);
+
+    command(&fixture)
+        .args(["archive", "policy", "--budget", "2G", "--expire", "0s"])
+        .assert()
+        .success();
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    dirty_tree("third");
+    assert_eq!(ids(&fixture), ["third", "first"]);
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    command(&fixture)
+        .args(["archive", "prune"])
+        .assert()
+        .success();
+    assert_eq!(ids(&fixture), ["first"]);
+    command(&fixture)
+        .args(["archive", "keep", "--unkeep", "first"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["archive", "drop", "first"])
+        .assert()
+        .success();
+    assert!(ids(&fixture).is_empty());
+    assert_eq!(
+        git(
+            &fixture.client.join("p"),
+            &["for-each-ref", "refs/repo-worktree"]
+        ),
+        ""
+    );
+}
+
+#[test]
+fn restore_fails_only_projects_whose_archived_objects_are_gone() {
+    let fixture = fixture();
+    two_project_snapshot(&fixture);
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    for project in ["p", "q"] {
+        let checkout = fixture.destination.join(project);
+        fs::write(checkout.join("work.txt"), "work\n").unwrap();
+        git(&checkout, &["add", "work.txt"]);
+        git(&checkout, &["commit", "-qm", "work"]);
+    }
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    let id = removed["result"]["archive"]["id"].as_str().unwrap();
+    let source_q = fixture.client.join("q");
+    git(
+        &source_q,
+        &[
+            "update-ref",
+            "-d",
+            &format!("refs/repo-worktree/archive/{id}"),
+        ],
+    );
+    git(&source_q, &["reflog", "expire", "--expire=now", "--all"]);
+    git(&source_q, &["gc", "-q", "--prune=now"]);
+    let output = command(&fixture)
+        .args(["restore", "tree", "--json"])
+        .output()
+        .unwrap();
+    let partial: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(3), "{partial}");
+    assert_eq!(partial["result"]["archive"]["kept"], true, "{partial}");
+    let restored = partial["result"]["restored"].as_array().unwrap();
+    let q = restored
+        .iter()
+        .find(|project| project["path"] == "q")
+        .unwrap();
+    assert_eq!(q["ok"], false, "{partial}");
+    assert!(
+        q["reason"].as_str().unwrap().contains("not populated"),
+        "{partial}"
+    );
+    let p = restored
+        .iter()
+        .find(|project| project["path"] == "p")
+        .unwrap();
+    assert_eq!(p["ok"], true, "{partial}");
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/work.txt")).unwrap(),
+        "work\n"
+    );
+}
+
+#[test]
+fn pooled_projects_round_trip_through_an_archive() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture).args(["pool", "fill"]).assert().success();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let p = fixture.destination.join("p");
+    fs::write(p.join("source.txt"), "pooled edit\n").unwrap();
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["returned_to_pool"], serde_json::json!([]));
+    let restored = output_json(
+        command(&fixture)
+            .args(["-v", "restore", "tree", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        restored["result"]["projects"][0]["strategy"], "pool",
+        "{restored}"
+    );
+    assert_eq!(
+        fs::read_to_string(p.join("source.txt")).unwrap(),
+        "pooled edit\n"
+    );
+    let clean = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(clean["result"]["archive"]["projects_with_changes"], 1);
 }

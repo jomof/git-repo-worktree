@@ -273,17 +273,20 @@ fn repo_commands_work_inside_a_tree_without_touching_the_source() {
         listed["result"]["trees"][0]["checked_out_branches"],
         serde_json::json!([{"project": "a", "branch": "feat"}])
     );
-    let dirty = json(
+    let status = json(
         tool(&client)
-            .args(["remove", "--json", "tree"])
+            .args(["status", "--json", "tree"])
             .assert()
-            .code(1),
+            .success(),
     );
-    assert_eq!(dirty["error"]["code"], "E_DIRTY");
-    assert_eq!(
-        dirty["error"]["details"]["dirty_projects"][0]["path"],
-        "lib/b"
-    );
+    let dirty = status["result"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|project| project["dirty"] == true)
+        .map(|project| project["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(dirty, ["lib/b"]);
 
     let moved = client.base.join("moved");
     tool(&client)
@@ -898,4 +901,58 @@ fn repo_sync_keeps_working_in_a_worktree_layout_tree() {
         "repo-worktree/tree"
     );
     assert_eq!(repo_projects(&tree), "a\nb");
+}
+
+#[test]
+fn a_restored_tree_keeps_its_repo_bridge_branches_and_changes() {
+    let Some(client) = client(false) else {
+        return;
+    };
+    let tree = add(&client, "tree");
+    run(&tree, "repo", &["start", "review", "a"]);
+    fs::write(tree.join("a/mine.txt"), "mine\n").unwrap();
+    run(&tree.join("a"), "git", &["add", "mine.txt"]);
+    run(&tree.join("a"), "git", &["commit", "-qm", "my change"]);
+    let review = run(&tree.join("a"), "git", &["rev-parse", "HEAD"]);
+    fs::write(tree.join("lib/b/README"), "edited\n").unwrap();
+    fs::write(tree.join("lib/b/scratch"), "scratch\n").unwrap();
+    let manifest_commit = run(&tree.join(".repo/manifests"), "git", &["rev-parse", "HEAD"]);
+    let removed = json(
+        tool(&client)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["archive"]["projects_with_changes"], 1);
+    assert!(!tree.exists());
+
+    let restored = json(
+        tool(&client)
+            .args(["restore", "--keep", "--json"])
+            .arg(&tree)
+            .assert()
+            .success(),
+    );
+    assert_eq!(restored["result"]["repo_bridge"]["state"], "done");
+    assert_eq!(
+        run(
+            &tree.join("a"),
+            "git",
+            &["rev-parse", "--abbrev-ref", "HEAD"]
+        ),
+        "review"
+    );
+    assert_eq!(run(&tree.join("a"), "git", &["rev-parse", "HEAD"]), review);
+    assert_eq!(
+        run(&tree.join("lib/b"), "git", &["status", "--porcelain"]),
+        "M README\n?? scratch"
+    );
+    assert_eq!(
+        run(&tree.join(".repo/manifests"), "git", &["rev-parse", "HEAD"]),
+        manifest_commit
+    );
+    assert_eq!(repo_projects(&tree), "a\nb");
+    let status = run(&tree, "repo", &["status"]);
+    assert!(status.contains("review"), "{status}");
+    assert!(status.contains("lib/b"), "{status}");
 }
