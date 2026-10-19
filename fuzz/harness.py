@@ -32,6 +32,7 @@ Modes (environment):
     GRW_FUZZ_FINDINGS     where reproductions go (default fuzz/findings)
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -50,6 +51,7 @@ from hypothesis.stateful import (
     consumes,
     initialize,
     invariant,
+    multiple,
     precondition,
     rule,
     run_state_machine_as_test,
@@ -340,6 +342,49 @@ def rebasing(checkout):
     )
 
 
+def fingerprint(root, paths):
+    """Each project's HEAD, branch, exact index, and every non-ignored file with
+    its contents and executable bit: what `restore` must reproduce."""
+    prints = {}
+    for path in paths:
+        checkout = root / path
+        if checkout.is_symlink() or not (checkout / ".git").exists():
+            continue
+        listing = run(["git", "ls-files", "-z", "-c", "-o", "--exclude-standard"], checkout, check=False).stdout
+        files = {}
+        for name in sorted(set(filter(None, listing.split("\0")))):
+            target = checkout / name
+            if target.is_symlink():
+                files[name] = ("link", os.readlink(target))
+            elif target.is_file():
+                files[name] = (hashlib.sha1(target.read_bytes()).hexdigest(), os.access(target, os.X_OK))
+            elif target.is_dir():
+                files[name] = ("dir",)
+            else:
+                files[name] = ("missing",)
+        prints[path] = {
+            "head": git(checkout, "rev-parse", "HEAD", check=False),
+            "branch": git(checkout, "symbolic-ref", "-q", "--short", "HEAD", check=False),
+            "index": git(checkout, "ls-files", "--stage", check=False),
+            "files": files,
+        }
+    return prints
+
+
+def archive_ref_ids():
+    """Ids of archive refs in every source project and the manifest repository."""
+    ids = set()
+    repositories = [CLIENT / path for path in PATHS.values() if (CLIENT / path / ".git").exists()]
+    repositories.append(CLIENT / ".repo" / "manifests")
+    for repository in repositories:
+        refs = git(repository, "for-each-ref", "--format=%(refname)", "refs/repo-worktree/archive/", check=False)
+        ids.update(line.rsplit("/", 1)[1] for line in refs.splitlines() if line)
+    return ids
+
+
+ACCEPTED_ARCHIVE_ITEMS = {"in-progress", "conflicts", "submodule-changes", "unmanaged-project", "embedded-repository"}
+
+
 def current_layout_problems(root):
     """Ways a bridged tree's .repo differs from what this build creates."""
     problems = []
@@ -356,6 +401,7 @@ def current_layout_problems(root):
 
 class TreeWorld(RuleBasedStateMachine):
     trees = Bundle("trees")
+    archives = Bundle("archives")
 
     def __init__(self):
         super().__init__()
@@ -368,6 +414,7 @@ class TreeWorld(RuleBasedStateMachine):
         self.dirty_readme = {}
         self.dead = set()
         self.legacy = set()
+        self.archived = {}
         self.fault = None
         self.manifest_projects = set(INITIAL)
         self.linkfile = True
@@ -406,7 +453,7 @@ class TreeWorld(RuleBasedStateMachine):
             if tree["state"] in ("creating", "incomplete") and name not in self.live:
                 value = grw_json("add", "--continue", name, check=False)
                 if not value["ok"]:
-                    grw_json("remove", "--force", "--force", name)
+                    grw_json("remove", "--force", "--force", "--discard", name)
                     continue
                 self.new_tree(name, Path(tree["path"]))
             elif name not in self.live:
@@ -561,25 +608,188 @@ class TreeWorld(RuleBasedStateMachine):
             self.new_tree(name, path)
         return name
 
-    @rule(tree=consumes(trees), force=st.booleans())
-    def remove(self, tree, force):
-        step(f"remove({tree}, force={force})")
+    def archive_state(self, tree):
+        """The tree's projects as `restore` must bring them back."""
+        if not self.checked(tree) or self.fault:
+            return None
+        status = grw_json("status", tree, check=False)
+        if not status["ok"]:
+            return None
+        paths = [project["path"] for project in status["result"]["projects"]]
+        return {
+            "name": tree,
+            "path": self.live[tree],
+            "prints": fingerprint(self.live[tree], paths),
+            "unbranched": self.unbranched[tree],
+            "branches": dict(self.branches[tree]),
+            "dirty_readme": self.dirty_readme[tree],
+        }
+
+    def check_incomplete(self, tree, error):
+        """An archive refusal must name only state an archive cannot hold."""
+        for item in error.get("details", {}).get("items", []):
+            if item["kind"] not in ACCEPTED_ARCHIVE_ITEMS:
+                raise Finding(f"remove {tree} could not archive {item}")
+            if item["kind"] in ("in-progress", "conflicts") and not rebasing(self.live[tree] / item["project"]):
+                raise Finding(f"remove {tree} reported {item} with no operation in progress")
+
+    def forget(self, tree):
+        del self.live[tree]
+        self.dead.discard(tree)
+        self.legacy.discard(tree)
+
+    @rule(target=archives, tree=consumes(trees), mode=st.sampled_from(["plain", "force", "discard"]))
+    def remove(self, tree, mode):
+        step(f"remove({tree}, {mode})")
         if tree not in self.live:
-            return
-        args = ["remove", tree] + (["--force"] if force else [])
+            return multiple()
+        state = self.archive_state(tree) if mode != "discard" else None
+        args = ["remove", tree] + {"plain": [], "force": ["--force"], "discard": ["--discard"]}[mode]
         value = self.tool_step(lambda: grw_json(*args, check=False))
+        if not value["ok"] and value["error"]["code"] == "E_ARCHIVE_INCOMPLETE" and mode == "plain" and not self.fault:
+            self.check_incomplete(tree, value["error"])
+            mode = "force"
+            value = self.tool_step(lambda: grw_json("remove", tree, "--force", check=False))
         if value["ok"]:
-            del self.live[tree]
-            self.dead.discard(tree)
-            self.legacy.discard(tree)
-        elif self.fault:
-            pass
-        elif value["error"]["code"] == "E_DIRTY" and not force and (
-            self.unbranched[tree] or self.dirty_readme[tree] or tree in self.legacy
-        ):
-            pass
-        else:
-            raise Finding(f"remove {tree} failed: {json.dumps(value['error'])}")
+            self.forget(tree)
+            archive = value["result"].get("archive")
+            if mode == "discard":
+                if archive is not None:
+                    raise Finding(f"remove --discard {tree} archived it: {archive}")
+                return multiple()
+            if archive is None:
+                raise Finding(f"remove {tree} succeeded without an archive")
+            if state is not None:
+                state["dropped"] = {item["project"] for item in archive["dropped"]}
+                self.archived[archive["id"]] = state
+            return archive["id"]
+        if self.fault:
+            return multiple()
+        raise Finding(f"remove {tree} ({mode}) failed: {json.dumps(value['error'])}")
+
+    @rule(target=trees, archive=consumes(archives))
+    def restore(self, archive):
+        step(f"restore({archive})")
+        state = self.archived.pop(archive, None)
+        if self.fault or state is None:
+            return multiple()
+        name, path = state["name"], state["path"]
+        if name in self.live or os.path.lexists(path):
+            return multiple()
+        value = self.tool_step(lambda: grw_json("restore", archive, check=False))
+        if not value["ok"]:
+            restored = (value.get("result") or {}).get("restored") or []
+            failed = [entry for entry in restored if entry.get("ok") is False]
+            gone = [entry for entry in failed if not (CLIENT / entry["path"] / ".git").exists()]
+            if value.get("exit_code") == 3 and failed and len(gone) == len(failed):
+                grw_json("remove", "--discard", name)
+                return multiple()
+            raise Finding(f"restore {archive} failed: {json.dumps(value.get('error'))}\n{json.dumps(restored)}")
+        if value["result"]["archive"]["kept"]:
+            raise Finding(f"restore {archive} succeeded but kept the archive")
+        if archive in {entry["id"] for entry in grw_json("archive", "list")["result"]["archives"]}:
+            raise Finding(f"restore {archive} left the archive listed")
+        self.new_tree(name, path)
+        self.unbranched[name] = state["unbranched"]
+        self.branches[name] = state["branches"]
+        self.dirty_readme[name] = state["dirty_readme"]
+        restored = {entry["path"]: entry for entry in value["result"]["restored"]}
+        for project, expected in state.get("heads", {}).items():
+            if (path / project / ".git").exists():
+                head = git(path / project, "rev-parse", "HEAD")
+                if head != expected["head"]:
+                    raise Finding(f"restore {archive}: {project} is at {head}, its pruned tree was at {expected['head']}")
+        after = fingerprint(path, list(state["prints"]))
+        for project, before in state["prints"].items():
+            if project in state["dropped"]:
+                continue
+            now = after.get(project)
+            if now is None:
+                raise Finding(f"restore {archive} did not recreate {project}")
+            entry = restored.get(project, {})
+            expected = dict(before)
+            if before["branch"] and not entry.get("branch_restored"):
+                expected["branch"] = ""
+                self.unbranched[name] = True
+                self.branches[name].pop(project, None)
+            for key in ("head", "branch", "index", "files"):
+                if now[key] != expected[key]:
+                    raise Finding(
+                        f"restore {archive}: {project} {key} differs\nbefore {expected[key]}\nafter  {now[key]}\n{json.dumps(entry)}"
+                    )
+        return name
+
+    @rule(tree=trees, mode=st.sampled_from(["plain", "force"]))
+    def round_trip(self, tree, mode):
+        step(f"round_trip({tree}, {mode})")
+        archive = self.remove(tree, mode)
+        if isinstance(archive, str):
+            self.restore(archive)
+
+    @rule(archive=consumes(archives))
+    def drop_archive(self, archive):
+        step(f"drop_archive({archive})")
+        self.archived.pop(archive, None)
+        if self.fault:
+            return
+        value = grw_json("archive", "drop", archive, check=False)
+        if not value["ok"] and value["error"]["code"] != "E_NO_SUCH_ARCHIVE":
+            raise Finding(f"archive drop {archive} failed: {json.dumps(value['error'])}")
+        if archive in archive_ref_ids():
+            raise Finding(f"archive drop {archive} left its refs behind")
+
+    @precondition(lambda self: not OVERLAY)
+    @rule(target=archives, tree=consumes(trees))
+    def delete_by_hand_and_prune(self, tree):
+        step(f"delete_by_hand_and_prune({tree})")
+        if not self.checked(tree) or self.fault:
+            return multiple()
+        root = self.live[tree]
+        heads = {
+            project: {"head": prints["head"]}
+            for project, prints in fingerprint(root, PATHS.values()).items()
+        }
+        run(["rm", "-rf", root], BASE)
+        value = self.tool_step(lambda: grw_json("prune"))
+        pruned = {entry["name"]: entry for entry in value["result"]["pruned"]}
+        if tree not in pruned or not pruned[tree].get("archive"):
+            raise Finding(f"prune did not archive {tree}: {json.dumps(value['result'])}")
+        self.forget(tree)
+        archive = pruned[tree]["archive"]
+        self.archived[archive] = {
+            "name": tree,
+            "path": root,
+            "prints": {},
+            "heads": heads,
+            "unbranched": True,
+            "branches": {},
+            "dirty_readme": True,
+            "dropped": set(),
+        }
+        return archive
+
+    @rule(target=archives)
+    def remove_idle(self):
+        step("remove_idle()")
+        if self.fault or not self.live:
+            return multiple()
+        states = {tree: self.archive_state(tree) for tree in list(self.live)}
+        value = self.tool_step(lambda: grw_json("remove", "--idle", "0s"))
+        ids = []
+        for entry in value["result"]["removed"]:
+            tree = entry["name"]
+            self.forget(tree)
+            archive = entry["archive"]
+            if states.get(tree) is not None:
+                states[tree]["dropped"] = set()
+                self.archived[archive["id"]] = states[tree]
+            ids.append(archive["id"])
+        for entry in value["result"]["skipped"]:
+            if entry["name"] in self.live and not entry["reason"].startswith("E_ARCHIVE_INCOMPLETE"):
+                reason = entry["reason"]
+                if reason != "locked" and "process" not in reason and "another command" not in reason:
+                    raise Finding(f"remove --idle 0s skipped {entry['name']}: {reason}")
+        return multiple(*ids)
 
     @rule(tree=trees)
     def repair(self, tree):
@@ -931,6 +1141,16 @@ class TreeWorld(RuleBasedStateMachine):
                 actual = git(self.live[name] / entry["project"], "symbolic-ref", "-q", "--short", "HEAD", check=False)
                 if actual != entry["branch"]:
                     raise Finding(f"list says {name}/{entry['project']} has {entry['branch']} checked out; git says {actual!r}")
+
+    @invariant()
+    def archive_refs_belong_to_records(self):
+        if self.fault:
+            return
+        directory = CLIENT / ".repo" / "repo-worktrees" / ".archive"
+        records = {entry.name for entry in directory.iterdir()} if directory.is_dir() else set()
+        orphans = archive_ref_ids() - records
+        if orphans:
+            raise Finding(f"archive refs without a record: {sorted(orphans)}")
 
     @invariant()
     def no_stale_registrations(self):

@@ -31,6 +31,9 @@ const RECORD_FILE: &str = "archive.json";
 const SNAPSHOT_FILE: &str = "snapshot.xml";
 pub const DEFAULT_EXPIRE_SECS: u64 = 30 * 86_400;
 pub const DEFAULT_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Age after which an archive whose capture never finished (the process was
+/// killed) is deleted with its refs.
+const ABANDONED_SECS: u64 = 3_600;
 const IN_PROGRESS: &[(&str, &str)] = &[
     ("rebase-merge", "rebase"),
     ("rebase-apply", "rebase or am"),
@@ -134,6 +137,10 @@ pub struct Record {
     pub reason: String,
     #[serde(default)]
     pub keep: bool,
+    /// False until every ref is written; the record is written first so a
+    /// killed capture never leaves refs that nothing lists.
+    #[serde(default = "complete_by_default")]
+    pub complete: bool,
     pub options: Options,
     pub manifests: Option<Manifests>,
     pub projects: Vec<Project>,
@@ -153,6 +160,10 @@ impl Record {
     pub fn ref_name(&self) -> String {
         format!("{REF_PREFIX}{}", self.id)
     }
+}
+
+fn complete_by_default() -> bool {
+    true
 }
 
 pub struct Captured {
@@ -225,18 +236,52 @@ fn reserve(registry: &Path, tree: &str) -> AppResult<(String, PathBuf)> {
     unreachable!("ids are unbounded")
 }
 
-/// Every readable archive, newest first.
+/// Every readable archive whose capture finished, newest first.
 pub fn load_all(registry: &Path) -> Vec<Record> {
-    let mut records = fs::read_dir(dir(registry))
+    let mut records = load_records(registry)
+        .into_iter()
+        .filter(|record| record.complete)
+        .collect::<Vec<_>>();
+    records.sort_by(|a, b| (b.archived_unix, &b.id).cmp(&(a.archived_unix, &a.id)));
+    records
+}
+
+fn load_records(registry: &Path) -> Vec<Record> {
+    fs::read_dir(dir(registry))
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|entry| fs::read(entry.path().join(RECORD_FILE)).ok())
         .filter_map(|bytes| serde_json::from_slice::<Record>(&bytes).ok())
         .filter(|record| record.format_version <= FORMAT_VERSION)
-        .collect::<Vec<_>>();
-    records.sort_by(|a, b| (b.archived_unix, &b.id).cmp(&(a.archived_unix, &a.id)));
-    records
+        .collect()
+}
+
+/// Deletes captures a killed process never finished: records still marked
+/// incomplete, with their refs, and reserved directories that never got a
+/// record. Only those older than an hour, so running captures are left alone.
+fn delete_abandoned(registry: &Path, now: u64) -> Vec<String> {
+    let mut deleted = Vec::new();
+    for record in load_records(registry) {
+        if !record.complete && now.saturating_sub(record.archived_unix) > ABANDONED_SECS {
+            let _ = drop_record(registry, &record);
+            deleted.push(record.id);
+        }
+    }
+    for entry in fs::read_dir(dir(registry)).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let old = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .is_some_and(|age| now.saturating_sub(age.as_secs()) > ABANDONED_SECS);
+        if path.is_dir() && old && !path.join(RECORD_FILE).exists() {
+            let _ = fs::remove_dir_all(&path);
+            deleted.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    deleted
 }
 
 /// Selects an archive by id, `<tree>@{n}` (newest first), tree name, or the
@@ -602,11 +647,10 @@ fn write_record(registry: &Path, record: &Record) -> AppResult<()> {
     )
 }
 
-fn manifests_of(meta: &TreeMeta, ref_name: &str) -> Option<Manifests> {
+fn manifests_of(meta: &TreeMeta) -> Option<Manifests> {
     let bridge = meta.repo_bridge.as_ref()?;
     let git_dir = bridge.manifests_git_dir.clone()?;
     let commit = git(&meta.root().join(".repo/manifests"), &["rev-parse", "HEAD"]).ok()?;
-    update_ref(&git_dir, ref_name, &commit).ok()?;
     Some(Manifests {
         git_dir,
         branch: bridge.manifests_branch.clone(),
@@ -626,6 +670,7 @@ fn new_record(meta: &TreeMeta, id: String, reason: &str) -> Record {
         tool_version: env!("CARGO_PKG_VERSION").into(),
         reason: reason.into(),
         keep: false,
+        complete: false,
         options: options_of(meta),
         manifests: None,
         projects: Vec::new(),
@@ -677,42 +722,51 @@ pub fn capture(
     }
     let mut record = new_record(meta, id, reason);
     let ref_name = record.ref_name();
-    let failures = workers.install(|| {
-        projects
-            .par_iter_mut()
-            .filter(|project| project.needs_ref())
-            .filter_map(|project| {
-                match update_ref(&project.git_common_dir, &ref_name, project.tip()) {
-                    Ok(()) => {
-                        project.referenced = true;
-                        None
-                    }
-                    Err(reason) => Some(format!("{}: {reason}", project.path)),
-                }
-            })
-            .collect::<Vec<_>>()
-    });
-    record.manifests = manifests_of(meta, &ref_name);
+    for project in &mut projects {
+        project.referenced = project.needs_ref();
+    }
     record.bytes = projects.iter().map(|project| project.bytes).sum();
     record.projects = projects;
     record.dropped = items;
-    if !failures.is_empty() {
-        delete_refs(&record);
-        let _ = fs::remove_dir_all(&directory);
-        return Err(AppError::operational(
-            "E_ARCHIVE",
-            format!("could not record the archive: {}", failures.join("; ")),
-        ));
-    }
+    record.manifests = manifests_of(meta);
     let _ = fs::copy(
         meta.registry_entry().join(SNAPSHOT_FILE),
         directory.join(SNAPSHOT_FILE),
     );
-    if let Err(error) = write_record(registry, &record) {
-        delete_refs(&record);
+    let abandon = |record: &Record, error: AppError| {
+        delete_refs(record);
         let _ = fs::remove_dir_all(&directory);
-        return Err(error);
+        error
+    };
+    write_record(registry, &record).map_err(|error| abandon(&record, error))?;
+    let mut failures = workers.install(|| {
+        record
+            .projects
+            .par_iter()
+            .filter(|project| project.referenced)
+            .filter_map(|project| {
+                update_ref(&project.git_common_dir, &ref_name, project.tip())
+                    .err()
+                    .map(|reason| format!("{}: {reason}", project.path))
+            })
+            .collect::<Vec<_>>()
+    });
+    if let Some(manifests) = &record.manifests {
+        if let Err(reason) = update_ref(&manifests.git_dir, &ref_name, &manifests.commit) {
+            failures.push(format!("manifest repository: {reason}"));
+        }
     }
+    if !failures.is_empty() {
+        return Err(abandon(
+            &record,
+            AppError::operational(
+                "E_ARCHIVE",
+                format!("could not record the archive: {}", failures.join("; ")),
+            ),
+        ));
+    }
+    record.complete = true;
+    write_record(registry, &record).map_err(|error| abandon(&record, error))?;
     let clean = record
         .projects
         .iter()
@@ -782,9 +836,8 @@ pub fn capture_orphaned(meta: &TreeMeta, registry: &Path) -> Option<Record> {
                 branch,
                 ..Default::default()
             };
-            if archived.needs_ref() {
-                archived.referenced =
-                    update_ref(&project.git_common_dir, &ref_name, &archived.head).is_ok();
+            archived.referenced = archived.needs_ref();
+            if archived.referenced {
                 archived.bytes = unique_bytes(&project.git_common_dir, &archived.head);
             }
             Some(archived)
@@ -795,13 +848,22 @@ pub fn capture_orphaned(meta: &TreeMeta, registry: &Path) -> Option<Record> {
         meta.registry_entry().join(SNAPSHOT_FILE),
         directory.join(SNAPSHOT_FILE),
     );
-    match write_record(registry, &record) {
-        Ok(()) => Some(record),
-        Err(_) => {
-            delete_refs(&record);
-            let _ = fs::remove_dir_all(&directory);
-            None
-        }
+    let finished = write_record(registry, &record).is_ok() && {
+        record.projects.par_iter_mut().for_each(|project| {
+            if project.referenced {
+                project.referenced =
+                    update_ref(&project.git_common_dir, &ref_name, &project.head).is_ok();
+            }
+        });
+        record.complete = true;
+        write_record(registry, &record).is_ok()
+    };
+    if finished {
+        Some(record)
+    } else {
+        delete_refs(&record);
+        let _ = fs::remove_dir_all(&directory);
+        None
     }
 }
 
@@ -865,10 +927,14 @@ pub fn apply_retention(registry: &Path, dry_run: bool, quiet: bool) -> AppResult
         return Ok(Vec::new());
     }
     let _held = lock(registry, quiet)?;
+    let now = unix_now();
+    if !dry_run {
+        delete_abandoned(registry, now);
+    }
     let records = load_all(registry);
     let policy = policy(registry);
     let mut ids = Vec::new();
-    for record in expired(&records, &policy, unix_now()) {
+    for record in expired(&records, &policy, now) {
         if !dry_run {
             drop_record(registry, record)?;
         }
@@ -1186,6 +1252,7 @@ mod tests {
             tool_version: String::new(),
             reason: "remove".into(),
             keep,
+            complete: true,
             options: Options::default(),
             manifests: None,
             projects: Vec::new(),

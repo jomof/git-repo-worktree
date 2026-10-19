@@ -1,9 +1,9 @@
 """Concurrent operations on one client, checked afterwards.
 
 Each round starts from the harness's world with two trees, then runs a random
-batch of tool operations at the same time (add, remove, repair, move,
-materialize, pool fill, defaults, detach, status, list), each after a random
-delay. When all have finished and background maintenance has settled, every
+batch of tool operations at the same time (add, remove, remove --idle,
+restore, archive prune, repair, move, materialize, pool fill, defaults,
+detach, status, list), each after a random delay. When all have finished and background maintenance has settled, every
 result must be a success or an error that a concurrent operation explains,
 and the world must satisfy the harness's invariants. A failing round's seed,
 operations, and outputs are written to the findings directory; rerun one with
@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 from harness import BASE, BIN, CLIENT, ENV, FINDINGS, PATHS, WORLD, Finding  # noqa: E402
 
-EXPLAINED = {"E_NO_SUCH_TREE", "E_NO_POOL_PROJECTS", "E_NAME_EXISTS"}
+EXPLAINED = {"E_NO_SUCH_TREE", "E_NO_POOL_PROJECTS", "E_NAME_EXISTS", "E_NO_SUCH_ARCHIVE", "E_DEST_NOT_EMPTY"}
 
 
 def tool(args):
@@ -50,7 +50,8 @@ def plan(rng, trees, round_number):
     for index in range(rng.randint(3, 7)):
         kind = rng.choice(
             ["add", "add", "remove", "repair", "repair-all", "move", "materialize",
-             "pool-fill", "default", "detach", "status", "list"]
+             "pool-fill", "default", "detach", "status", "list", "restore", "restore",
+             "remove-idle", "archive-prune"]
         )
         tree = rng.choice(trees)
         unique = f"r{round_number}x{index}"
@@ -58,6 +59,12 @@ def plan(rng, trees, round_number):
             args = ["add", "--name", unique, str(BASE / unique)]
         elif kind == "remove":
             args = ["remove", tree] + (["--force"] if rng.random() < 0.5 else [])
+        elif kind == "restore":
+            args = ["restore", "s3"]
+        elif kind == "remove-idle":
+            args = ["remove", "--idle", "0s"]
+        elif kind == "archive-prune":
+            args = ["archive", "prune"]
         elif kind == "repair":
             args = ["repair", tree]
         elif kind == "repair-all":
@@ -129,6 +136,14 @@ def check_world():
             resolved == root or resolved.startswith(root + "/") for root in registered
         ):
             raise Finding(f"{leftover} is left behind but belongs to no tree")
+    archives = CLIENT / ".repo/repo-worktrees/.archive"
+    records = {entry.name for entry in archives.iterdir()} if archives.is_dir() else set()
+    orphans = harness.archive_ref_ids() - records
+    if orphans:
+        raise Finding(f"archive refs without a record: {sorted(orphans)}")
+    listed = {entry["id"] for entry in harness.grw_json("archive", "list")["result"]["archives"]}
+    if not listed <= records:
+        raise Finding(f"archive list shows {sorted(listed - records)} with no record")
     trash = CLIENT / ".repo/repo-worktrees/.trash"
     if trash.is_dir() and any(trash.iterdir()):
         raise Finding(f"trash not emptied: {sorted(p.name for p in trash.iterdir())}")
@@ -138,12 +153,14 @@ def run_round(seed):
     rng = random.Random(seed)
     harness.LOG.clear()
     harness.fresh_world()
-    for pattern in ["r[0-9]*", "s[0-9]"]:
+    for pattern in ["r[0-9]*", "s[0-9]", "s[0-9]-*"]:
         for stray in BASE.glob(pattern):
             subprocess.run(["chmod", "-R", "u+w", str(stray)])
             subprocess.run(["rm", "-rf", str(stray)])
-    for name in ["s1", "s2"]:
+    for name in ["s1", "s2", "s3"]:
         harness.grw_json("add", "--name", name, str(BASE / name))
+    (BASE / "s3" / "a" / "scratch").write_text("archived work\n")
+    harness.grw_json("remove", "s3")
     operations = plan(rng, ["s1", "s2"], seed)
     results = [None] * len(operations)
 

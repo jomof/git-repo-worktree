@@ -2315,6 +2315,38 @@ mod overlay_mode {
     }
 
     #[test]
+    fn idle_removal_does_not_mistake_overlay_daemons_for_users() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        command(&fixture)
+            .arg("add")
+            .arg(&fixture.destination)
+            .assert()
+            .success();
+        assert!(mounted(&fixture.destination.join("p")));
+        let status = output_json(
+            command(&fixture)
+                .args(["status", "tree", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(
+            status["result"]["processes"],
+            serde_json::json!([]),
+            "{status}"
+        );
+        let removed = output_json(
+            command(&fixture)
+                .args(["remove", "--idle", "0s", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(removed["result"]["removed"][0]["name"], "tree", "{removed}");
+    }
+
+    #[test]
     fn overlay_changes_survive_remove_and_restore_even_with_a_dead_mount() {
         if !overlay_usable() {
             return;
@@ -3760,4 +3792,46 @@ fn pooled_projects_round_trip_through_an_archive() {
             .success(),
     );
     assert_eq!(clean["result"]["archive"]["projects_with_changes"], 1);
+}
+
+#[test]
+fn an_abandoned_capture_is_reaped_with_its_refs() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    fs::write(fixture.destination.join("p/source.txt"), "work\n").unwrap();
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    let id = removed["result"]["archive"]["id"].as_str().unwrap();
+    let record_path = fixture
+        .client
+        .join(".repo/repo-worktrees/.archive")
+        .join(id)
+        .join("archive.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["complete"] = Value::Bool(false);
+    record["archived_unix"] = serde_json::json!(1);
+    fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let source = fixture.client.join("p");
+    assert_ne!(git(&source, &["for-each-ref", "refs/repo-worktree"]), "");
+    let listed = output_json(
+        command(&fixture)
+            .args(["archive", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(listed["result"]["archives"].as_array().unwrap().is_empty());
+    command(&fixture)
+        .args(["archive", "prune"])
+        .assert()
+        .success();
+    assert_eq!(git(&source, &["for-each-ref", "refs/repo-worktree"]), "");
+    assert!(!record_path.parent().unwrap().exists());
 }

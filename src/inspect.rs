@@ -436,6 +436,13 @@ pub fn processes_referencing(root: &Path) -> Vec<serde_json::Value> {
         if !cwd_inside && !named {
             continue;
         }
+        let overlay_daemon = arguments
+            .first()
+            .and_then(|program| Path::new(program).file_name())
+            .is_some_and(|program| program == "fuse-overlayfs");
+        if overlay_daemon {
+            continue;
+        }
         let mut command = arguments.join(" ");
         if command.len() > 120 {
             let mut end = 120;
