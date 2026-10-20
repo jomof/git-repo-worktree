@@ -61,6 +61,50 @@ pub fn set_git_config(scope: &[std::ffi::OsString], key: &str, value: &str) -> R
     unreachable!("the last attempt returns")
 }
 
+/// Whether `git worktree add` failed only because another `worktree add` in
+/// the same repository was half-way through registering its worktree: Git
+/// reads every worktree's administrative files before adding one.
+pub fn concurrent_worktree_registration(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr);
+    text.contains("failed to read") && text.contains("/worktrees/")
+}
+
+/// Runs the `git worktree add` built by `build(attempt)`, retrying while it
+/// fails because of a concurrent registration. Git fails that way before
+/// adding anything, except that `-b` may already have created the branch;
+/// `build` sees the attempt number so a retry can check that branch out.
+pub fn worktree_add(
+    mut build: impl FnMut(u32) -> std::process::Command,
+) -> std::io::Result<Output> {
+    const ATTEMPTS: u32 = 20;
+    for attempt in 0.. {
+        let output = build(attempt).output()?;
+        if output.status.success()
+            || attempt + 1 == ATTEMPTS
+            || !concurrent_worktree_registration(&output.stderr)
+        {
+            return Ok(output);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            10 * u64::from(attempt.min(9) + 1),
+        ));
+    }
+    unreachable!("the last attempt returns")
+}
+
+/// Whether `branch` exists in the repository `git_args` selects and points at
+/// `sha`.
+pub fn branch_points_at(git_args: &[std::ffi::OsString], branch: &str, sha: &str) -> bool {
+    std::process::Command::new("git")
+        .args(git_args)
+        .args(["rev-parse", "-q", "--verify"])
+        .arg(format!("refs/heads/{branch}^{{commit}}"))
+        .output()
+        .is_ok_and(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == sha
+        })
+}
+
 pub fn exit_reason(output: &Output) -> String {
     let code = output.status.code().unwrap_or(1);
     let stderr = truncated_stderr(output);
@@ -459,6 +503,19 @@ mod tests {
         let error = ensure_safe_destination(tree.path(), Path::new("escape/file")).unwrap_err();
         assert_eq!(error.code, "E_UNSAFE_PATH");
         assert!(!outside.path().join("file").exists());
+    }
+
+    #[test]
+    fn concurrent_worktree_registrations_are_recognized() {
+        assert!(concurrent_worktree_registration(
+            b"Preparing worktree (detached HEAD 6385704)\nfatal: failed to read .git/worktrees/-filling-1792441865851678915-15776-0/commondir: Success\n"
+        ));
+        assert!(!concurrent_worktree_registration(
+            b"fatal: a branch named 'topic' already exists\n"
+        ));
+        assert!(!concurrent_worktree_registration(
+            b"fatal: '/tmp/x' already exists\n"
+        ));
     }
 
     #[test]

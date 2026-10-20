@@ -598,19 +598,19 @@ fn ensure_manifests(
     if fs::symlink_metadata(&checkout).is_err() {
         let head = git_text(&["rev-parse", "HEAD"], &source_checkout)
             .ok_or_else(|| "cannot resolve the source manifest HEAD".to_string())?;
-        let mut command = Command::new("git");
-        command
-            .arg(format!("--git-dir={}", common.display()))
-            .args(["worktree", "add"]);
-        match &branch {
-            Some(branch) => command.arg("-B").arg(branch),
-            None => command.arg("--detach"),
-        };
-        let added = command
-            .arg(&checkout)
-            .arg(&head)
-            .output()
-            .map_err(|error| format!("add manifest worktree: {error}"))?;
+        let added = crate::util::worktree_add(|_| {
+            let mut command = Command::new("git");
+            command
+                .arg(format!("--git-dir={}", common.display()))
+                .args(["worktree", "add"]);
+            match &branch {
+                Some(branch) => command.arg("-B").arg(branch),
+                None => command.arg("--detach"),
+            };
+            command.arg(&checkout).arg(&head);
+            command
+        })
+        .map_err(|error| format!("add manifest worktree: {error}"))?;
         if !added.status.success() {
             return Err(format!("add manifest worktree: {}", exit_reason(&added)));
         }

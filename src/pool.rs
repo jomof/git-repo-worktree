@@ -1187,40 +1187,53 @@ fn fill_one(
     }
     let name = unique_name();
     let staging = directory.join(format!("{FILLING_PREFIX}{name}"));
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(source.join(project))
-        .args([
-            "-c",
-            if background {
-                "checkout.workers=2"
-            } else {
-                "checkout.workers=8"
-            },
-            "-c",
-            "checkout.thresholdForParallelism=100",
-            "worktree",
-            "add",
-            "--detach",
-        ])
-        .arg(&staging)
-        .arg("HEAD");
+    let add_command = || {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(source.join(project))
+            .args([
+                "-c",
+                if background {
+                    "checkout.workers=2"
+                } else {
+                    "checkout.workers=8"
+                },
+                "-c",
+                "checkout.thresholdForParallelism=100",
+                "worktree",
+                "add",
+                "--detach",
+            ])
+            .arg(&staging)
+            .arg("HEAD");
+        command
+    };
     if background {
         let log = directory.join(format!("{FILLING_PREFIX}{name}.log"));
-        let stderr =
-            fs::File::create(&log).map_err(|error| format!("create {}: {error}", log.display()))?;
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(stderr);
-        let outcome = run_yielding(command, registry);
-        let message = fs::read_to_string(&log).unwrap_or_default();
-        let _ = fs::remove_file(&log);
-        let (status, stopped_ms) =
-            outcome.map_err(|error| format!("run git worktree add: {error}"))?;
-        crate::metrics::phase("paused", stopped_ms);
-        if !status.success() {
+        let mut attempt = 0;
+        loop {
+            let stderr = fs::File::create(&log)
+                .map_err(|error| format!("create {}: {error}", log.display()))?;
+            let mut command = add_command();
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(stderr);
+            let outcome = run_yielding(command, registry);
+            let message = fs::read_to_string(&log).unwrap_or_default();
+            let _ = fs::remove_file(&log);
+            let (status, stopped_ms) =
+                outcome.map_err(|error| format!("run git worktree add: {error}"))?;
+            crate::metrics::phase("paused", stopped_ms);
+            if status.success() {
+                break;
+            }
+            attempt += 1;
+            if attempt < 20 && crate::util::concurrent_worktree_registration(message.as_bytes()) {
+                std::thread::sleep(std::time::Duration::from_millis(10 * attempt.min(10)));
+                continue;
+            }
             let _ = remove_slot(&common, &staging);
             return Err(format!(
                 "exit {}: {}",
@@ -1229,8 +1242,7 @@ fn fill_one(
             ));
         }
     } else {
-        let output = command
-            .output()
+        let output = crate::util::worktree_add(|_| add_command())
             .map_err(|error| format!("run git worktree add: {error}"))?;
         if !output.status.success() {
             let _ = remove_slot(&common, &staging);

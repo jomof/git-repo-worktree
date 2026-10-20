@@ -294,14 +294,17 @@ fn register(source_checkout: &Path, checkout: &Path, sha: &str) -> Result<(), St
     {
         return Err("dest-occupied".into());
     }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(source_checkout)
-        .args(["worktree", "add", "--no-checkout", "--detach"])
-        .arg(checkout)
-        .arg(sha)
-        .output()
-        .map_err(|error| format!("run git worktree add --no-checkout: {error}"))?;
+    let output = crate::util::worktree_add(|_| {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(source_checkout)
+            .args(["worktree", "add", "--no-checkout", "--detach"])
+            .arg(checkout)
+            .arg(sha);
+        command
+    })
+    .map_err(|error| format!("run git worktree add --no-checkout: {error}"))?;
     if output.status.success() {
         Ok(())
     } else {

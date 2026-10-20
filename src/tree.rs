@@ -17,11 +17,11 @@ use crate::registry::registry_path;
 use crate::registry::{load_all, select_tree, with_registry_lock, with_tree_lock, LockMode};
 use crate::resolve::{resolve_projects, rewritten};
 use crate::util::{
-    absolutize, append_journal, append_journal_batch, canonicalize_missing, copy_permissions,
-    dedupe_paths, default_jobs, encode_journal, ensure_safe_destination, exit_reason,
-    is_path_prefix, journal_has_done, journal_has_project_status, journal_record, now,
+    absolutize, append_journal, append_journal_batch, branch_points_at, canonicalize_missing,
+    copy_permissions, dedupe_paths, default_jobs, encode_journal, ensure_safe_destination,
+    exit_reason, is_path_prefix, journal_has_done, journal_has_project_status, journal_record, now,
     open_journal, path_is_safe_relative, relative_path, sanitize_name, truncated_stderr,
-    write_breadcrumb, write_meta,
+    worktree_add, write_breadcrumb, write_meta,
 };
 use crate::INTERRUPTED;
 use rayon::prelude::*;
@@ -1752,23 +1752,32 @@ fn ordinary_checkout(
     worktree: &Path,
     branch: Option<&str>,
 ) -> Result<(), String> {
-    let mut command = checkout_command();
-    if source_checkout.exists() {
-        command.arg("-C").arg(source_checkout);
+    let repository: Vec<OsString> = if source_checkout.exists() {
+        vec!["-C".into(), source_checkout.into()]
     } else {
-        command.arg(format!("--git-dir={}", project.git_common_dir));
-    }
-    command.args(["worktree", "add"]);
-    if let Some(branch) = branch {
-        command.arg("-b").arg(branch);
-    } else {
-        command.arg("--detach");
-    }
-    let output = command
-        .arg(worktree)
-        .arg(&project.sha)
-        .output()
-        .map_err(|error| format!("run git worktree add: {error}"))?;
+        vec![format!("--git-dir={}", project.git_common_dir).into()]
+    };
+    let output = worktree_add(|attempt| {
+        let mut command = checkout_command();
+        command.args(&repository).args(["worktree", "add"]);
+        match branch {
+            Some(branch) if attempt > 0 && branch_points_at(&repository, branch, &project.sha) => {
+                command.arg(worktree).arg(branch);
+            }
+            Some(branch) => {
+                command
+                    .arg("-b")
+                    .arg(branch)
+                    .arg(worktree)
+                    .arg(&project.sha);
+            }
+            None => {
+                command.arg("--detach").arg(worktree).arg(&project.sha);
+            }
+        }
+        command
+    })
+    .map_err(|error| format!("run git worktree add: {error}"))?;
     if output.status.success() {
         Ok(())
     } else {
@@ -1908,25 +1917,34 @@ fn try_reflink_project(
     state: &ReflinkState,
     destination: &Path,
 ) -> Result<(), ReflinkAttemptError> {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(source_checkout)
-        .args(["worktree", "add", "--no-checkout"]);
-    if let Some(branch) = branch {
-        command.arg("-b").arg(branch);
-    } else {
-        command.arg("--detach");
-    }
-    let output = command
-        .arg(worktree)
-        .arg(&project.sha)
-        .output()
-        .map_err(|error| {
-            ReflinkAttemptError::BeforeRegistration(format!(
-                "run git worktree add --no-checkout: {error}"
-            ))
-        })?;
+    let repository: Vec<OsString> = vec!["-C".into(), source_checkout.into()];
+    let output = worktree_add(|attempt| {
+        let mut command = Command::new("git");
+        command
+            .args(&repository)
+            .args(["worktree", "add", "--no-checkout"]);
+        match branch {
+            Some(branch) if attempt > 0 && branch_points_at(&repository, branch, &project.sha) => {
+                command.arg(worktree).arg(branch);
+            }
+            Some(branch) => {
+                command
+                    .arg("-b")
+                    .arg(branch)
+                    .arg(worktree)
+                    .arg(&project.sha);
+            }
+            None => {
+                command.arg("--detach").arg(worktree).arg(&project.sha);
+            }
+        }
+        command
+    })
+    .map_err(|error| {
+        ReflinkAttemptError::BeforeRegistration(format!(
+            "run git worktree add --no-checkout: {error}"
+        ))
+    })?;
     if !output.status.success() {
         let stderr = truncated_stderr(&output);
         let reason = if branch.is_some()
