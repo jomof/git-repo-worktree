@@ -270,3 +270,24 @@ machine interface deterministic:
 - Inspections run `git status` with `GIT_OPTIONAL_LOCKS=0` so that `status`
   does not rewrite indexes and make every tree look recently active to
   `remove --idle`.
+
+## Round 7 changes
+
+- The tool disables `core.fsmonitor` for its own Git commands through
+  `GIT_CONFIG_COUNT` (appended after the caller's entries) rather than adding
+  `-c` at each call site, so no future call site can start a daemon; hooks get
+  the caller's configuration back. Daemons are stopped (only when their socket
+  exists) before a worktree moves or is deleted, because the daemon stays bound
+  to the old path while its socket lives in the administrative directory that
+  moves with the worktree.
+- Descriptors above stderr are marked close-on-exec once in `main()`, covering
+  every child rather than the three spawn sites the report named.
+- Locks are a direct `flock` on one `File` (`libc`), keeping the minimum Rust
+  version at 1.75 (`File::try_lock` needs 1.89).
+- Overlays hide the source's untracked paths with `.wh.` whiteouts in the upper
+  directory, recorded in `overlays/<project>/hidden` so `upper_has_changes`
+  ignores them. The pool's orphan rule tolerates untracked files only when
+  overlays are available, since symlink sharing cannot hide them.
+- `pinned_digest` is FNV-1a over sorted `path sha` lines: cheap enough to
+  compute in `tree_json` for every tree, and collisions only matter
+  accidentally, not adversarially.

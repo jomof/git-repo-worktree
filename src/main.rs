@@ -264,6 +264,8 @@ fn record_usage_error(raw_args: &[std::ffi::OsString], started: std::time::Insta
 }
 
 fn main() -> ExitCode {
+    util::close_inherited_descriptors_on_exec();
+    util::disable_fsmonitor_for_children();
     install_signal_handler();
     let started = std::time::Instant::now();
     let raw_args = std::env::args_os().collect::<Vec<_>>();

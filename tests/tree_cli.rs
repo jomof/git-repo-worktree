@@ -2315,6 +2315,77 @@ mod overlay_mode {
     }
 
     #[test]
+    fn untracked_files_in_the_source_are_hidden_not_a_reason_to_copy() {
+        if !overlay_usable() {
+            return;
+        }
+        let fixture = overlay_fixture();
+        let source = fixture.client.join("p");
+        fs::create_dir_all(source.join("environments/nested")).unwrap();
+        fs::write(source.join("environments/nested/state"), "runtime\n").unwrap();
+        fs::write(source.join("stray.log.txt"), "stray\n").unwrap();
+        let added = output_json(
+            command(&fixture)
+                .args(["-v", "add", "--json"])
+                .arg(&fixture.destination)
+                .assert()
+                .success(),
+        );
+        let p = &added["result"]["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|project| project["path"] == "p")
+            .unwrap()
+            .clone();
+        assert_eq!(p["mode"], "overlay", "{added}");
+        let checkout = fixture.destination.join("p");
+        assert!(!checkout.join("environments").exists());
+        assert!(!checkout.join("stray.log.txt").exists());
+        assert!(checkout.join("source.txt").exists());
+        assert_eq!(git(&checkout, &["status", "--porcelain"]), "");
+        let status = output_json(
+            command(&fixture)
+                .args(["status", "tree", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(status["result"]["dirty"], false, "{status}");
+
+        let upper = fixture
+            .client
+            .join(".repo/repo-worktrees/tree/overlays/p/upper");
+        assert!(StdCommand::new("pkill")
+            .args(["-9", "-f"])
+            .arg(format!("fuse-overlayfs.*{}", upper.display()))
+            .status()
+            .unwrap()
+            .success());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let dead = output_json(
+            command(&fixture)
+                .args(["status", "tree", "--json"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(dead["result"]["dirty"], false, "{dead}");
+        let removed = output_json(
+            command(&fixture)
+                .args(["remove", "--json", "tree"])
+                .assert()
+                .success(),
+        );
+        assert_eq!(
+            removed["result"]["archive"]["projects_with_changes"], 0,
+            "{removed}"
+        );
+        assert_eq!(
+            fs::read_to_string(source.join("environments/nested/state")).unwrap(),
+            "runtime\n"
+        );
+    }
+
+    #[test]
     fn idle_removal_does_not_mistake_overlay_daemons_for_users() {
         if !overlay_usable() {
             return;
@@ -3834,4 +3905,239 @@ fn an_abandoned_capture_is_reaped_with_its_refs() {
         .success();
     assert_eq!(git(&source, &["for-each-ref", "refs/repo-worktree"]), "");
     assert!(!record_path.parent().unwrap().exists());
+}
+
+/// Whether a daemon's socket exists in the worktree's administrative
+/// directory, even for a daemon still bound to the path the worktree had
+/// before a move (`fsmonitor--daemon status` reports those as not watching).
+/// A daemon removes its socket when it stops.
+fn fsmonitor_running(checkout: &Path) -> bool {
+    let dot_git = checkout.join(".git");
+    let admin = match fs::read_to_string(&dot_git) {
+        Ok(gitfile) => match gitfile.trim().strip_prefix("gitdir:") {
+            Some(admin) => checkout.join(admin.trim()),
+            None => return false,
+        },
+        Err(_) => dot_git,
+    };
+    fs::symlink_metadata(admin.join("fsmonitor--daemon.ipc")).is_ok()
+}
+
+fn fsmonitor_supported(checkout: &Path) -> bool {
+    StdCommand::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["fsmonitor--daemon", "status"])
+        .output()
+        .is_ok_and(|output| !String::from_utf8_lossy(&output.stderr).contains("not supported"))
+}
+
+fn pool_slots(fixture: &Fixture, project: &str) -> Vec<PathBuf> {
+    fs::read_dir(
+        fixture
+            .client
+            .join(".repo/repo-worktrees/.pool")
+            .join(project),
+    )
+    .map(|entries| {
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.join(".git").exists())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+#[test]
+fn fsmonitor_daemons_never_follow_worktrees_through_the_pool() {
+    let fixture = fixture();
+    let source = fixture.client.join("p");
+    if !fsmonitor_supported(&source) {
+        return;
+    }
+    git(&source, &["config", "core.fsmonitor", "true"]);
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["pool", "fill", "--count", "1"])
+        .assert()
+        .success();
+    let spares = pool_slots(&fixture, "p");
+    assert_eq!(spares.len(), 1);
+    assert!(!fsmonitor_running(&spares[0]), "pool fill started a daemon");
+
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let checkout = fixture.destination.join("p");
+    assert!(!fsmonitor_running(&checkout), "add started a daemon");
+    git(&checkout, &["status"]);
+    assert!(
+        fsmonitor_running(&checkout),
+        "the user's git status starts one"
+    );
+
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        removed["result"]["returned_to_pool"],
+        serde_json::json!(["p"])
+    );
+    let spares = pool_slots(&fixture, "p");
+    let survivors = spares
+        .iter()
+        .filter(|spare| fsmonitor_running(spare))
+        .cloned()
+        .collect::<Vec<_>>();
+    for spare in &survivors {
+        let _ = StdCommand::new("git")
+            .arg("-C")
+            .arg(spare)
+            .args(["fsmonitor--daemon", "stop"])
+            .output();
+    }
+    assert!(
+        survivors.is_empty(),
+        "a daemon followed the worktree into the pool"
+    );
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .success();
+    assert!(!fsmonitor_running(&checkout));
+}
+
+#[test]
+fn programs_the_tool_starts_do_not_inherit_the_callers_descriptors() {
+    let fixture = fixture();
+    install_hook(
+        &fixture,
+        "post-add",
+        r#"ls /dev/fd > "$GIT_REPO_WORKTREE_TREE/descriptors""#,
+        true,
+    );
+    let mut shell = StdCommand::new("sh");
+    for name in inherited_tool_variables() {
+        shell.env_remove(name);
+    }
+    let output = shell
+        .env("PATH", &fixture.path_env)
+        .env("GRW_TEST_SNAPSHOT", &fixture.snapshot)
+        .env("GIT_REPO_WORKTREE_NO_OVERLAY", "1")
+        .env("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE", "1")
+        .env("HOME", fixture.temp.path())
+        .args(["-c", r#"exec 7>"$3"; exec "$0" -C "$1" add "$2""#])
+        .arg(assert_cmd::cargo::cargo_bin("git-repo-worktree"))
+        .arg(&fixture.client)
+        .arg(&fixture.destination)
+        .arg(fixture.temp.path().join("leaked"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let descriptors = fs::read_to_string(fixture.destination.join("descriptors")).unwrap();
+    let listed = descriptors.split_whitespace().collect::<Vec<_>>();
+    assert!(listed.contains(&"2"), "{listed:?}");
+    assert!(
+        !listed.contains(&"7"),
+        "the hook inherited descriptor 7: {listed:?}"
+    );
+}
+
+#[test]
+fn add_from_a_manifest_pins_its_revisions_and_refuses_unknown_ones() {
+    let fixture = fixture();
+    let source = fixture.client.join("p");
+    let pinned = git(&source, &["rev-parse", "HEAD"]);
+    fs::write(source.join("source.txt"), "later\n").unwrap();
+    git(&source, &["commit", "-qam", "later"]);
+    let manifest = |revision: &str| {
+        let path = fixture
+            .temp
+            .path()
+            .join(format!("pinned-{}.xml", &revision[..4]));
+        fs::write(
+            &path,
+            format!(r#"<manifest><project name="platform/p" path="p" revision="{revision}"/></manifest>"#),
+        )
+        .unwrap();
+        path
+    };
+    let first = output_json(
+        command(&fixture)
+            .args(["add", "--json", "--manifest"])
+            .arg(manifest(&pinned))
+            .arg(&fixture.destination)
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        git(&fixture.destination.join("p"), &["rev-parse", "HEAD"]),
+        pinned
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.destination.join("p/source.txt")).unwrap(),
+        "snapshot\n"
+    );
+    let second = output_json(
+        command(&fixture)
+            .args(["add", "--json", "--manifest"])
+            .arg(manifest(&pinned))
+            .arg(fixture.temp.path().join("second"))
+            .assert()
+            .success(),
+    );
+    write_fixture_snapshot(&fixture, &git(&source, &["rev-parse", "HEAD"]));
+    let current = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(fixture.temp.path().join("current"))
+            .assert()
+            .success(),
+    );
+    let digest = first["result"]["pinned_digest"].as_str().unwrap();
+    assert_eq!(second["result"]["pinned_digest"], digest);
+    assert_ne!(current["result"]["pinned_digest"], digest);
+
+    let unpinned = output_json(
+        command(&fixture)
+            .args(["add", "--json", "--manifest"])
+            .arg(manifest("main-branch"))
+            .arg(fixture.temp.path().join("unpinned"))
+            .assert()
+            .code(1),
+    );
+    assert_eq!(unpinned["error"]["code"], "E_MANIFEST_UNPINNED");
+    let missing = output_json(
+        command(&fixture)
+            .args(["add", "--json", "--manifest"])
+            .arg(manifest("0123456789abcdef0123456789abcdef01234567"))
+            .arg(fixture.temp.path().join("missing"))
+            .assert()
+            .code(1),
+    );
+    assert_eq!(missing["error"]["code"], "E_MISSING_REVISIONS");
+    assert_eq!(missing["error"]["details"]["missing"][0]["project"], "p");
+    assert!(!fixture.temp.path().join("missing").exists());
+    let listed = output_json(
+        command(&fixture)
+            .args(["list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(listed["result"]["trees"].as_array().unwrap().len(), 3);
 }

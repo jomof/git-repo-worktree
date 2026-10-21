@@ -27,6 +27,44 @@ fn work_dir(entry: &Path, project_path: &str) -> PathBuf {
     overlay_dir(entry, project_path).join("work")
 }
 
+/// Lists the source's untracked paths an overlay hides, one per line, next to
+/// its upper directory.
+const HIDDEN_FILE: &str = "hidden";
+const WHITEOUT_PREFIX: &str = ".wh.";
+
+fn whiteout(upper: &Path, path: &str) -> Option<PathBuf> {
+    let relative = Path::new(path.trim_end_matches('/'));
+    let name = relative.file_name()?.to_str()?;
+    Some(
+        upper
+            .join(relative.parent().unwrap_or(Path::new("")))
+            .join(format!("{WHITEOUT_PREFIX}{name}")),
+    )
+}
+
+/// Hides `paths` (the source checkout's untracked files and directories) in
+/// the overlay with whiteouts, so the tree starts as a clean checkout of its
+/// commit, and records them so they are not mistaken for changes.
+fn hide(upper: &Path, paths: &[String]) -> Result<(), String> {
+    for path in paths {
+        let Some(whiteout) = whiteout(upper, path) else {
+            continue;
+        };
+        if let Some(parent) = whiteout.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        }
+        fs::write(&whiteout, b"")
+            .map_err(|error| format!("hide {path} in the overlay: {error}"))?;
+    }
+    let listed = paths
+        .iter()
+        .map(|path| format!("{path}\n"))
+        .collect::<String>();
+    let record = upper.with_file_name(HIDDEN_FILE);
+    fs::write(&record, listed).map_err(|error| format!("write {}: {error}", record.display()))
+}
+
 fn find_program(names: &[&str]) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path).find_map(|directory| {
@@ -113,16 +151,39 @@ pub fn is_live(path: &Path) -> bool {
     is_mounted(path) && !is_dead(path)
 }
 
-/// Whether anything besides the worktree's `.git` was ever written, created,
-/// or deleted in the overlay. Answers without touching the lower directory.
+/// Whether anything besides the worktree's `.git` and the whiteouts hiding
+/// the source's untracked paths was ever written, created, or deleted in the
+/// overlay. Answers without touching the lower directory.
 pub fn upper_has_changes(upper: &Path) -> Result<bool, String> {
-    match fs::read_dir(upper) {
-        Ok(entries) => Ok(entries
-            .filter_map(Result::ok)
-            .any(|entry| entry.file_name() != ".git")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!("read {}: {error}", upper.display())),
+    let hidden = fs::read_to_string(upper.with_file_name(HIDDEN_FILE)).unwrap_or_default();
+    let expected = hidden
+        .lines()
+        .filter_map(|path| whiteout(upper, path))
+        .collect::<std::collections::HashSet<_>>();
+    fn unexpected(
+        directory: &Path,
+        top: bool,
+        expected: &std::collections::HashSet<PathBuf>,
+    ) -> Result<bool, String> {
+        let entries = match fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(format!("read {}: {error}", directory.display())),
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if (top && entry.file_name() == ".git") || expected.contains(&path) {
+                continue;
+            }
+            let holds_whiteouts = expected.iter().any(|whiteout| whiteout.starts_with(&path));
+            let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            if !(holds_whiteouts && is_directory && !unexpected(&path, false, expected)?) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
+    unexpected(upper, true, &expected)
 }
 
 /// Resolves the worktree admin directory from the `.git` stored in `upper`.
@@ -212,13 +273,15 @@ pub fn unmount(mount_point: &Path, lazy: bool) -> Result<(), String> {
 }
 
 /// Creates (or resumes creating) an overlay project at `checkout`. The source
-/// checkout must already be verified clean at `sha`.
+/// checkout must already be verified to match `sha` in every tracked file;
+/// `hidden` lists its untracked paths, which the overlay hides.
 pub fn populate(
     source_checkout: &Path,
     checkout: &Path,
     entry: &Path,
     project_path: &str,
     sha: &str,
+    hidden: &[String],
 ) -> Result<(), String> {
     if let Some(reason) = unavailable_reason() {
         return Err(reason);
@@ -245,6 +308,7 @@ pub fn populate(
         fs::write(upper.join(".git"), &contents)
             .map_err(|error| format!("write overlay .git: {error}"))?;
         fs::remove_file(&dot_git).map_err(|error| format!("move .git into overlay: {error}"))?;
+        hide(&upper, hidden)?;
     } else if checkout.join(".git").is_file() {
         fs::remove_file(checkout.join(".git"))
             .map_err(|error| format!("remove stale .git: {error}"))?;

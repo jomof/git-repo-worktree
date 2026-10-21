@@ -321,6 +321,7 @@ dependencies = [
  "ctrlc",
  "fd-lock",
  "indexmap",
+ "libc",
  "predicates",
  "rayon",
  "rayon-core",

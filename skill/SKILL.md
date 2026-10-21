@@ -28,7 +28,10 @@ Key properties to keep in mind:
   commit currently checked out in the source client** — including local
   commits or a topic branch checked out there. `add` never fetches and never
   resets to the remote branch. To start a project from upstream, run
-  `git -C <tree>/<project> checkout --detach <remote>/<branch>` there.
+  `git -C <tree>/<project> checkout --detach <remote>/<branch>` there. To start
+  every project from recorded commits, pass a pinned manifest:
+  `add --manifest <file>` (written by `repo manifest -r -o <file>`); trees
+  with equal `pinned_digest` started from the same commits.
 - **repo works inside a tree.** The tree has its own `.repo`, so `repo status`,
   `repo start`, `repo branches`, `repo diff`, `repo forall`, `repo upload`, and
   `repo sync` act on the tree, not the source.

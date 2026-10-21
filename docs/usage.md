@@ -52,6 +52,23 @@ checked out there. `add` never fetches and never resets to the remote branch;
 run `git checkout --detach <remote>/<branch>` in a project to start it from
 upstream instead, or run `repo sync` in the tree.
 
+To start from recorded commits instead, pass a manifest with pinned
+revisions, such as one written earlier with `repo manifest -r -o FILE`:
+
+```sh
+git repo-worktree add --manifest baseline.xml ../work/baseline
+```
+
+Every project the file lists starts at its revision; projects it omits start
+at the source's checked-out commit. Projects whose pinned commit differs from
+the source checkout become worktrees (taken from the pool when possible)
+rather than shared views. `add` refuses, before creating anything, a file that
+names a branch instead of a commit (`E_MANIFEST_UNPINNED`) or a commit not yet
+in the local object stores (`E_MISSING_REVISIONS`, listing each project);
+nothing is fetched. `list --json` and the `add` result report a
+`pinned_digest` of every project's path and pinned commit, equal for trees that
+started from the same commits.
+
 Create a branch only where you will change code. `-b` requires a scope:
 
 ```sh

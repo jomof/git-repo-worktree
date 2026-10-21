@@ -111,6 +111,10 @@ fetches and never resets to the remote branch. To start a project from upstream 
 instead, run `git checkout --detach <remote>/<branch>` inside it, or run \
 `repo sync` in the tree to move every project to upstream as in any client.\n\n\
 Uncommitted changes in the source client are never copied.\n\n\
+Pinned revisions: `--manifest <FILE>` pins every project the file lists to its \
+revision instead (for example a file written earlier by `repo manifest -r -o`); \
+projects it omits start at the source's checked-out commit. Every pinned \
+commit must already be in the local object stores.\n\n\
 Branches: `-b <branch>` creates the branch only in the projects named with \
 `-p/--project` (repeatable; any path inside a project is accepted), or in every \
 project with `--all-projects`. Created branches track the project's manifest \
@@ -182,6 +186,11 @@ pub struct AddArgs {
     pub heavy_jobs: Option<usize>,
     #[arg(long)]
     pub fail_fast: bool,
+    /// Pin each project to its revision in FILE, a manifest with pinned
+    /// revisions such as `repo manifest -r -o FILE` writes, instead of the
+    /// commit the source has checked out. Never fetches.
+    #[arg(long, value_name = "FILE", conflicts_with = "resume")]
+    pub manifest: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

@@ -24,7 +24,6 @@ path = "src/main.rs"
 anyhow = "1"
 clap = { version = "=4.5.23", features = ["derive"] }
 clap_complete = "=4.5.40"
-fd-lock = "4"
 indexmap = "=2.7.1"
 rayon = "=1.10.0"
 rayon-core = "=1.12.1"
@@ -36,12 +35,14 @@ serde_yaml = "0.9"
 thiserror = "2"
 time = { version = "=0.3.36", features = ["formatting", "macros"] }
 ctrlc = { version = "3", features = ["termination"] }
+libc = "0.2"
 
 [build-dependencies]
 clap = { version = "=4.5.23", features = ["derive"] }
 clap_mangen = "=0.2.26"
 
 [dev-dependencies]
+fd-lock = "4"
 assert_cmd = "=2.0.16"
 predicates = "=3.1.2"
 tempfile = "=3.14.0"

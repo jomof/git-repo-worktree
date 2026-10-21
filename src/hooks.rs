@@ -115,7 +115,9 @@ pub fn run(event: &str, meta: &TreeMeta, quiet: bool) -> Option<HookRecord> {
             Some("tree directory is missing".into()),
         ));
     }
-    let child = Command::new(&path)
+    let mut command = Command::new(&path);
+    crate::util::with_caller_git_config(&mut command);
+    let child = command
         .current_dir(meta.root())
         .env("GIT_REPO_WORKTREE_EVENT", event)
         .env("GIT_REPO_WORKTREE_TREE", meta.root())

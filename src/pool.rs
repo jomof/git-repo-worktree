@@ -178,11 +178,16 @@ pub fn measure_facts(source: &Path, project_path: &str) -> Option<ProjectFacts> 
     })
 }
 
-pub fn source_is_clean(checkout: &Path) -> bool {
+pub fn source_is_clean(checkout: &Path, untracked_allowed: bool) -> bool {
+    let untracked = if untracked_allowed {
+        "--untracked-files=no"
+    } else {
+        "--untracked-files=all"
+    };
     Command::new("git")
         .arg("-C")
         .arg(checkout)
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .args(["status", "--porcelain=v1", "-z", untracked])
         .output()
         .is_ok_and(|output| output.status.success() && output.stdout.is_empty())
 }
@@ -192,6 +197,7 @@ pub struct PoolContext {
     defaults: BTreeMap<String, String>,
     active: Option<HashSet<String>>,
     sharing_disabled: bool,
+    overlays: bool,
 }
 
 impl PoolContext {
@@ -204,8 +210,21 @@ impl PoolContext {
                 .ok()
                 .map(|projects| projects.into_iter().collect()),
             sharing_disabled,
+            overlays: !overlay_disabled() && crate::overlay::unavailable_reason().is_none(),
         }
     }
+
+    /// Whether a default `add` would share or overlay the fixed-depth project
+    /// at `checkout` rather than check it out: its source must be clean, but an
+    /// overlay hides untracked files, so only tracked files matter there.
+    pub fn source_shareable(&self, checkout: &Path) -> bool {
+        source_is_clean(checkout, self.overlays)
+    }
+}
+
+fn overlay_disabled() -> bool {
+    std::env::var("GIT_REPO_WORKTREE_NO_OVERLAY")
+        .is_ok_and(|value| !value.is_empty() && value != "0")
 }
 
 /// Whether a default `add` disables sharing because every active project of
@@ -313,7 +332,7 @@ fn plan(source: &Path, registry: &Path) -> AppResult<Plan> {
                 facts
             });
             let reason = orphan_reason(project, facts.as_ref(), &context, || {
-                source_is_clean(&source.join(project))
+                context.source_shareable(&source.join(project))
             });
             (project.clone(), facts, reason)
         })
@@ -388,6 +407,7 @@ pub fn take(
         else {
             return Ok(false);
         };
+        crate::util::stop_fsmonitor(&spare);
         if git_worktree_move(git_common_dir, &spare, checkout).is_err() {
             return Ok(false);
         }
@@ -445,6 +465,7 @@ pub fn give_back(
         .args(["worktree", "unlock"])
         .arg(checkout)
         .output();
+    crate::util::stop_fsmonitor(checkout);
     let slot = directory.join(unique_name());
     if let Err(error) = git_worktree_move(git_common_dir, checkout, &slot) {
         bridge::restore_link(&dot_git, link)?;
@@ -469,6 +490,7 @@ pub fn give_back(
 }
 
 fn remove_slot(git_common_dir: &str, slot: &Path) -> Result<(), String> {
+    crate::util::stop_fsmonitor(slot);
     let output = Command::new("git")
         .arg(format!("--git-dir={git_common_dir}"))
         .args(["worktree", "remove", "--force", "--force"])
@@ -959,7 +981,9 @@ fn run_yielding(
 }
 
 /// Deletes orphaned spares, trims pools above the pool size, and refills the
-/// rest one spare at a time, shallowest pool first. Exits at once when
+/// rest one spare at a time, shallowest pool first. Removed trees waiting in
+/// the trash are deleted once every pool has a spare, so a slow deletion does
+/// not leave the pools empty. Exits at once when
 /// another maintenance run holds the lock, and yields to tree operations.
 fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     let directory = registry.join(DIR_NAME);
@@ -978,6 +1002,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     let mut failed = Vec::new();
     let mut deferred = BTreeSet::new();
     let mut trees_deleted = 0;
+    let mut fsmonitor_stopped = 0;
     let mut passes = 0;
     loop {
         let Some(held) = try_acquire(&directory.join(MAINTAIN_LOCK), "pool maintenance")? else {
@@ -994,22 +1019,29 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
                 break;
             }
             let mut worked = false;
-            let step = Instant::now();
-            crate::metrics::phase("paused", wait_for_quiet_trees(registry));
-            let deleted = crate::trash::empty(registry, |command| {
-                run_yielding(command, registry).is_ok_and(|(status, stopped_ms)| {
-                    crate::metrics::phase("paused", stopped_ms);
-                    status.success()
-                })
-            });
-            crate::metrics::phase("trash", crate::metrics::elapsed_ms(step));
-            if deleted > 0 {
-                worked = true;
-                trees_deleted += deleted;
-            }
+            let empty_trash = |trees_deleted: &mut usize| {
+                let step = Instant::now();
+                crate::metrics::phase("paused", wait_for_quiet_trees(registry));
+                let deleted = crate::trash::empty(registry, |command| {
+                    run_yielding(command, registry).is_ok_and(|(status, stopped_ms)| {
+                        crate::metrics::phase("paused", stopped_ms);
+                        status.success()
+                    })
+                });
+                crate::metrics::phase("trash", crate::metrics::elapsed_ms(step));
+                *trees_deleted += deleted;
+                deleted > 0
+            };
             let step = Instant::now();
             let plan = plan(source, registry)?;
             crate::metrics::phase("plan", crate::metrics::elapsed_ms(step));
+            for (project, _) in &plan.kept {
+                for slot in slots(registry, project) {
+                    if crate::util::stop_fsmonitor(&slot) {
+                        fsmonitor_stopped += 1;
+                    }
+                }
+            }
             let step = Instant::now();
             for orphan in &plan.orphaned {
                 crate::metrics::phase("paused", wait_for_quiet_trees(registry));
@@ -1034,7 +1066,12 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
             crate::metrics::phase("reap", crate::metrics::elapsed_ms(step));
             let step = Instant::now();
             let mut blocked = HashSet::new();
+            let mut trash_emptied = false;
             for level in 1..=capacity {
+                if level == 2 {
+                    worked |= empty_trash(&mut trees_deleted);
+                    trash_emptied = true;
+                }
                 for (project, facts) in &plan.kept {
                     if blocked.contains(project) || slots(registry, project).len() >= level {
                         continue;
@@ -1066,6 +1103,9 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
                 }
             }
             crate::metrics::phase("fill", crate::metrics::elapsed_ms(step));
+            if !trash_emptied {
+                worked |= empty_trash(&mut trees_deleted);
+            }
             if !worked {
                 break;
             }
@@ -1083,6 +1123,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     crate::metrics::record("failed", json!(failed));
     crate::metrics::record("deferred", json!(deferred));
     crate::metrics::record("trees_deleted", json!(trees_deleted));
+    crate::metrics::record("fsmonitor_stopped", json!(fsmonitor_stopped));
     crate::metrics::record("system_end", crate::metrics::system_load());
     Ok(json!({
         "reaped": reaped,
@@ -1091,6 +1132,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
         "failed": failed,
         "deferred": deferred,
         "trees_deleted": trees_deleted,
+        "fsmonitor_stopped": fsmonitor_stopped,
     }))
 }
 
@@ -1281,7 +1323,37 @@ mod tests {
                 .collect(),
             active: Some(active.iter().map(|project| project.to_string()).collect()),
             sharing_disabled: false,
+            overlays: true,
         }
+    }
+
+    #[test]
+    fn overlays_tolerate_untracked_files_in_the_source_but_symlinks_do_not() {
+        let directory = std::env::temp_dir().join(format!("grw-clean-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(["-c", "user.email=a@b", "-c", "user.name=a"])
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        git(&["init", "-q"]);
+        fs::write(directory.join("tracked"), "a\n").unwrap();
+        git(&["add", "tracked"]);
+        git(&["commit", "-qm", "init"]);
+        fs::create_dir_all(directory.join("environments")).unwrap();
+        fs::write(directory.join("environments/state"), "x\n").unwrap();
+        assert!(source_is_clean(&directory, true));
+        assert!(!source_is_clean(&directory, false));
+        fs::write(directory.join("tracked"), "b\n").unwrap();
+        assert!(!source_is_clean(&directory, true));
+        let _ = fs::remove_dir_all(&directory);
     }
 
     fn facts(est_files: u64, est_bytes: u64, shallow: bool) -> ProjectFacts {

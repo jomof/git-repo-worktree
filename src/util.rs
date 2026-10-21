@@ -61,6 +61,126 @@ pub fn set_git_config(scope: &[std::ffi::OsString], key: &str, value: &str) -> R
     unreachable!("the last attempt returns")
 }
 
+/// Marks every descriptor above stderr close-on-exec, so the programs this
+/// process starts (long-lived fuse-overlayfs daemons and background
+/// maintenance included) do not inherit descriptors the caller leaked into it,
+/// such as its sockets, pipes, and log files. Call once at startup.
+pub fn close_inherited_descriptors_on_exec() {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: close_range with CLOSE_RANGE_CLOEXEC only sets flags.
+        let marked = unsafe {
+            libc::syscall(
+                libc::SYS_close_range,
+                3u32,
+                u32::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            )
+        };
+        if marked == 0 {
+            return;
+        }
+    }
+    let descriptors = fs::read_dir("/dev/fd")
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+                .filter(|descriptor| *descriptor > 2)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for descriptor in descriptors {
+        // SAFETY: fcntl on a descriptor that may already be closed fails with
+        // EBADF and changes nothing.
+        unsafe {
+            let flags = libc::fcntl(descriptor, libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(descriptor, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
+    }
+}
+
+static CALLER_GIT_CONFIG_COUNT: std::sync::OnceLock<Option<std::ffi::OsString>> =
+    std::sync::OnceLock::new();
+
+fn config_count(value: Option<&std::ffi::OsString>) -> usize {
+    value
+        .and_then(|value| value.to_str())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Makes every Git command this process starts ignore `core.fsmonitor`. A
+/// daemon Git starts for a worktree outlives the command and stays bound to
+/// the worktree's administrative directory, which the tool moves between the
+/// pool and trees; a later checkout there can block on it. The setting is
+/// appended to any `GIT_CONFIG_COUNT` configuration the caller passed. Call
+/// once, before starting threads.
+pub fn disable_fsmonitor_for_children() {
+    let original = std::env::var_os("GIT_CONFIG_COUNT");
+    let count = config_count(original.as_ref());
+    std::env::set_var(format!("GIT_CONFIG_KEY_{count}"), "core.fsmonitor");
+    std::env::set_var(format!("GIT_CONFIG_VALUE_{count}"), "false");
+    std::env::set_var("GIT_CONFIG_COUNT", (count + 1).to_string());
+    let _ = CALLER_GIT_CONFIG_COUNT.set(original);
+}
+
+/// Gives `command` the caller's Git configuration environment back, for
+/// programs the user owns such as hooks.
+pub fn with_caller_git_config(command: &mut std::process::Command) {
+    let Some(original) = CALLER_GIT_CONFIG_COUNT.get() else {
+        return;
+    };
+    let count = config_count(original.as_ref());
+    command
+        .env_remove(format!("GIT_CONFIG_KEY_{count}"))
+        .env_remove(format!("GIT_CONFIG_VALUE_{count}"));
+    match original {
+        Some(value) => command.env("GIT_CONFIG_COUNT", value),
+        None => command.env_remove("GIT_CONFIG_COUNT"),
+    };
+}
+
+/// Stops the fsmonitor daemon serving the worktree at `checkout`, if one has
+/// left its socket in the worktree's administrative directory. Call before
+/// moving or deleting a worktree. Returns whether a daemon was asked to stop.
+pub fn stop_fsmonitor(checkout: &Path) -> bool {
+    let Some(git_dir) = crate::inspect::checkout_git_dir(checkout) else {
+        return false;
+    };
+    if fs::symlink_metadata(git_dir.join("fsmonitor--daemon.ipc")).is_err() {
+        return false;
+    }
+    let Ok(mut child) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["fsmonitor--daemon", "stop"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+        }
+    }
+    true
+}
+
 /// Whether `git worktree add` failed only because another `worktree add` in
 /// the same repository was half-way through registering its worktree: Git
 /// reads every worktree's administrative files before adding one.

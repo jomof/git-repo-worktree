@@ -84,8 +84,11 @@ Two modes keep large projects fast without sharing the source's files:
   worktree whose files are a copy-on-write view of the clean source checkout.
   Creation takes well under a second regardless of size, writes never reach the
   source, paths stay inside the tree, and an untouched overlay is known clean
-  without scanning it. Because the view is live, a source checkout that later
-  changes branch shows up as modifications in the overlay. Mounts do not
+  without scanning it. The source's tracked files must match the pinned
+  commit; untracked files in the source (for example a directory runtime
+  tools create) are hidden in the overlay, so the tree starts clean. Because
+  the view is live, a source checkout that later changes branch shows up as
+  modifications in the overlay. Mounts do not
   survive a reboot; `repair` remounts them. `materialize` converts a clean
   overlay to a normal checkout. Without FUSE, overlay projects fall back to
   worktrees.
@@ -93,10 +96,11 @@ Two modes keep large projects fast without sharing the source's files:
 ## Keeping the pool full
 
 After `add` and `remove`, a detached `pool maintain` runs in the background at
-the lowest CPU and I/O priority. It first deletes the files of removed trees,
-then refills every pooled project to `pool size`
+the lowest CPU and I/O priority. It refills every pooled project to `pool size`
 spares, one spare per project at a time, so after the first tree a burst of
-`pool size` adds all take spares. It also deletes *orphaned* spares: spares of
+`pool size` adds all take spares. The files of removed trees are deleted once
+every pooled project has a spare, so a slow deletion never leaves the pool
+empty. It also deletes *orphaned* spares: spares of
 projects a default `add` would no longer take from the pool, for example
 fixed-depth prebuilts that are now overlaid, projects quick enough to check
 out directly, or projects whose default has changed. Maintenance pauses while
@@ -119,6 +123,10 @@ To keep spares for a project the pool would otherwise orphan, give it a
 `pool` default.
 
 ## Checkout speed
+
+When a project larger than 1 GiB cannot be shared or overlaid (its source
+checkout changed or has modified tracked files), `add` warns, naming the
+project, its size, and the reason.
 
 For worktree projects, Git's native parallel checkout is enabled and ready
 projects are started largest-first using pinned tracked-file sizes. Projects

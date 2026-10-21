@@ -1,3 +1,9 @@
+> **Historical (v1, before spare pools, overlays, and source sharing).** The
+> timings, disk figures, and "proposed improvements" below describe the first
+> release; all of those improvements have shipped. Current numbers are in
+> [README.md](README.md#android-studio-by-the-numbers) and the latest round
+> under [`real-world-experience/`](real-world-experience/).
+
 # git-repo-worktree — Real-World Performance Analysis on `studio-main`
 
 **Status:** Technical Analysis & Architectural Recommendations.

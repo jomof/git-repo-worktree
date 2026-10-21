@@ -301,6 +301,15 @@ fn add_with(
                     ),
                 ));
             }
+        } else if let Some(manifest) = &args.manifest {
+            let manifest = absolutize(manifest, cwd);
+            if let Err(error) = fs::copy(&manifest, &snapshot) {
+                let _ = fs::remove_dir_all(&entry);
+                return Err(AppError::operational(
+                    "E_MANIFEST_PARSE",
+                    format!("read {}: {error}", manifest.display()),
+                ));
+            }
         } else {
             let output = match Command::new("repo")
                 .current_dir(&client.root)
@@ -334,6 +343,12 @@ fn add_with(
         meta.projects = parsed.projects;
         meta.copyfiles = parsed.copyfiles;
         meta.linkfiles = parsed.linkfiles;
+        if args.manifest.is_some() {
+            if let Err(error) = check_pinned_revisions(&meta.projects, jobs) {
+                let _ = fs::remove_dir_all(&entry);
+                return Err(error);
+            }
+        }
         meta.default_modes = match restoring {
             Some(restoring) => restoring.record.options.default_modes.clone(),
             None => meta
@@ -435,6 +450,73 @@ fn add_with(
             },
         )
     }
+}
+
+/// Checks that every project of a `--manifest` tree names a commit, and that
+/// the commit is in the local object stores, before anything is created.
+fn check_pinned_revisions(projects: &[ProjectMeta], jobs: usize) -> AppResult<()> {
+    let unpinned = projects
+        .iter()
+        .filter(|project| project.reason.as_deref() == Some("unpinned-revision"))
+        .map(|project| json!({"project": project.path, "revision": project.sha}))
+        .collect::<Vec<_>>();
+    if !unpinned.is_empty() {
+        return Err(AppError::operational(
+            "E_MANIFEST_UNPINNED",
+            format!(
+                "{} project(s) in the manifest name a branch or tag instead of a commit; write the file with `repo manifest -r -o <file>`",
+                unpinned.len()
+            ),
+        )
+        .with_details(json!({ "unpinned": unpinned })));
+    }
+    let candidates = projects
+        .iter()
+        .filter(|project| project.state == "pending" && !project.sha.is_empty())
+        .filter(|project| !project.git_common_dir.is_empty())
+        .collect::<Vec<_>>();
+    let check = |project: &&ProjectMeta| {
+        let present = Command::new("git")
+            .arg(format!("--git-dir={}", project.git_common_dir))
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .args(["cat-file", "-e", &format!("{}^{{commit}}", project.sha)])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        (!present).then(|| json!({"project": project.path, "revision": project.sha}))
+    };
+    let missing = match ThreadPoolBuilder::new().num_threads(jobs.max(1)).build() {
+        Ok(workers) => workers.install(|| candidates.par_iter().filter_map(check).collect()),
+        Err(_) => candidates.iter().filter_map(check).collect::<Vec<_>>(),
+    };
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::operational(
+        "E_MISSING_REVISIONS",
+        format!(
+            "{} pinned commit(s) are not in the local object stores; run `repo sync` (or fetch them) first",
+            missing.len()
+        ),
+    )
+    .with_details(json!({ "missing": missing })))
+}
+
+/// A digest of every populated project's path and pinned commit: equal for
+/// trees that started from the same commits.
+pub fn pinned_digest(meta: &TreeMeta) -> String {
+    let mut pins = meta
+        .projects
+        .iter()
+        .filter(|project| project.state != "skipped")
+        .map(|project| format!("{} {}\n", project.path, project.sha))
+        .collect::<Vec<_>>();
+    pins.sort();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in pins.concat().bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// Pins each archived project to its archived HEAD and returns the projects
@@ -1438,6 +1520,17 @@ fn run_project_phase(
                             "notes",
                             json!({"project": project_path, "note": note}),
                         );
+                        let bytes = meta.projects[index].est_bytes.unwrap_or(0);
+                        if !quiet
+                            && verbose == 0
+                            && bytes >= LARGE_FALLBACK_BYTES
+                            && !note.contains("HEAD differs from pinned SHA")
+                        {
+                            eprintln!(
+                                "warning: {project_path} was checked out in full (about {}) instead of shared with the source: {note}",
+                                crate::archive::human_bytes(bytes)
+                            );
+                        }
                     }
                     completed_for_hook += 1;
                     maybe_crash_after(completed_for_hook);
@@ -1548,14 +1641,15 @@ fn populate_project(
     let worktree = destination.join(&project.path);
     let source_checkout = source_root.join(&project.path);
     if project.mode == MODE_OVERLAY {
-        match source_is_clean_at_sha(&source_checkout, &project.sha) {
-            Ok(()) => {
+        match source_untracked_at_sha(&source_checkout, &project.sha) {
+            Ok(untracked) => {
                 overlay::populate(
                     &source_checkout,
                     &worktree,
                     &context.entry,
                     &project.path,
                     &project.sha,
+                    &untracked,
                 )?;
                 return Ok(ProjectOutcome {
                     mode: MODE_OVERLAY,
@@ -1686,6 +1780,10 @@ fn populate_project(
         note,
     })
 }
+
+/// Projects at least this large get a warning when they cannot be shared with
+/// the source checkout and are checked out in full instead.
+const LARGE_FALLBACK_BYTES: u64 = 1 << 30;
 
 fn overlay_disabled_by_environment() -> bool {
     std::env::var("GIT_REPO_WORKTREE_NO_OVERLAY")
@@ -1864,6 +1962,17 @@ fn device_pair(source: &Path, destination: &Path) -> Result<(u64, u64), String> 
 }
 
 fn source_is_clean_at_sha(source_checkout: &Path, sha: &str) -> Result<(), String> {
+    if source_untracked_at_sha(source_checkout, sha)?.is_empty() {
+        Ok(())
+    } else {
+        Err("source checkout is not clean".into())
+    }
+}
+
+/// The untracked, non-ignored paths of a source checkout whose `HEAD` is
+/// `sha` and whose tracked files and index match it (directories are listed
+/// once, with a trailing `/`). Fails when any tracked file differs.
+fn source_untracked_at_sha(source_checkout: &Path, sha: &str) -> Result<Vec<String>, String> {
     let head = Command::new("git")
         .arg("-C")
         .arg(source_checkout)
@@ -1894,7 +2003,7 @@ fn source_is_clean_at_sha(source_checkout: &Path, sha: &str) -> Result<(), Strin
     let status = Command::new("git")
         .arg("-C")
         .arg(source_checkout)
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=normal"])
         .output()
         .map_err(|error| format!("inspect source cleanliness: {error}"))?;
     if !status.status.success() {
@@ -1903,10 +2012,17 @@ fn source_is_clean_at_sha(source_checkout: &Path, sha: &str) -> Result<(), Strin
             exit_reason(&status)
         ));
     }
-    if !status.stdout.is_empty() {
-        return Err("source checkout is not clean".into());
+    let mut untracked = Vec::new();
+    for record in status.stdout.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        match record.strip_prefix(b"?? ") {
+            Some(path) => untracked.push(String::from_utf8_lossy(path).into_owned()),
+            None => return Err("source checkout is not clean".into()),
+        }
     }
-    Ok(())
+    Ok(untracked)
 }
 
 fn try_reflink_project(
@@ -2642,6 +2758,7 @@ pub fn list(args: &ListArgs, cwd: &Path, json_output: bool, verbose: u8) -> AppR
 pub fn tree_json(tree: &TreeMeta, verbose: u8) -> Value {
     let mut value = serde_json::to_value(tree).expect("tree metadata serializes");
     value["checked_out_branches"] = Value::Array(crate::status::checked_out_branches(tree));
+    value["pinned_digest"] = json!(pinned_digest(tree));
     if verbose > 0 {
         return value;
     }
@@ -2780,6 +2897,7 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             }
         }
         let step = Instant::now();
+        stop_fsmonitors(&meta);
         release_overlays(&meta, args.force > 0)?;
         crate::metrics::phase("unmount", crate::metrics::elapsed_ms(step));
         if meta.state != "removing" {
@@ -3097,6 +3215,7 @@ pub fn restore(args: &RestoreArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppR
         no_overlay: options.no_overlay,
         heavy_jobs: Some(options.heavy_jobs),
         fail_fast: false,
+        manifest: None,
     };
     let restoring = Restoring {
         record: &record,
@@ -3195,6 +3314,20 @@ pub fn record_slow_inspections(inspections: &[crate::inspect::ProjectInspection]
     crate::metrics::record("slow_inspections", Value::Array(slow));
 }
 
+/// Stops fsmonitor daemons started in the tree's worktrees (by the user or
+/// their tools), which would otherwise outlive the tree, or follow a pooled
+/// worktree into the next tree, bound to a path that no longer exists.
+fn stop_fsmonitors(meta: &TreeMeta) {
+    let root = meta.root();
+    let stopped = meta
+        .projects
+        .iter()
+        .filter(|project| project.has_worktree() && project.state != "skipped")
+        .filter(|project| crate::util::stop_fsmonitor(&root.join(&project.path)))
+        .count();
+    crate::metrics::record("fsmonitor_stopped", json!(stopped));
+}
+
 /// Unmounts every overlay project. A busy mount fails unless `lazy`, which
 /// detaches it once the last user exits.
 fn release_overlays(meta: &TreeMeta, lazy: bool) -> AppResult<()> {
@@ -3255,7 +3388,7 @@ fn return_projects_to_pool(
         let facts = pool::ProjectFacts::from_meta(project)
             .or_else(|| pool::measure_facts(&source, &project.path));
         let orphan = pool::orphan_reason(&project.path, facts.as_ref(), &context, || {
-            pool::source_is_clean(&source.join(&project.path))
+            context.source_shareable(&source.join(&project.path))
         });
         if orphan.is_some() {
             return None;
@@ -3423,6 +3556,7 @@ pub fn move_tree(args: &MoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
                 to: new_path.to_string_lossy().into_owned(),
                 at: now(),
             });
+            stop_fsmonitors(&meta);
             release_overlays(&meta, false)?;
             meta.state = "moving".into();
             write_meta(&meta)?;

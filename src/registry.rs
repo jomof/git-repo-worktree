@@ -1,10 +1,10 @@
 use crate::error::{AppError, AppResult};
 use crate::model::TreeMeta;
 use crate::util::{absolutize, canonicalize_missing, read_meta};
-use fd_lock::{RwLock, RwLockWriteGuard};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -47,7 +47,8 @@ pub fn registry_path(source_root: &Path) -> PathBuf {
 
 /// An exclusive advisory lock, released when dropped.
 pub struct Held {
-    _guard: RwLockWriteGuard<'static, File>,
+    /// Closing the file releases its `flock`.
+    _file: File,
 }
 
 /// Acquires the exclusive lock on `path`, waiting up to the configured
@@ -76,12 +77,8 @@ fn acquire_within(path: &Path, what: &str, quiet: bool, timeout: Duration) -> Ap
     let started = Instant::now();
     let mut next_notice = Duration::from_secs(1);
     loop {
-        let attempt = file
-            .try_clone()
-            .map_err(|error| AppError::io(format!("open lock {}", path.display()), error))?;
-        let lock: &'static mut RwLock<File> = Box::leak(Box::new(RwLock::new(attempt)));
-        match lock.try_write() {
-            Ok(mut guard) => {
+        match try_flock(&file) {
+            Ok(true) => {
                 let waited = crate::metrics::elapsed_ms(started);
                 if waited > 0 {
                     crate::metrics::phase("lock-wait", waited);
@@ -91,12 +88,12 @@ fn acquire_within(path: &Path, what: &str, quiet: bool, timeout: Duration) -> Ap
                     "command": COMMAND.get().map(String::as_str).unwrap_or("?"),
                     "since": crate::util::now(),
                 });
-                let _ = guard.set_len(0);
-                let _ = guard.seek(SeekFrom::Start(0));
-                let _ = guard.write_all(holder.to_string().as_bytes());
-                return Ok(Held { _guard: guard });
+                let _ = file.set_len(0);
+                let _ = (&file).seek(SeekFrom::Start(0));
+                let _ = (&file).write_all(holder.to_string().as_bytes());
+                return Ok(Held { _file: file });
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok(false) => {}
             Err(error) => return Err(AppError::io(format!("lock {}", path.display()), error)),
         }
         let waited = started.elapsed();
@@ -115,6 +112,23 @@ fn acquire_within(path: &Path, what: &str, quiet: bool, timeout: Duration) -> Ap
             next_notice = waited + Duration::from_secs(30);
         }
         std::thread::sleep(Duration::from_millis(100).min(timeout - waited));
+    }
+}
+
+/// Takes an exclusive `flock` on `file` without waiting; `Ok(false)` when
+/// another open file description holds it.
+fn try_flock(file: &File) -> std::io::Result<bool> {
+    loop {
+        // SAFETY: flock only reads the descriptor, which `file` keeps open.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(true);
+        }
+        let error = std::io::Error::last_os_error();
+        match error.kind() {
+            std::io::ErrorKind::WouldBlock => return Ok(false),
+            std::io::ErrorKind::Interrupted => continue,
+            _ => return Err(error),
+        }
     }
 }
 
@@ -170,9 +184,7 @@ pub fn is_locked(path: &Path) -> bool {
     let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
         return false;
     };
-    let mut lock = RwLock::new(file);
-    let busy = lock.try_write().is_err();
-    busy
+    !try_flock(&file).unwrap_or(false)
 }
 
 /// Selects a tree, waits for its own lock, and runs `operation` with freshly
@@ -290,4 +302,58 @@ pub fn select_tree(registry: &Path, selector: &str, cwd: &Path) -> AppResult<Tre
         "E_NO_SUCH_TREE",
         format!("no registered tree matches {selector}"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Descriptors this process has open on `path`; other tests running in
+    /// parallel open and close their own.
+    // `stat` field types differ between platforms.
+    #[allow(clippy::unnecessary_cast)]
+    fn descriptors_on(path: &Path) -> usize {
+        use std::os::unix::fs::MetadataExt;
+        let target = fs::metadata(path).unwrap();
+        let descriptors = fs::read_dir("/dev/fd")
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+            .collect::<Vec<_>>();
+        descriptors
+            .into_iter()
+            .filter(|descriptor| {
+                let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+                // SAFETY: fstat writes into `stat` and fails harmlessly on a
+                // closed descriptor.
+                if unsafe { libc::fstat(*descriptor, stat.as_mut_ptr()) } != 0 {
+                    return false;
+                }
+                // SAFETY: fstat succeeded, so `stat` is initialized.
+                let stat = unsafe { stat.assume_init() };
+                stat.st_ino as u64 == target.ino() && stat.st_dev as u64 == target.dev()
+            })
+            .count()
+    }
+
+    #[test]
+    fn waiting_for_a_lock_does_not_leak_descriptors() {
+        let directory = std::env::temp_dir().join(format!("grw-lock-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("lock");
+        let held = acquire_within(&path, "test", true, Duration::ZERO).unwrap();
+        assert_eq!(descriptors_on(&path), 1);
+        for _ in 0..20 {
+            assert!(try_acquire(&path, "test").unwrap().is_none());
+        }
+        let error = acquire_within(&path, "test", true, Duration::from_millis(350)).err();
+        assert_eq!(error.map(|error| error.code), Some("E_LOCKED"));
+        assert!(is_locked(&path));
+        assert_eq!(descriptors_on(&path), 1);
+        drop(held);
+        assert!(!is_locked(&path));
+        let again = acquire_within(&path, "test", true, Duration::ZERO).unwrap();
+        drop(again);
+        let _ = fs::remove_dir_all(&directory);
+    }
 }
