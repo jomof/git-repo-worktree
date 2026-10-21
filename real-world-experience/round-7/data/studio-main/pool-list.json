@@ -1,0 +1,64 @@
+{
+  "format_version": 1,
+  "command": "pool list",
+  "ok": true,
+  "exit_code": 0,
+  "error": null,
+  "result": {
+    "capacity": 2,
+    "depth": 0,
+    "orphaned_bytes": 0,
+    "orphaned_spares": 0,
+    "projects": [
+      {
+        "bytes_per_spare": 11266306481,
+        "orphaned": null,
+        "project": "prebuilts/studio/sdk/linux",
+        "spares": 0
+      },
+      {
+        "bytes_per_spare": 2105682055,
+        "orphaned": null,
+        "project": "tools/idea",
+        "spares": 0
+      },
+      {
+        "bytes_per_spare": 740165382,
+        "orphaned": null,
+        "project": "external/jetbrains/kotlin",
+        "spares": 0
+      },
+      {
+        "bytes_per_spare": 1390031997,
+        "orphaned": null,
+        "project": "tools/adt/idea",
+        "spares": 0
+      },
+      {
+        "bytes_per_spare": 1010739262,
+        "orphaned": null,
+        "project": "tools/base",
+        "spares": 0
+      },
+      {
+        "bytes_per_spare": 469016550,
+        "orphaned": null,
+        "project": "external/intellij-plugins",
+        "spares": 0
+      },
+      {
+        "bytes_per_spare": 314209705,
+        "orphaned": null,
+        "project": "tools/vendor/intellij/cidr",
+        "spares": 0
+      },
+      {
+        "bytes_per_spare": 493005294,
+        "orphaned": null,
+        "project": "tools/vendor/google",
+        "spares": 0
+      }
+    ],
+    "spares": []
+  }
+}

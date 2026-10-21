@@ -1,0 +1,762 @@
+{
+  "format_version": 1,
+  "command": "report",
+  "ok": true,
+  "exit_code": 0,
+  "error": null,
+  "result": {
+    "add": {
+      "failures": {},
+      "modes": {
+        "overlay": 2714,
+        "symlink-shared": 57,
+        "worktree": 5447
+      },
+      "notes": {
+        "overlay preflight changed": 104,
+        "reflink fallback": 415,
+        "reflink unsupported for filesystem pair": 2096,
+        "sharing preflight changed": 3,
+        "source checkout is not clean": 3
+      },
+      "pool": {
+        "hits": 811,
+        "misses": 272
+      },
+      "slowest_projects": [
+        {
+          "bytes": 981878919,
+          "last": "worktree/pool",
+          "max_ms": 368837,
+          "p50_ms": 4740,
+          "project": "tools/idea",
+          "samples": 147
+        },
+        {
+          "bytes": 304908038,
+          "last": "worktree/pool",
+          "max_ms": 14835,
+          "p50_ms": 3537,
+          "project": "external/jetbrains/kotlin",
+          "samples": 147
+        },
+        {
+          "bytes": 10391003569,
+          "last": "worktree/pool",
+          "max_ms": 57180,
+          "p50_ms": 2477,
+          "project": "prebuilts/studio/sdk/linux",
+          "samples": 147
+        },
+        {
+          "bytes": 312123366,
+          "last": "worktree/pool",
+          "max_ms": 7497,
+          "p50_ms": 2206,
+          "project": "external/intellij-plugins",
+          "samples": 147
+        },
+        {
+          "bytes": 433871342,
+          "last": "worktree/pool",
+          "max_ms": 7402,
+          "p50_ms": 2065,
+          "project": "tools/vendor/google",
+          "samples": 147
+        },
+        {
+          "bytes": 926857278,
+          "last": "worktree/pool",
+          "max_ms": 9443,
+          "p50_ms": 2011,
+          "project": "tools/base",
+          "samples": 147
+        },
+        {
+          "bytes": 666207113,
+          "last": "worktree/checkout",
+          "max_ms": 4219,
+          "p50_ms": 1631,
+          "project": "external/dexter",
+          "samples": 147
+        },
+        {
+          "bytes": 198047145,
+          "last": "worktree/pool",
+          "max_ms": 10357,
+          "p50_ms": 1550,
+          "project": "tools/vendor/intellij/cidr",
+          "samples": 147
+        },
+        {
+          "bytes": 965599688,
+          "last": "worktree/pool",
+          "max_ms": 50369,
+          "p50_ms": 1526,
+          "project": "tools/gpu-profiler/idea",
+          "samples": 133
+        },
+        {
+          "bytes": 288628202,
+          "last": "worktree/checkout",
+          "max_ms": 2594,
+          "p50_ms": 1418,
+          "project": "tools/emulator",
+          "samples": 147
+        },
+        {
+          "bytes": 1171866749,
+          "last": "worktree/pool",
+          "max_ms": 30149,
+          "p50_ms": 1038,
+          "project": "tools/adt/idea",
+          "samples": 147
+        },
+        {
+          "bytes": 230588947,
+          "last": "worktree/checkout",
+          "max_ms": 1609,
+          "p50_ms": 714,
+          "project": "tools/profiler",
+          "samples": 147
+        },
+        {
+          "bytes": 131250802,
+          "last": "worktree/checkout",
+          "max_ms": 1375,
+          "p50_ms": 601,
+          "project": "tools/vendor/ggml-org/llama.cpp",
+          "samples": 147
+        },
+        {
+          "bytes": 24583940407,
+          "last": "overlay/fuse-overlayfs",
+          "max_ms": 141740,
+          "p50_ms": 562,
+          "project": "prebuilts/tools",
+          "samples": 147
+        },
+        {
+          "bytes": 15500189,
+          "last": "worktree/checkout",
+          "max_ms": 1398,
+          "p50_ms": 378,
+          "project": "tools/data-binding",
+          "samples": 147
+        }
+      ],
+      "strategies": {
+        "checkout": 4636,
+        "fuse-overlayfs": 2714,
+        "none": 57,
+        "pool": 811
+      }
+    },
+    "commands": {
+      "add": {
+        "errors": {
+          "E_DEST_NESTED": 2,
+          "E_DEST_NOT_EMPTY": 1,
+          "E_LOCKED": 7,
+          "E_PARTIAL": 1,
+          "E_USAGE": 1
+        },
+        "latency": {
+          "count": 159,
+          "max_ms": 372034,
+          "p50_ms": 13263,
+          "p90_ms": 41774
+        },
+        "ok": 147,
+        "phases": {
+          "directives": {
+            "count": 147,
+            "max_ms": 939,
+            "p50_ms": 7,
+            "p90_ms": 40
+          },
+          "finalize": {
+            "count": 147,
+            "max_ms": 1042,
+            "p50_ms": 4,
+            "p90_ms": 20
+          },
+          "hook-post-add": {
+            "count": 120,
+            "max_ms": 2659,
+            "p50_ms": 108,
+            "p90_ms": 212
+          },
+          "lock-wait": {
+            "count": 8,
+            "max_ms": 3219,
+            "p50_ms": 1532,
+            "p90_ms": 1917
+          },
+          "projects": {
+            "count": 148,
+            "max_ms": 368873,
+            "p50_ms": 11398,
+            "p90_ms": 36940
+          },
+          "projects-idle-slot": {
+            "count": 61,
+            "max_ms": 33215,
+            "p50_ms": 7,
+            "p90_ms": 1316
+          },
+          "projects-journal-sync": {
+            "count": 72,
+            "max_ms": 3948,
+            "p50_ms": 66,
+            "p90_ms": 523
+          },
+          "projects-meta-write": {
+            "count": 72,
+            "max_ms": 1403,
+            "p50_ms": 14,
+            "p90_ms": 245
+          },
+          "repo-bridge": {
+            "count": 147,
+            "max_ms": 3574,
+            "p50_ms": 175,
+            "p90_ms": 785
+          },
+          "resume": {
+            "count": 3,
+            "max_ms": 10,
+            "p50_ms": 5,
+            "p90_ms": 10
+          },
+          "snapshot": {
+            "count": 145,
+            "max_ms": 24684,
+            "p50_ms": 2130,
+            "p90_ms": 3625
+          },
+          "snapshot-estimates": {
+            "count": 70,
+            "max_ms": 20927,
+            "p50_ms": 4,
+            "p90_ms": 1639
+          },
+          "snapshot-git-dirs": {
+            "count": 70,
+            "max_ms": 219,
+            "p50_ms": 14,
+            "p90_ms": 76
+          },
+          "snapshot-preflight": {
+            "count": 70,
+            "max_ms": 37,
+            "p50_ms": 2,
+            "p90_ms": 4
+          },
+          "snapshot-repo-manifest": {
+            "count": 70,
+            "max_ms": 2163,
+            "p50_ms": 669,
+            "p90_ms": 1167
+          },
+          "submodules": {
+            "count": 147,
+            "max_ms": 52,
+            "p50_ms": 0,
+            "p90_ms": 0
+          },
+          "total": {
+            "count": 147,
+            "max_ms": 371869,
+            "p50_ms": 14843,
+            "p90_ms": 41825
+          }
+        },
+        "via_git": 158
+      },
+      "archive list": {
+        "errors": {},
+        "latency": {
+          "count": 2,
+          "max_ms": 13,
+          "p50_ms": 13,
+          "p90_ms": 13
+        },
+        "ok": 2,
+        "phases": {},
+        "via_git": 2
+      },
+      "cli": {
+        "errors": {
+          "E_USAGE": 2
+        },
+        "latency": {
+          "count": 2,
+          "max_ms": 14,
+          "p50_ms": 14,
+          "p90_ms": 14
+        },
+        "ok": 0,
+        "phases": {},
+        "via_git": 2
+      },
+      "defaults list": {
+        "errors": {},
+        "latency": {
+          "count": 4,
+          "max_ms": 0,
+          "p50_ms": 0,
+          "p90_ms": 0
+        },
+        "ok": 4,
+        "phases": {},
+        "via_git": 4
+      },
+      "detach": {
+        "errors": {},
+        "latency": {
+          "count": 4,
+          "max_ms": 450,
+          "p50_ms": 192,
+          "p90_ms": 450
+        },
+        "ok": 4,
+        "phases": {},
+        "via_git": 4
+      },
+      "hooks": {
+        "errors": {
+          "E_USAGE": 1
+        },
+        "latency": {
+          "count": 1,
+          "max_ms": 0,
+          "p50_ms": 0,
+          "p90_ms": 0
+        },
+        "ok": 0,
+        "phases": {},
+        "via_git": 1
+      },
+      "hooks list": {
+        "errors": {},
+        "latency": {
+          "count": 11,
+          "max_ms": 3,
+          "p50_ms": 0,
+          "p90_ms": 1
+        },
+        "ok": 11,
+        "phases": {},
+        "via_git": 11
+      },
+      "list": {
+        "errors": {
+          "E_LOCKED": 6,
+          "E_USAGE": 1
+        },
+        "latency": {
+          "count": 190,
+          "max_ms": 40031,
+          "p50_ms": 177,
+          "p90_ms": 4387
+        },
+        "ok": 183,
+        "phases": {},
+        "via_git": 190
+      },
+      "materialize": {
+        "errors": {
+          "E_PARTIAL": 2,
+          "E_UNKNOWN_PROJECT": 1
+        },
+        "latency": {
+          "count": 7,
+          "max_ms": 89575,
+          "p50_ms": 60,
+          "p90_ms": 617
+        },
+        "ok": 4,
+        "phases": {},
+        "via_git": 7
+      },
+      "pool --json": {
+        "errors": {
+          "E_USAGE": 1
+        },
+        "latency": {
+          "count": 1,
+          "max_ms": 0,
+          "p50_ms": 0,
+          "p90_ms": 0
+        },
+        "ok": 0,
+        "phases": {},
+        "via_git": 1
+      },
+      "pool clear": {
+        "errors": {},
+        "latency": {
+          "count": 10,
+          "max_ms": 71466,
+          "p50_ms": 25579,
+          "p90_ms": 28928
+        },
+        "ok": 10,
+        "phases": {},
+        "via_git": 10
+      },
+      "pool fill": {
+        "errors": {
+          "E_NO_POOL_PROJECTS": 1
+        },
+        "latency": {
+          "count": 4,
+          "max_ms": 13667,
+          "p50_ms": 13382,
+          "p90_ms": 13667
+        },
+        "ok": 3,
+        "phases": {},
+        "via_git": 4
+      },
+      "pool list": {
+        "errors": {},
+        "latency": {
+          "count": 47,
+          "max_ms": 6458,
+          "p50_ms": 1126,
+          "p90_ms": 1816
+        },
+        "ok": 47,
+        "phases": {},
+        "via_git": 47
+      },
+      "pool maintain": {
+        "errors": {},
+        "latency": {
+          "count": 101,
+          "max_ms": 3164450,
+          "p50_ms": 987,
+          "p90_ms": 352944
+        },
+        "ok": 101,
+        "phases": {
+          "fill": {
+            "count": 56,
+            "max_ms": 1330667,
+            "p50_ms": 109535,
+            "p90_ms": 478735
+          },
+          "lock-wait": {
+            "count": 2,
+            "max_ms": 703,
+            "p50_ms": 703,
+            "p90_ms": 703
+          },
+          "paused": {
+            "count": 38,
+            "max_ms": 93611,
+            "p50_ms": 284,
+            "p90_ms": 27590
+          },
+          "plan": {
+            "count": 56,
+            "max_ms": 10503,
+            "p50_ms": 2413,
+            "p90_ms": 5014
+          },
+          "reap": {
+            "count": 56,
+            "max_ms": 64108,
+            "p50_ms": 0,
+            "p90_ms": 30
+          },
+          "trash": {
+            "count": 35,
+            "max_ms": 3160217,
+            "p50_ms": 282,
+            "p90_ms": 219765
+          }
+        },
+        "via_git": 101
+      },
+      "pool size": {
+        "errors": {},
+        "latency": {
+          "count": 1,
+          "max_ms": 0,
+          "p50_ms": 0,
+          "p90_ms": 0
+        },
+        "ok": 1,
+        "phases": {},
+        "via_git": 1
+      },
+      "pool status": {
+        "errors": {
+          "E_USAGE": 3
+        },
+        "latency": {
+          "count": 3,
+          "max_ms": 0,
+          "p50_ms": 0,
+          "p90_ms": 0
+        },
+        "ok": 0,
+        "phases": {},
+        "via_git": 3
+      },
+      "prune": {
+        "errors": {},
+        "latency": {
+          "count": 1,
+          "max_ms": 93,
+          "p50_ms": 93,
+          "p90_ms": 93
+        },
+        "ok": 1,
+        "phases": {},
+        "via_git": 1
+      },
+      "remove": {
+        "errors": {
+          "E_DIRTY": 5,
+          "E_LOCKED": 4,
+          "E_NO_SUCH_TREE": 2,
+          "E_OVERLAY_BUSY": 1,
+          "E_USAGE": 1
+        },
+        "latency": {
+          "count": 135,
+          "max_ms": 105031,
+          "p50_ms": 15470,
+          "p90_ms": 35810
+        },
+        "ok": 122,
+        "phases": {
+          "archive": {
+            "count": 4,
+            "max_ms": 25626,
+            "p50_ms": 25572,
+            "p90_ms": 25626
+          },
+          "delete": {
+            "count": 122,
+            "max_ms": 62,
+            "p50_ms": 5,
+            "p90_ms": 11
+          },
+          "hook-pre-remove": {
+            "count": 96,
+            "max_ms": 61420,
+            "p50_ms": 50,
+            "p90_ms": 1505
+          },
+          "inspect": {
+            "count": 77,
+            "max_ms": 52830,
+            "p50_ms": 2560,
+            "p90_ms": 4134
+          },
+          "pool-return": {
+            "count": 122,
+            "max_ms": 26910,
+            "p50_ms": 5246,
+            "p90_ms": 8830
+          },
+          "prune": {
+            "count": 122,
+            "max_ms": 372,
+            "p50_ms": 15,
+            "p90_ms": 46
+          },
+          "unmount": {
+            "count": 122,
+            "max_ms": 1143,
+            "p50_ms": 89,
+            "p90_ms": 317
+          },
+          "worktree-remove": {
+            "count": 122,
+            "max_ms": 104591,
+            "p50_ms": 3291,
+            "p90_ms": 31207
+          }
+        },
+        "via_git": 135
+      },
+      "repair": {
+        "errors": {
+          "E_NO_SUCH_TREE": 1,
+          "E_PARTIAL": 11
+        },
+        "latency": {
+          "count": 39,
+          "max_ms": 98951,
+          "p50_ms": 204,
+          "p90_ms": 1615
+        },
+        "ok": 27,
+        "phases": {},
+        "via_git": 39
+      },
+      "report": {
+        "errors": {},
+        "latency": {
+          "count": 56,
+          "max_ms": 82,
+          "p50_ms": 6,
+          "p90_ms": 44
+        },
+        "ok": 56,
+        "phases": {},
+        "via_git": 56
+      },
+      "status": {
+        "errors": {
+          "E_LOCKED": 11
+        },
+        "latency": {
+          "count": 115,
+          "max_ms": 31866,
+          "p50_ms": 2605,
+          "p90_ms": 8141
+        },
+        "ok": 104,
+        "phases": {},
+        "via_git": 115
+      }
+    },
+    "environment": {
+      "arch": "x86_64",
+      "cpus": 96,
+      "git": "git version 2.56.0.212.g129ede20d9-goog",
+      "kernel": "7.1.6-1rodete1-amd64",
+      "os": "linux",
+      "overlay_unavailable": null,
+      "repo": "2.69",
+      "source_fs": "ext4",
+      "tree_fs": "ext4"
+    },
+    "events": 893,
+    "first": "2026-10-12T23:35:23Z",
+    "history_path": "/usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/history.jsonl",
+    "hooks": {
+      "post-add": {
+        "latency": {
+          "count": 122,
+          "max_ms": 456,
+          "p50_ms": 100,
+          "p90_ms": 150
+        },
+        "statuses": {
+          "failed": 1,
+          "ok": 121
+        }
+      },
+      "pre-remove": {
+        "latency": {
+          "count": 96,
+          "max_ms": 61420,
+          "p50_ms": 50,
+          "p90_ms": 1505
+        },
+        "statuses": {
+          "failed": 3,
+          "ok": 93
+        }
+      }
+    },
+    "last": "2026-10-21T15:50:30Z",
+    "live_trees": {
+      "count": 38,
+      "modes": {
+        "overlay": 525,
+        "symlink-shared": 232,
+        "worktree": 1362
+      },
+      "states": {
+        "complete": 37,
+        "incomplete": 1
+      }
+    },
+    "remove": {
+      "archives": {
+        "bytes": 3574641,
+        "created": 4,
+        "dropped_items": 0,
+        "expired": 0,
+        "with_changes": 3
+      },
+      "dirty_reasons": {
+        "modified": 1,
+        "unbranched-commits": 5,
+        "untracked": 3
+      },
+      "returned_to_pool": 430
+    },
+    "session": null,
+    "slow_inspections": [
+      {
+        "p50_ms": 3677,
+        "project": "prebuilts/studio/buildbenchmarks",
+        "samples": 6
+      },
+      {
+        "p50_ms": 2490,
+        "project": "prebuilts/clang/host/linux-x86",
+        "samples": 2
+      },
+      {
+        "p50_ms": 2482,
+        "project": "tools/external/gradle",
+        "samples": 4
+      },
+      {
+        "p50_ms": 2001,
+        "project": "tools/idea",
+        "samples": 170
+      },
+      {
+        "p50_ms": 1994,
+        "project": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+        "samples": 5
+      },
+      {
+        "p50_ms": 1906,
+        "project": "tools/gpu-profiler/idea",
+        "samples": 160
+      },
+      {
+        "p50_ms": 1778,
+        "project": "prebuilts/python/darwin-x86",
+        "samples": 5
+      },
+      {
+        "p50_ms": 1664,
+        "project": "prebuilts/studio/jdk",
+        "samples": 6
+      },
+      {
+        "p50_ms": 1557,
+        "project": "prebuilts/python/linux-x86",
+        "samples": 5
+      },
+      {
+        "p50_ms": 1548,
+        "project": "prebuilts/studio/evalprojects",
+        "samples": 8
+      }
+    ],
+    "usage_errors": {
+      " [E_USAGE]": 2,
+      "add --no-env-bazelrc [E_USAGE]": 1,
+      "hooks [E_USAGE]": 1,
+      "list --json --source [E_USAGE]": 1,
+      "pool --json [E_USAGE]": 1,
+      "pool status --json [E_USAGE]": 3,
+      "remove --force [E_USAGE]": 1
+    }
+  }
+}

@@ -1,0 +1,2301 @@
+{
+  "format_version": 1,
+  "command": "list",
+  "ok": true,
+  "exit_code": 0,
+  "error": null,
+  "result": {
+    "trees": [
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-13T15:02:19Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [
+          {
+            "path": "build/bazel",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/dexter",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/doclava",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/dokka",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/gflags",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/googletest",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/gradle-profiler",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/intellij-plugins",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/jarjar",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/nanopb-c",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/r8",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/remoteexecution-client",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/tools",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/analytics-library",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/apksig",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/apkzlib",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/assets",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/base",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/buildSrc",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/data-binding",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/emulator",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/gradle",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/gradle-recipes",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/idea",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/profiler",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/repohooks",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/jetbrains/kotlin",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/python/absl-py",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/bazel/linux-x86_64",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/python/darwin-x86",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/python/linux-x86",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/python/windows-x86",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/studio/buildbenchmarks",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/studio/evalprojects",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/studio/intellij-sdk",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/studio/jdk",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/studio/layoutlib",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/adt/idea",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/external/bazelbuild-rules-kotlin",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/external/fat32lib",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/external/gradle",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/gpu-profiler/idea",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/adt_infra_internal",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/google",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/robo",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "external/android/system/logging",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/clang/host/linux-x86",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/studio/sdk/linux",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/studio/sdk/remote",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/ggml-org/llama.cpp",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/google3/aswb",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/intellij/cidr",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/modelcontextprotocol/kotlin-sdk",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/vendor/redhat-developer/lsp4ij",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+            "reason": "repair-failed"
+          },
+          {
+            "path": "tools/studio/google/cloud/testing",
+            "reason": "repair-failed"
+          }
+        ],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-13T15:02:42Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "asfp-cxx-lsp",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-asfp-cxx-lsp",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 37
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/asfp-cxx-lsp",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "incomplete",
+        "submodules": false,
+        "tool_version": "2.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "asfp-cxx-lsp",
+            "project": "tools/adt/idea"
+          },
+          {
+            "branch": "asfp-cxx-lsp",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-15T17:27:49Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-15T17:28:12Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "asfp-cxx-lsp-2",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-asfp-cxx-lsp-2",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/asfp-cxx-lsp-2",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "asfp-symbols",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-21T02:57:47Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T02:59:49Z",
+            "exit_code": 0,
+            "ms": 158,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "asfp-symbols",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-asfp-symbols",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/asfp-symbols",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-05T21:21:22Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "aswb-dap",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-aswb-dap",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "part/aswb-dap-debug",
+            "project": "tools/adt/idea"
+          },
+          {
+            "branch": "part/aswb-dap-debug",
+            "project": "tools/vendor/google"
+          },
+          {
+            "branch": "part/aswb-dap-debug",
+            "project": "tools/vendor/google3/aswb"
+          }
+        ],
+        "created_at": "2026-10-19T18:24:49Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-19T18:25:31Z",
+            "exit_code": 0,
+            "ms": 104,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "aswb-dap-debug",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-aswb-dap-debug",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 35
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/aswb-dap-debug",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.4"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "b-572682282",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-12T17:19:10Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "b-572682282",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-b-572682282",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-11T20:04:04Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [
+          "prebuilts/tools"
+        ],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "cli-dap",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-cli-dap",
+        "project_counts": {
+          "symlink-shared": 20,
+          "worktree": 36
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "test-baseline",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-18T16:13:41Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-18T16:13:48Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "ines-fixes",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-ines-fixes",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/ines-fixes",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.4"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "prefab-imported-fix",
+            "project": "tools/base"
+          }
+        ],
+        "created_at": "2026-10-21T15:42:26Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T15:42:37Z",
+            "exit_code": 0,
+            "ms": 203,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "prefab-arm1",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-prefab-1",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/prefab-arm1",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "prefab-imported-fix-2",
+            "project": "tools/base"
+          }
+        ],
+        "created_at": "2026-10-21T15:42:47Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T15:42:58Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "prefab-arm2",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-prefab-2",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/prefab-arm2",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "cli-dap-base",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-20T23:35:44Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-20T23:36:07Z",
+            "exit_code": 0,
+            "ms": 104,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "restack",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-restack",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 35
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/restack",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "cli-dap-upper",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-21T08:13:49Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T08:14:11Z",
+            "exit_code": 0,
+            "ms": 157,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "restack-upper",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-restack-upper",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/restack-upper",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-12T15:45:52Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "rq-debug",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-rq-debug",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-12T15:46:39Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "rq-diag",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-rq-diag",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-12T11:56:00Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "rq-health",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-rq-health",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "rust-m0",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-12T15:52:31Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "rq-m0",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-rq-m0",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "rust-ninja",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-12T15:44:34Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "rq-ninja",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-rq-ninja",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-12T11:46:19Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "rust-quality",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-rust-quality",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "sdv-apex-env",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-13T13:51:48Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-13T13:52:02Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "sdv-apex-env",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-sdv-apex-env",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 37
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/sdv-apex-env",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-14T23:45:43Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-14T23:45:48Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-feature",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "prebuilts/bazel/linux-x86_64"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-feature",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 37
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-feature",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-14T23:46:01Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-14T23:46:39Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-feature1",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "prebuilts/bazel/linux-x86_64"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-feature1",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 37
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-feature1",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-14T23:49:53Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-14T23:50:29Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-feature2",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "prebuilts/bazel/linux-x86_64"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-feature2",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 37
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-feature2",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-08-12T20:11:05Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "studio-main-soong",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-soong",
+        "project_counts": {
+          "symlink-shared": 23,
+          "worktree": 34
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "asfp-symbols-aragorn",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-21T14:27:16Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T14:27:32Z",
+            "exit_code": 0,
+            "ms": 207,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-aragorn",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-aragorn",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-aragorn",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "cli-dap-next",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-18T16:00:22Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-18T16:00:32Z",
+            "exit_code": 0,
+            "ms": 109,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-elena-b15",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-elena-b15",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-elena-b15",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.4"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "asfp-symbols-work",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-21T14:28:55Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T14:29:10Z",
+            "exit_code": 0,
+            "ms": 226,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-faramir",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-faramir",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-faramir",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "finn-w4",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-15T21:59:38Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-15T21:59:44Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-finn-w4",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-finn-w4",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-finn-w4",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "asfp-symbols-gandalf",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-21T14:29:20Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T14:29:59Z",
+            "exit_code": 0,
+            "ms": 102,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-gandalf",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-gandalf",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-gandalf",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "ines-fixes-done-b13",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-18T16:59:51Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-18T17:00:04Z",
+            "exit_code": 0,
+            "ms": 159,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-ines-tests",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-ines-tests",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-ines-tests",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.4"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "asfp-symbols-legolas",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-21T14:30:16Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-21T14:30:53Z",
+            "exit_code": 0,
+            "ms": 119,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-legolas",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-legolas",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-legolas",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.2.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-17T17:18:57Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-17T17:19:09Z",
+            "exit_code": 0,
+            "ms": 102,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-ninja-spike",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-ninja-spike",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-ninja-spike",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.4"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "b574331107-remove-prefab-package",
+            "project": "tools/base"
+          }
+        ],
+        "created_at": "2026-10-16T23:36:11Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-16T23:36:30Z",
+            "exit_code": 0,
+            "ms": 101,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-prefab-split",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-prefab-split",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-prefab-split",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.4"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-16T23:24:21Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-16T23:24:42Z",
+            "exit_code": 0,
+            "ms": 104,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-prefab-transform",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-prefab-transform",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-prefab-transform",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.4"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "rhea-cli-dap-up",
+            "project": "tools/base"
+          },
+          {
+            "branch": "rhea-cli-dap-up",
+            "project": "tools/adt/idea"
+          },
+          {
+            "branch": "ready-stack-v7",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-15T23:14:36Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-15T23:14:45Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-rhea-2",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-rhea-2",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-rhea-2",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.1"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-15T22:08:01Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-15T22:08:05Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-spike-0005",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/linux",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-spike-0005",
+        "project_counts": {
+          "overlay": 20,
+          "worktree": 36
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-spike-0005",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.1.1"
+      },
+      {
+        "branch": "textmate-editor-bridge",
+        "branch_projects": [
+          "tools/vendor/google"
+        ],
+        "checked_out_branches": [
+          {
+            "branch": "textmate-editor-bridge",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-14T18:25:10Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-14T18:25:26Z",
+            "exit_code": 0,
+            "ms": 103,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "studio-wt-textmate-bridge",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-textmate-bridge",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 37
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/studio-wt-textmate-bridge",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [],
+        "created_at": "2026-10-12T12:26:34Z",
+        "default_modes": {
+          "tools/gpu-profiler/idea": "symlink",
+          "tools/idea": "symlink"
+        },
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 2,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "locked": null,
+        "moving": null,
+        "name": "vsidl",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [],
+        "path": "/usr/local/google/home/jomof/projects/studio-main-vsidl",
+        "project_counts": {
+          "symlink-shared": 21,
+          "worktree": 35
+        },
+        "repo_bridge": null,
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "1.0.0"
+      },
+      {
+        "branch": null,
+        "branch_projects": null,
+        "checked_out_branches": [
+          {
+            "branch": "vsidl-proto-sync",
+            "project": "tools/vendor/google"
+          }
+        ],
+        "created_at": "2026-10-13T16:16:50Z",
+        "default_modes": {},
+        "failed_directives": [],
+        "failed_projects": [],
+        "format_version": 3,
+        "full": false,
+        "full_projects": [],
+        "heavy_jobs": 3,
+        "hooks": {
+          "post-add": {
+            "at": "2026-10-13T16:17:29Z",
+            "exit_code": 0,
+            "ms": 100,
+            "reason": null,
+            "status": "ok"
+          }
+        },
+        "locked": null,
+        "moving": null,
+        "name": "vsidl-proto",
+        "no_overlay": false,
+        "no_reflink": false,
+        "overlays_unmounted": [
+          "external/dokka",
+          "prebuilts/r8",
+          "prebuilts/remoteexecution-client",
+          "prebuilts/tools",
+          "tools/assets",
+          "prebuilts/bazel/linux-x86_64",
+          "prebuilts/python/darwin-x86",
+          "prebuilts/python/linux-x86",
+          "prebuilts/python/windows-x86",
+          "prebuilts/studio/buildbenchmarks",
+          "prebuilts/studio/evalprojects",
+          "prebuilts/studio/intellij-sdk",
+          "prebuilts/studio/jdk",
+          "prebuilts/studio/layoutlib",
+          "tools/external/gradle",
+          "external/android/system/logging",
+          "prebuilts/clang/host/linux-x86",
+          "prebuilts/studio/sdk/remote",
+          "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
+        ],
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-vsidl-proto",
+        "project_counts": {
+          "overlay": 19,
+          "worktree": 37
+        },
+        "repo_bridge": {
+          "manifests_branch": "repo-worktree/vsidl-proto",
+          "manifests_git_dir": "/usr/local/google/home/jomof/projects/studio-main/.repo/manifests.git",
+          "reason": null,
+          "state": "done"
+        },
+        "skipped": 0,
+        "source_layout": "legacy",
+        "source_root": "/usr/local/google/home/jomof/projects/studio-main",
+        "state": "complete",
+        "submodules": false,
+        "tool_version": "2.0.0"
+      }
+    ]
+  }
+}

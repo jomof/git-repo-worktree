@@ -1,0 +1,2423 @@
+[
+  {
+    "args": [
+      "add",
+      "--json",
+      "--name"
+    ],
+    "command": "add",
+    "commit": "b0a0d532cedd",
+    "environment": {
+      "arch": "x86_64",
+      "cpus": 96,
+      "git": "git version 2.56.0.212.g129ede20d9-goog",
+      "kernel": "7.1.6-1rodete1-amd64",
+      "os": "linux",
+      "overlay_unavailable": null,
+      "repo": "2.69",
+      "source_fs": "ext4",
+      "tree_fs": "ext4"
+    },
+    "error": null,
+    "estimate_cache_hits": 55,
+    "exit_code": 0,
+    "hooks": [
+      {
+        "event": "post-add",
+        "exit_code": 0,
+        "ms": 456,
+        "status": "ok"
+      }
+    ],
+    "ms": 372034,
+    "notes": [
+      {
+        "note": "overlay preflight changed: source checkout is not clean",
+        "project": "prebuilts/studio/sdk/linux"
+      }
+    ],
+    "phases": {
+      "directives": 15,
+      "finalize": 14,
+      "hook-post-add": 474,
+      "projects": 368873,
+      "projects-idle-slot": 20,
+      "projects-journal-sync": 65,
+      "projects-meta-write": 30,
+      "repo-bridge": 639,
+      "snapshot": 1123,
+      "snapshot-estimates": 11,
+      "snapshot-git-dirs": 113,
+      "snapshot-preflight": 4,
+      "snapshot-repo-manifest": 957,
+      "submodules": 0,
+      "total": 371869
+    },
+    "pool_maintenance": "started",
+    "projects": [
+      {
+        "bytes": 33586,
+        "mode": "worktree",
+        "ms": 177,
+        "path": "build/bazel",
+        "pooled": false,
+        "queue_ms": 638,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 666207113,
+        "mode": "worktree",
+        "ms": 2336,
+        "path": "external/dexter",
+        "pooled": false,
+        "queue_ms": 1352,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 6187907,
+        "mode": "worktree",
+        "ms": 504,
+        "path": "external/doclava",
+        "pooled": false,
+        "queue_ms": 226,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 2133099,
+        "mode": "overlay",
+        "ms": 281,
+        "path": "external/dokka",
+        "pooled": false,
+        "queue_ms": 304,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 418021,
+        "mode": "worktree",
+        "ms": 282,
+        "path": "external/gflags",
+        "pooled": false,
+        "queue_ms": 492,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 3970320,
+        "mode": "worktree",
+        "ms": 365,
+        "path": "external/googletest",
+        "pooled": false,
+        "queue_ms": 259,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1346321,
+        "mode": "worktree",
+        "ms": 448,
+        "path": "external/gradle-profiler",
+        "pooled": false,
+        "queue_ms": 363,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 312123366,
+        "mode": "worktree",
+        "ms": 4983,
+        "path": "external/intellij-plugins",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 2284300,
+        "mode": "worktree",
+        "ms": 268,
+        "path": "external/jarjar",
+        "pooled": false,
+        "queue_ms": 295,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1211236,
+        "mode": "worktree",
+        "ms": 355,
+        "path": "external/nanopb-c",
+        "pooled": false,
+        "queue_ms": 390,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 83531845,
+        "mode": "overlay",
+        "ms": 256,
+        "path": "prebuilts/r8",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1240465910,
+        "mode": "overlay",
+        "ms": 294,
+        "path": "prebuilts/remoteexecution-client",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 24583940407,
+        "mode": "overlay",
+        "ms": 1082,
+        "path": "prebuilts/tools",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1365666,
+        "mode": "worktree",
+        "ms": 318,
+        "path": "tools/analytics-library",
+        "pooled": false,
+        "queue_ms": 346,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 7598955,
+        "mode": "worktree",
+        "ms": 457,
+        "path": "tools/apksig",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 8480987,
+        "mode": "worktree",
+        "ms": 402,
+        "path": "tools/apkzlib",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 556415,
+        "mode": "overlay",
+        "ms": 253,
+        "path": "tools/assets",
+        "pooled": false,
+        "queue_ms": 453,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 926857278,
+        "mode": "worktree",
+        "ms": 1350,
+        "path": "tools/base",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 256203,
+        "mode": "worktree",
+        "ms": 243,
+        "path": "tools/buildSrc",
+        "pooled": false,
+        "queue_ms": 564,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 15500189,
+        "mode": "worktree",
+        "ms": 828,
+        "path": "tools/data-binding",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 288628202,
+        "mode": "worktree",
+        "ms": 2118,
+        "path": "tools/emulator",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 111300,
+        "mode": "worktree",
+        "ms": 180,
+        "path": "tools/gradle",
+        "pooled": false,
+        "queue_ms": 623,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 3057851,
+        "mode": "worktree",
+        "ms": 618,
+        "path": "tools/gradle-recipes",
+        "pooled": false,
+        "queue_ms": 289,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 981878919,
+        "mode": "worktree",
+        "ms": 368837,
+        "path": "tools/idea",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 230588947,
+        "mode": "worktree",
+        "ms": 1294,
+        "path": "tools/profiler",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 814290,
+        "mode": "worktree",
+        "ms": 216,
+        "path": "tools/repohooks",
+        "pooled": false,
+        "queue_ms": 407,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 304908038,
+        "mode": "worktree",
+        "ms": 3601,
+        "path": "external/jetbrains/kotlin",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 1088808,
+        "mode": "worktree",
+        "ms": 260,
+        "path": "external/python/absl-py",
+        "pooled": false,
+        "queue_ms": 406,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 6565235,
+        "mode": "overlay",
+        "ms": 359,
+        "path": "prebuilts/bazel/linux-x86_64",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 41047693,
+        "mode": "overlay",
+        "ms": 290,
+        "path": "prebuilts/python/darwin-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 35695828,
+        "mode": "overlay",
+        "ms": 286,
+        "path": "prebuilts/python/linux-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 21750123,
+        "mode": "overlay",
+        "ms": 301,
+        "path": "prebuilts/python/windows-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 4060744298,
+        "mode": "overlay",
+        "ms": 287,
+        "path": "prebuilts/studio/buildbenchmarks",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 429606851,
+        "mode": "overlay",
+        "ms": 405,
+        "path": "prebuilts/studio/evalprojects",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 13513939341,
+        "mode": "overlay",
+        "ms": 453,
+        "path": "prebuilts/studio/intellij-sdk",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 8124389499,
+        "mode": "overlay",
+        "ms": 491,
+        "path": "prebuilts/studio/jdk",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 400858767,
+        "mode": "overlay",
+        "ms": 433,
+        "path": "prebuilts/studio/layoutlib",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1171866749,
+        "mode": "worktree",
+        "ms": 3072,
+        "path": "tools/adt/idea",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 655881,
+        "mode": "worktree",
+        "ms": 351,
+        "path": "tools/external/bazelbuild-rules-kotlin",
+        "pooled": false,
+        "queue_ms": 446,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 252669,
+        "mode": "worktree",
+        "ms": 196,
+        "path": "tools/external/fat32lib",
+        "pooled": false,
+        "queue_ms": 606,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 5528357728,
+        "mode": "overlay",
+        "ms": 329,
+        "path": "tools/external/gradle",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 272175,
+        "mode": "worktree",
+        "ms": 263,
+        "path": "tools/vendor/adt_infra_internal",
+        "pooled": false,
+        "queue_ms": 528,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 433871342,
+        "mode": "worktree",
+        "ms": 526,
+        "path": "tools/vendor/google",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 531113,
+        "mode": "worktree",
+        "ms": 312,
+        "path": "tools/vendor/robo",
+        "pooled": false,
+        "queue_ms": 467,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1694012,
+        "mode": "overlay",
+        "ms": 319,
+        "path": "external/android/system/logging",
+        "pooled": false,
+        "queue_ms": 330,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 3892837174,
+        "mode": "overlay",
+        "ms": 345,
+        "path": "prebuilts/clang/host/linux-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 10391003569,
+        "mode": "worktree",
+        "ms": 4002,
+        "path": "prebuilts/studio/sdk/linux",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 5849240773,
+        "mode": "overlay",
+        "ms": 223,
+        "path": "prebuilts/studio/sdk/remote",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 131250802,
+        "mode": "worktree",
+        "ms": 1141,
+        "path": "tools/vendor/ggml-org/llama.cpp",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 8846677,
+        "mode": "worktree",
+        "ms": 827,
+        "path": "tools/vendor/google3/aswb",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 198047145,
+        "mode": "worktree",
+        "ms": 2151,
+        "path": "tools/vendor/intellij/cidr",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 3259212,
+        "mode": "worktree",
+        "ms": 560,
+        "path": "tools/vendor/modelcontextprotocol/kotlin-sdk",
+        "pooled": false,
+        "queue_ms": 287,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 37842797,
+        "mode": "worktree",
+        "ms": 882,
+        "path": "tools/vendor/redhat-developer/lsp4ij",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 196297156,
+        "mode": "overlay",
+        "ms": 388,
+        "path": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 2888501,
+        "mode": "worktree",
+        "ms": 454,
+        "path": "tools/studio/google/cloud/testing",
+        "pooled": false,
+        "queue_ms": 294,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      }
+    ],
+    "reflink": "reflink unsupported for filesystem pair",
+    "repo_bridge": "done",
+    "skipped": 0,
+    "state": "complete",
+    "system_end": {
+      "loadavg": [
+        86.22,
+        85.68,
+        79.3
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 16.47,
+            "avg300": 6.64,
+            "avg60": 8.54
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 0.61,
+            "avg300": 1.44,
+            "avg60": 1.33
+          },
+          "some": {
+            "avg10": 1.92,
+            "avg300": 2.43,
+            "avg60": 2.34
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          }
+        }
+      }
+    },
+    "system_start": {
+      "loadavg": [
+        97.62,
+        86.2,
+        76.14
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 0.78,
+            "avg300": 4.88,
+            "avg60": 2.08
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 0.55,
+            "avg300": 0.96,
+            "avg60": 0.42
+          },
+          "some": {
+            "avg10": 0.75,
+            "avg300": 1.48,
+            "avg60": 0.69
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.06,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 0.0,
+            "avg300": 0.06,
+            "avg60": 0.0
+          }
+        }
+      }
+    },
+    "tool_version": "2.2.1",
+    "tree": "feedback-probe",
+    "ts": "2026-10-21T15:32:57Z",
+    "v": 1,
+    "via_git": true
+  },
+  {
+    "archive_bytes": 0,
+    "archive_dropped": 0,
+    "archive_id": "feedback-probe-20261021T153319Z",
+    "archive_projects_with_changes": 0,
+    "archives_expired": 0,
+    "args": [
+      "remove",
+      "--json"
+    ],
+    "command": "remove",
+    "commit": "b0a0d532cedd",
+    "deleting_in_background": true,
+    "error": null,
+    "exit_code": 0,
+    "force": 0,
+    "hooks": [
+      {
+        "event": "pre-remove",
+        "exit_code": 0,
+        "ms": 54,
+        "status": "ok"
+      }
+    ],
+    "lingering_processes": 0,
+    "ms": 10936,
+    "phases": {
+      "archive": 6762,
+      "delete": 0,
+      "hook-pre-remove": 54,
+      "pool-return": 3714,
+      "prune": 33,
+      "unmount": 197,
+      "worktree-remove": 41
+    },
+    "pool_maintenance": "started",
+    "projects": 55,
+    "pruned_git_dirs": 19,
+    "returned_to_pool": 8,
+    "system_end": {
+      "loadavg": [
+        81.29,
+        84.7,
+        79.22
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 4.32,
+            "avg300": 6.68,
+            "avg60": 7.55
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 1.37,
+            "avg300": 1.44,
+            "avg60": 1.38
+          },
+          "some": {
+            "avg10": 2.2,
+            "avg300": 2.46,
+            "avg60": 2.46
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          }
+        }
+      }
+    },
+    "system_start": {
+      "loadavg": [
+        85.27,
+        85.53,
+        79.38
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 6.38,
+            "avg300": 6.82,
+            "avg60": 8.48
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 1.53,
+            "avg300": 1.44,
+            "avg60": 1.36
+          },
+          "some": {
+            "avg10": 3.25,
+            "avg300": 2.47,
+            "avg60": 2.54
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          }
+        }
+      }
+    },
+    "tool_version": "2.2.1",
+    "tree": "feedback-probe",
+    "ts": "2026-10-21T15:33:30Z",
+    "v": 1,
+    "via_git": true
+  },
+  {
+    "args": [
+      "add",
+      "--json",
+      "--name"
+    ],
+    "command": "add",
+    "commit": "b0a0d532cedd",
+    "environment": {
+      "arch": "x86_64",
+      "cpus": 96,
+      "git": "git version 2.56.0.212.g129ede20d9-goog",
+      "kernel": "7.1.6-1rodete1-amd64",
+      "os": "linux",
+      "overlay_unavailable": null,
+      "repo": "2.69",
+      "source_fs": "ext4",
+      "tree_fs": "ext4"
+    },
+    "error": null,
+    "estimate_cache_hits": 55,
+    "exit_code": 0,
+    "hooks": [
+      {
+        "event": "post-add",
+        "exit_code": 0,
+        "ms": 203,
+        "status": "ok"
+      }
+    ],
+    "ms": 11247,
+    "notes": [
+      {
+        "note": "overlay preflight changed: source checkout is not clean",
+        "project": "prebuilts/studio/sdk/linux"
+      }
+    ],
+    "phases": {
+      "directives": 7,
+      "finalize": 5,
+      "hook-post-add": 211,
+      "projects": 8505,
+      "projects-idle-slot": 11,
+      "projects-journal-sync": 37,
+      "projects-meta-write": 17,
+      "repo-bridge": 667,
+      "snapshot": 1313,
+      "snapshot-estimates": 5,
+      "snapshot-git-dirs": 193,
+      "snapshot-preflight": 10,
+      "snapshot-repo-manifest": 1049,
+      "submodules": 0,
+      "total": 10927
+    },
+    "pool_maintenance": "started",
+    "projects": [
+      {
+        "bytes": 33586,
+        "mode": "worktree",
+        "ms": 126,
+        "path": "build/bazel",
+        "pooled": false,
+        "queue_ms": 503,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 666207113,
+        "mode": "worktree",
+        "ms": 2646,
+        "path": "external/dexter",
+        "pooled": false,
+        "queue_ms": 1676,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 6187907,
+        "mode": "worktree",
+        "ms": 362,
+        "path": "external/doclava",
+        "pooled": false,
+        "queue_ms": 208,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 2133099,
+        "mode": "overlay",
+        "ms": 219,
+        "path": "external/dokka",
+        "pooled": false,
+        "queue_ms": 262,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 418021,
+        "mode": "worktree",
+        "ms": 169,
+        "path": "external/gflags",
+        "pooled": false,
+        "queue_ms": 467,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 3970320,
+        "mode": "worktree",
+        "ms": 224,
+        "path": "external/googletest",
+        "pooled": false,
+        "queue_ms": 242,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1346321,
+        "mode": "worktree",
+        "ms": 283,
+        "path": "external/gradle-profiler",
+        "pooled": false,
+        "queue_ms": 294,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 312123366,
+        "mode": "worktree",
+        "ms": 1648,
+        "path": "external/intellij-plugins",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 2284300,
+        "mode": "worktree",
+        "ms": 229,
+        "path": "external/jarjar",
+        "pooled": false,
+        "queue_ms": 262,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1211236,
+        "mode": "worktree",
+        "ms": 218,
+        "path": "external/nanopb-c",
+        "pooled": false,
+        "queue_ms": 321,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 83531845,
+        "mode": "overlay",
+        "ms": 255,
+        "path": "prebuilts/r8",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1240465910,
+        "mode": "overlay",
+        "ms": 282,
+        "path": "prebuilts/remoteexecution-client",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 24583940407,
+        "mode": "overlay",
+        "ms": 783,
+        "path": "prebuilts/tools",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1365666,
+        "mode": "worktree",
+        "ms": 260,
+        "path": "tools/analytics-library",
+        "pooled": false,
+        "queue_ms": 283,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 7598955,
+        "mode": "worktree",
+        "ms": 333,
+        "path": "tools/apksig",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 8480987,
+        "mode": "worktree",
+        "ms": 317,
+        "path": "tools/apkzlib",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 556415,
+        "mode": "overlay",
+        "ms": 151,
+        "path": "tools/assets",
+        "pooled": false,
+        "queue_ms": 421,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 926857278,
+        "mode": "worktree",
+        "ms": 1674,
+        "path": "tools/base",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 256203,
+        "mode": "worktree",
+        "ms": 165,
+        "path": "tools/buildSrc",
+        "pooled": false,
+        "queue_ms": 484,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 15500189,
+        "mode": "worktree",
+        "ms": 694,
+        "path": "tools/data-binding",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 288628202,
+        "mode": "worktree",
+        "ms": 2231,
+        "path": "tools/emulator",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 111300,
+        "mode": "worktree",
+        "ms": 118,
+        "path": "tools/gradle",
+        "pooled": false,
+        "queue_ms": 502,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 3057851,
+        "mode": "worktree",
+        "ms": 478,
+        "path": "tools/gradle-recipes",
+        "pooled": false,
+        "queue_ms": 258,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 981878919,
+        "mode": "worktree",
+        "ms": 8495,
+        "path": "tools/idea",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 230588947,
+        "mode": "worktree",
+        "ms": 1042,
+        "path": "tools/profiler",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 814290,
+        "mode": "worktree",
+        "ms": 161,
+        "path": "tools/repohooks",
+        "pooled": false,
+        "queue_ms": 361,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 304908038,
+        "mode": "worktree",
+        "ms": 5710,
+        "path": "external/jetbrains/kotlin",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 1088808,
+        "mode": "worktree",
+        "ms": 192,
+        "path": "external/python/absl-py",
+        "pooled": false,
+        "queue_ms": 339,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 6565235,
+        "mode": "overlay",
+        "ms": 261,
+        "path": "prebuilts/bazel/linux-x86_64",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 41047693,
+        "mode": "overlay",
+        "ms": 256,
+        "path": "prebuilts/python/darwin-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 35695828,
+        "mode": "overlay",
+        "ms": 254,
+        "path": "prebuilts/python/linux-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 21750123,
+        "mode": "overlay",
+        "ms": 259,
+        "path": "prebuilts/python/windows-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 4060744298,
+        "mode": "overlay",
+        "ms": 205,
+        "path": "prebuilts/studio/buildbenchmarks",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 429606851,
+        "mode": "overlay",
+        "ms": 261,
+        "path": "prebuilts/studio/evalprojects",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 13513939341,
+        "mode": "overlay",
+        "ms": 411,
+        "path": "prebuilts/studio/intellij-sdk",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 8124389499,
+        "mode": "overlay",
+        "ms": 502,
+        "path": "prebuilts/studio/jdk",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 400858767,
+        "mode": "overlay",
+        "ms": 361,
+        "path": "prebuilts/studio/layoutlib",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1171866749,
+        "mode": "worktree",
+        "ms": 5423,
+        "path": "tools/adt/idea",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 655881,
+        "mode": "worktree",
+        "ms": 208,
+        "path": "tools/external/bazelbuild-rules-kotlin",
+        "pooled": false,
+        "queue_ms": 412,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 252669,
+        "mode": "worktree",
+        "ms": 146,
+        "path": "tools/external/fat32lib",
+        "pooled": false,
+        "queue_ms": 492,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 5528357728,
+        "mode": "overlay",
+        "ms": 235,
+        "path": "tools/external/gradle",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 272175,
+        "mode": "worktree",
+        "ms": 185,
+        "path": "tools/vendor/adt_infra_internal",
+        "pooled": false,
+        "queue_ms": 470,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 433871342,
+        "mode": "worktree",
+        "ms": 2802,
+        "path": "tools/vendor/google",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 531113,
+        "mode": "worktree",
+        "ms": 184,
+        "path": "tools/vendor/robo",
+        "pooled": false,
+        "queue_ms": 446,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1694012,
+        "mode": "overlay",
+        "ms": 176,
+        "path": "external/android/system/logging",
+        "pooled": false,
+        "queue_ms": 267,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 3892837174,
+        "mode": "overlay",
+        "ms": 421,
+        "path": "prebuilts/clang/host/linux-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 10391003569,
+        "mode": "worktree",
+        "ms": 5019,
+        "path": "prebuilts/studio/sdk/linux",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 5849240773,
+        "mode": "overlay",
+        "ms": 293,
+        "path": "prebuilts/studio/sdk/remote",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 131250802,
+        "mode": "worktree",
+        "ms": 947,
+        "path": "tools/vendor/ggml-org/llama.cpp",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 8846677,
+        "mode": "worktree",
+        "ms": 718,
+        "path": "tools/vendor/google3/aswb",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 198047145,
+        "mode": "worktree",
+        "ms": 1259,
+        "path": "tools/vendor/intellij/cidr",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 3259212,
+        "mode": "worktree",
+        "ms": 376,
+        "path": "tools/vendor/modelcontextprotocol/kotlin-sdk",
+        "pooled": false,
+        "queue_ms": 257,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 37842797,
+        "mode": "worktree",
+        "ms": 660,
+        "path": "tools/vendor/redhat-developer/lsp4ij",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 196297156,
+        "mode": "overlay",
+        "ms": 468,
+        "path": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 2888501,
+        "mode": "worktree",
+        "ms": 239,
+        "path": "tools/studio/google/cloud/testing",
+        "pooled": false,
+        "queue_ms": 261,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      }
+    ],
+    "reflink": "reflink unsupported for filesystem pair",
+    "repo_bridge": "done",
+    "skipped": 0,
+    "state": "complete",
+    "system_end": {
+      "loadavg": [
+        126.97,
+        99.14,
+        87.55
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 25.27,
+            "avg300": 9.06,
+            "avg60": 16.68
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 1.04,
+            "avg300": 1.52,
+            "avg60": 1.24
+          },
+          "some": {
+            "avg10": 4.1,
+            "avg300": 3.22,
+            "avg60": 3.81
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.01
+          },
+          "some": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.01
+          }
+        }
+      }
+    },
+    "system_start": {
+      "loadavg": [
+        125.58,
+        97.89,
+        87.02
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 18.91,
+            "avg300": 8.16,
+            "avg60": 13.76
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 0.89,
+            "avg300": 1.54,
+            "avg60": 1.26
+          },
+          "some": {
+            "avg10": 3.71,
+            "avg300": 3.16,
+            "avg60": 3.63
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.01,
+            "avg300": 0.0,
+            "avg60": 0.02
+          },
+          "some": {
+            "avg10": 0.01,
+            "avg300": 0.0,
+            "avg60": 0.02
+          }
+        }
+      }
+    },
+    "tool_version": "2.2.1",
+    "tree": "prefab-arm1",
+    "ts": "2026-10-21T15:42:37Z",
+    "v": 1,
+    "via_git": true
+  },
+  {
+    "args": [
+      "add",
+      "--json",
+      "--name"
+    ],
+    "command": "add",
+    "commit": "b0a0d532cedd",
+    "environment": {
+      "arch": "x86_64",
+      "cpus": 96,
+      "git": "git version 2.56.0.212.g129ede20d9-goog",
+      "kernel": "7.1.6-1rodete1-amd64",
+      "os": "linux",
+      "overlay_unavailable": null,
+      "repo": "2.69",
+      "source_fs": "ext4",
+      "tree_fs": "ext4"
+    },
+    "error": null,
+    "estimate_cache_hits": 55,
+    "exit_code": 0,
+    "hooks": [
+      {
+        "event": "post-add",
+        "exit_code": 0,
+        "ms": 100,
+        "status": "ok"
+      }
+    ],
+    "ms": 11529,
+    "notes": [
+      {
+        "note": "overlay preflight changed: source checkout is not clean",
+        "project": "prebuilts/studio/sdk/linux"
+      }
+    ],
+    "phases": {
+      "directives": 5,
+      "finalize": 7,
+      "hook-post-add": 112,
+      "projects": 7774,
+      "projects-idle-slot": 35,
+      "projects-journal-sync": 26,
+      "projects-meta-write": 13,
+      "repo-bridge": 2019,
+      "snapshot": 1217,
+      "snapshot-estimates": 2,
+      "snapshot-git-dirs": 38,
+      "snapshot-preflight": 9,
+      "snapshot-repo-manifest": 1140,
+      "submodules": 0,
+      "total": 11367
+    },
+    "pool_maintenance": "started",
+    "projects": [
+      {
+        "bytes": 33586,
+        "mode": "worktree",
+        "ms": 67,
+        "path": "build/bazel",
+        "pooled": false,
+        "queue_ms": 353,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 666207113,
+        "mode": "worktree",
+        "ms": 2019,
+        "path": "external/dexter",
+        "pooled": false,
+        "queue_ms": 331,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 6187907,
+        "mode": "worktree",
+        "ms": 226,
+        "path": "external/doclava",
+        "pooled": false,
+        "queue_ms": 162,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 2133099,
+        "mode": "overlay",
+        "ms": 158,
+        "path": "external/dokka",
+        "pooled": false,
+        "queue_ms": 212,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 418021,
+        "mode": "worktree",
+        "ms": 118,
+        "path": "external/gflags",
+        "pooled": false,
+        "queue_ms": 331,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 3970320,
+        "mode": "worktree",
+        "ms": 150,
+        "path": "external/googletest",
+        "pooled": false,
+        "queue_ms": 165,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1346321,
+        "mode": "worktree",
+        "ms": 255,
+        "path": "external/gradle-profiler",
+        "pooled": false,
+        "queue_ms": 223,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 312123366,
+        "mode": "worktree",
+        "ms": 423,
+        "path": "external/intellij-plugins",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 2284300,
+        "mode": "worktree",
+        "ms": 141,
+        "path": "external/jarjar",
+        "pooled": false,
+        "queue_ms": 210,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1211236,
+        "mode": "worktree",
+        "ms": 170,
+        "path": "external/nanopb-c",
+        "pooled": false,
+        "queue_ms": 226,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 83531845,
+        "mode": "overlay",
+        "ms": 163,
+        "path": "prebuilts/r8",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1240465910,
+        "mode": "overlay",
+        "ms": 202,
+        "path": "prebuilts/remoteexecution-client",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 24583940407,
+        "mode": "overlay",
+        "ms": 635,
+        "path": "prebuilts/tools",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1365666,
+        "mode": "worktree",
+        "ms": 167,
+        "path": "tools/analytics-library",
+        "pooled": false,
+        "queue_ms": 223,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 7598955,
+        "mode": "worktree",
+        "ms": 223,
+        "path": "tools/apksig",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 8480987,
+        "mode": "worktree",
+        "ms": 235,
+        "path": "tools/apkzlib",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 556415,
+        "mode": "overlay",
+        "ms": 137,
+        "path": "tools/assets",
+        "pooled": false,
+        "queue_ms": 271,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 926857278,
+        "mode": "worktree",
+        "ms": 323,
+        "path": "tools/base",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 256203,
+        "mode": "worktree",
+        "ms": 86,
+        "path": "tools/buildSrc",
+        "pooled": false,
+        "queue_ms": 331,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 15500189,
+        "mode": "worktree",
+        "ms": 568,
+        "path": "tools/data-binding",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 288628202,
+        "mode": "worktree",
+        "ms": 1856,
+        "path": "tools/emulator",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 111300,
+        "mode": "worktree",
+        "ms": 56,
+        "path": "tools/gradle",
+        "pooled": false,
+        "queue_ms": 347,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 3057851,
+        "mode": "worktree",
+        "ms": 389,
+        "path": "tools/gradle-recipes",
+        "pooled": false,
+        "queue_ms": 173,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 981878919,
+        "mode": "worktree",
+        "ms": 7766,
+        "path": "tools/idea",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 230588947,
+        "mode": "worktree",
+        "ms": 959,
+        "path": "tools/profiler",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 814290,
+        "mode": "worktree",
+        "ms": 97,
+        "path": "tools/repohooks",
+        "pooled": false,
+        "queue_ms": 256,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 304908038,
+        "mode": "worktree",
+        "ms": 835,
+        "path": "external/jetbrains/kotlin",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 1088808,
+        "mode": "worktree",
+        "ms": 160,
+        "path": "external/python/absl-py",
+        "pooled": false,
+        "queue_ms": 238,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 6565235,
+        "mode": "overlay",
+        "ms": 158,
+        "path": "prebuilts/bazel/linux-x86_64",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 41047693,
+        "mode": "overlay",
+        "ms": 207,
+        "path": "prebuilts/python/darwin-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 35695828,
+        "mode": "overlay",
+        "ms": 220,
+        "path": "prebuilts/python/linux-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 21750123,
+        "mode": "overlay",
+        "ms": 170,
+        "path": "prebuilts/python/windows-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 4060744298,
+        "mode": "overlay",
+        "ms": 213,
+        "path": "prebuilts/studio/buildbenchmarks",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 429606851,
+        "mode": "overlay",
+        "ms": 222,
+        "path": "prebuilts/studio/evalprojects",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 13513939341,
+        "mode": "overlay",
+        "ms": 387,
+        "path": "prebuilts/studio/intellij-sdk",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 8124389499,
+        "mode": "overlay",
+        "ms": 277,
+        "path": "prebuilts/studio/jdk",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 400858767,
+        "mode": "overlay",
+        "ms": 318,
+        "path": "prebuilts/studio/layoutlib",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 1171866749,
+        "mode": "worktree",
+        "ms": 516,
+        "path": "tools/adt/idea",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 655881,
+        "mode": "worktree",
+        "ms": 125,
+        "path": "tools/external/bazelbuild-rules-kotlin",
+        "pooled": false,
+        "queue_ms": 267,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 252669,
+        "mode": "worktree",
+        "ms": 79,
+        "path": "tools/external/fat32lib",
+        "pooled": false,
+        "queue_ms": 342,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 5528357728,
+        "mode": "overlay",
+        "ms": 168,
+        "path": "tools/external/gradle",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 272175,
+        "mode": "worktree",
+        "ms": 121,
+        "path": "tools/vendor/adt_infra_internal",
+        "pooled": false,
+        "queue_ms": 331,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 433871342,
+        "mode": "worktree",
+        "ms": 266,
+        "path": "tools/vendor/google",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 531113,
+        "mode": "worktree",
+        "ms": 153,
+        "path": "tools/vendor/robo",
+        "pooled": false,
+        "queue_ms": 277,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 1694012,
+        "mode": "overlay",
+        "ms": 113,
+        "path": "external/android/system/logging",
+        "pooled": false,
+        "queue_ms": 213,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 3892837174,
+        "mode": "overlay",
+        "ms": 255,
+        "path": "prebuilts/clang/host/linux-x86",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 10391003569,
+        "mode": "worktree",
+        "ms": 2930,
+        "path": "prebuilts/studio/sdk/linux",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 5849240773,
+        "mode": "overlay",
+        "ms": 211,
+        "path": "prebuilts/studio/sdk/remote",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 131250802,
+        "mode": "worktree",
+        "ms": 785,
+        "path": "tools/vendor/ggml-org/llama.cpp",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 8846677,
+        "mode": "worktree",
+        "ms": 455,
+        "path": "tools/vendor/google3/aswb",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 198047145,
+        "mode": "worktree",
+        "ms": 346,
+        "path": "tools/vendor/intellij/cidr",
+        "pooled": true,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "pool"
+      },
+      {
+        "bytes": 3259212,
+        "mode": "worktree",
+        "ms": 172,
+        "path": "tools/vendor/modelcontextprotocol/kotlin-sdk",
+        "pooled": false,
+        "queue_ms": 169,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 37842797,
+        "mode": "worktree",
+        "ms": 481,
+        "path": "tools/vendor/redhat-developer/lsp4ij",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      },
+      {
+        "bytes": 196297156,
+        "mode": "overlay",
+        "ms": 268,
+        "path": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+        "pooled": false,
+        "queue_ms": 0,
+        "reason": null,
+        "state": "done",
+        "strategy": "fuse-overlayfs"
+      },
+      {
+        "bytes": 2888501,
+        "mode": "worktree",
+        "ms": 183,
+        "path": "tools/studio/google/cloud/testing",
+        "pooled": false,
+        "queue_ms": 203,
+        "reason": null,
+        "state": "done",
+        "strategy": "checkout"
+      }
+    ],
+    "reflink": "reflink unsupported for filesystem pair",
+    "repo_bridge": "done",
+    "skipped": 0,
+    "state": "complete",
+    "system_end": {
+      "loadavg": [
+        149.91,
+        106.04,
+        90.06
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 23.1,
+            "avg300": 10.07,
+            "avg60": 18.77
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 0.46,
+            "avg300": 1.45,
+            "avg60": 1.0
+          },
+          "some": {
+            "avg10": 3.38,
+            "avg300": 3.31,
+            "avg60": 3.98
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.14,
+            "avg300": 0.0,
+            "avg60": 0.04
+          },
+          "some": {
+            "avg10": 0.14,
+            "avg300": 0.0,
+            "avg60": 0.04
+          }
+        }
+      }
+    },
+    "system_start": {
+      "loadavg": [
+        128.82,
+        100.52,
+        88.12
+      ],
+      "pressure": {
+        "cpu": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.0
+          },
+          "some": {
+            "avg10": 21.36,
+            "avg300": 9.52,
+            "avg60": 17.52
+          }
+        },
+        "io": {
+          "full": {
+            "avg10": 0.76,
+            "avg300": 1.49,
+            "avg60": 1.14
+          },
+          "some": {
+            "avg10": 4.91,
+            "avg300": 3.33,
+            "avg60": 4.2
+          }
+        },
+        "memory": {
+          "full": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.01
+          },
+          "some": {
+            "avg10": 0.0,
+            "avg300": 0.0,
+            "avg60": 0.01
+          }
+        }
+      }
+    },
+    "tool_version": "2.2.1",
+    "tree": "prefab-arm2",
+    "ts": "2026-10-21T15:42:59Z",
+    "v": 1,
+    "via_git": true
+  }
+]

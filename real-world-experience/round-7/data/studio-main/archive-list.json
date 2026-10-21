@@ -1,0 +1,67 @@
+{
+  "format_version": 1,
+  "command": "archive list",
+  "ok": true,
+  "exit_code": 0,
+  "error": null,
+  "result": {
+    "archives": [
+      {
+        "archived_at": "2026-10-21T15:33:26Z",
+        "bytes": 0,
+        "dropped": [],
+        "expires_at": "2026-11-20T15:33:26Z",
+        "id": "feedback-probe-20261021T153319Z",
+        "keep": false,
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-feedback-probe",
+        "projects": 55,
+        "projects_with_changes": 0,
+        "reason": "remove",
+        "tree": "feedback-probe"
+      },
+      {
+        "archived_at": "2026-10-21T06:46:49Z",
+        "bytes": 1289774,
+        "dropped": [],
+        "expires_at": "2026-11-20T06:46:49Z",
+        "id": "spike-lovell-20261021T064623Z",
+        "keep": false,
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-lovell",
+        "projects": 55,
+        "projects_with_changes": 1,
+        "reason": "remove",
+        "tree": "spike-lovell"
+      },
+      {
+        "archived_at": "2026-10-21T06:44:39Z",
+        "bytes": 2192183,
+        "dropped": [],
+        "expires_at": "2026-11-20T06:44:39Z",
+        "id": "spike-kranz-20261021T064413Z",
+        "keep": false,
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-kranz",
+        "projects": 55,
+        "projects_with_changes": 4,
+        "reason": "remove",
+        "tree": "spike-kranz"
+      },
+      {
+        "archived_at": "2026-10-21T05:27:38Z",
+        "bytes": 92684,
+        "dropped": [],
+        "expires_at": "2026-11-20T05:27:38Z",
+        "id": "asfp-binlaunch-20261021T052723Z",
+        "keep": false,
+        "path": "/usr/local/google/home/jomof/projects/studio-wt-asfp-binlaunch",
+        "projects": 55,
+        "projects_with_changes": 1,
+        "reason": "remove",
+        "tree": "asfp-binlaunch"
+      }
+    ],
+    "policy": {
+      "budget_bytes": 2147483648,
+      "expire_secs": 2592000
+    }
+  }
+}

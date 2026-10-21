@@ -1,0 +1,262 @@
+=== Filesystem usage (studio-main) ===
+Filesystem                 Size  Used Avail Use% Mounted on
+/dev/glinux_20230721/root  7.5T  6.8T  348G  96% /
+
+
+=== Live fsmonitor--daemon processes (10 total) ===
+ 138033    7880 Ssl     01:23:16 00:00:06 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+ 179353    7880 Ssl     01:21:39 00:00:07 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+ 190569    7880 Ssl     01:21:17 00:00:08 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+ 208660    7880 Ssl     01:20:22 00:00:08 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+ 348733    7880 SNsl    01:13:41 00:00:08 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+1613141    7880 Ssl  14-11:34:31 00:09:52 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+1927772    7880 Ssl        07:48 00:00:04 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+3316998    7880 Ssl     02:07:45 00:00:07 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+3499576    7880 Ssl   6-16:04:36 00:04:34 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+3638579    7880 Ssl   6-16:00:43 00:04:14 futex_do_wait                /usr/lib/git-core/git fsmonitor--daemon run --detach --ipc-threads=8
+
+Sanitized /proc/<pid>/environ & cwd details:
+{
+  "pid": 138033,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": true,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/-filling-1792564571836697264-2005375-9",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/checkout/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261021T142715.920036Z-Ha3aa2c01-P000209df/20261021T142722.433229Z-Ha3aa2c01-P0002198a/20261021T142723.494370Z-Ha3aa2c01-P00021b28",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+{
+  "pid": 179353,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": true,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/-filling-1792570573468372694-255041-1",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/checkout/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261021T142855.835321Z-Ha3aa2c01-P00029e96/20261021T142859.353548Z-Ha3aa2c01-P0002bb9b/20261021T142900.474553Z-Ha3aa2c01-P0002bc97",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+{
+  "pid": 190569,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": true,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/idea4",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/worktree/reset/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261021T142920.754211Z-Ha3aa2c01-P0002e3ca/20261021T142922.327231Z-Ha3aa2c01-P0002e7ab/20261021T142922.337800Z-Ha3aa2c01-P0002e7da/20261021T142922.354903Z-Ha3aa2c01-P0002e844",
+    "GIT_WORK_TREE": ".",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+{
+  "pid": 208660,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": true,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/idea5",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/worktree/reset/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261021T143015.747246Z-Ha3aa2c01-P00032a51/20261021T143017.183164Z-Ha3aa2c01-P00032dfc/20261021T143017.210737Z-Ha3aa2c01-P00032e29/20261021T143017.258606Z-Ha3aa2c01-P00032eb2",
+    "GIT_WORK_TREE": ".",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+{
+  "pid": 348733,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": true,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/-filling-1792593417769484726-141343-9",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/worktree/reset/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261021T142715.920036Z-Ha3aa2c01-P000209df/20261021T143657.774472Z-Ha3aa2c01-P0005520c/20261021T143658.091647Z-Ha3aa2c01-P0005523b/20261021T143658.103264Z-Ha3aa2c01-P0005523c",
+    "GIT_WORK_TREE": ".",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+{
+  "pid": 1613141,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": false,
+  "git_env": {
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "status/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261007T041607.702279Z-Ha3aa2c01-P00189d4e/20261007T041608.727031Z-Ha3aa2c01-P00189d54",
+    "PWD": "/usr/local/google/home/jomof/projects/lldb-testing"
+  }
+}
+{
+  "pid": 1927772,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": true,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/-filling-1792593082103359931-141343-1",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/checkout/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261021T154247.576286Z-Ha3aa2c01-P001d5ce5/20261021T154250.579704Z-Ha3aa2c01-P001d679c/20261021T154251.690388Z-Ha3aa2c01-P001d6a3d",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+{
+  "pid": 3316998,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": false,
+  "git_env": {
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_SID": "repo-20261021T134252Z-P003292e6/repo-20261021T134252Z-P003292e6/repo-20261021T134252Z-P00329339-8",
+    "PWD": "/usr/local/google/home/jomof"
+  }
+}
+{
+  "pid": 3499576,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": false,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/idea8",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/worktree/reset/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261014T234601.205836Z-Ha3aa2c01-P00355d1d/20261014T234603.555976Z-Ha3aa2c01-P003565b7/20261014T234603.568385Z-Ha3aa2c01-P003565c9/20261014T234603.581850Z-Ha3aa2c01-P00356605",
+    "GIT_WORK_TREE": ".",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+{
+  "pid": 3638579,
+  "cwd": "/usr/local/google/home/jomof",
+  "inherited_caller_metadata_env": false,
+  "git_env": {
+    "GIT_DIR": "/usr/local/google/home/jomof/projects/studio-main/.repo/projects/tools/idea.git/worktrees/idea9",
+    "GIT_PREFIX": "",
+    "GIT_TRACE2_PARENT_NAME": "_run_dashed_/worktree/reset/fsmonitor--daemon",
+    "GIT_TRACE2_PARENT_SID": "20261014T234953.420064Z-Ha3aa2c01-P00377b8a/20261014T234955.882630Z-Ha3aa2c01-P00378485/20261014T234955.894861Z-Ha3aa2c01-P003784a9/20261014T234955.905584Z-Ha3aa2c01-P00378508",
+    "GIT_WORK_TREE": ".",
+    "PWD": "/usr/local/google/home/jomof/projects/studio-main"
+  }
+}
+
+=== Inherited & leaked FDs in long-lived child processes ===
+Total running fuse-overlayfs daemons: 300
+
+[Oldest sample fuse-overlayfs]  136587    7880 Ss      01:23:18 00:00:00 fuse_dev_do_read             fuse-overlayfs -o lowerdir=/usr/local/google/home/jomof/projects/studio-main/tools/external/gradle,upperdir=/usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/studio-wt-aragorn/overlays/tools%2Fexternal%2Fgradle/upper,workdir=/usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/studio-wt-aragorn/overlays/tools%2Fexternal%2Fgradle/work /usr/local/google/home/jomof/projects/studio-wt-aragorn/tools/external/gradle
+Open file descriptors (23 total):
+  fd    0 -> /dev/null
+  fd    1 -> /dev/null
+  fd    2 -> /dev/null
+  fd    3 -> socket:[2141632254]
+  fd    4 -> /proc/3310579
+  fd    5 -> /usr/local/google/home/jomof/projects/studio-main/tools/external/gradle
+  fd    6 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/studio-wt-aragorn/overlays/tools%2Fexternal%2Fgradle/upper
+  fd    7 -> /proc/3310579/smaps
+  fd    8 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/studio-wt-aragorn/overlays/tools%2Fexternal%2Fgradle/work/work
+  fd    9 -> /dev/fuse
+  fd   10 -> pipe:[2141707264]
+  fd   11 -> pipe:[2141707264]
+  fd   80 -> socket:[2136932491]
+  fd  217 -> socket:[2141640469]
+  fd  680 -> socket:[2141640470]
+  fd  933 -> socket:[2140547767]
+  fd 1180 -> socket:[2141726742]
+  fd 1204 -> socket:[2141707186]
+  fd 1242 -> /usr/local/google/tmp/jetski-hub-server.jomof-specialist.c.googlers.com.jomof.log.BINARY_INFO.20261021-134551.3310579
+  fd 1254 -> socket:[2140547768]
+  fd 1348 -> socket:[2141707187]
+  fd 1412 -> socket:[2141726743]
+  fd 1423 -> pipe:[2138943141]
+
+[Newest sample fuse-overlayfs] 4035493    7880 Ss      01:36:02 00:00:00 fuse_dev_do_read             fuse-overlayfs -o lowerdir=/usr/local/google/home/jomof/projects/studio-main/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8,upperdir=/usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/restack/overlays/prebuilts%2Fgcc%2Flinux-x86%2Fhost%2Fx86_64-linux-glibc2.17-4.8/upper,workdir=/usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/restack/overlays/prebuilts%2Fgcc%2Flinux-x86%2Fhost%2Fx86_64-linux-glibc2.17-4.8/work /usr/local/google/home/jomof/projects/studio-wt-restack/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8
+Open file descriptors (29 total):
+  fd    0 -> /dev/null
+  fd    1 -> /dev/null
+  fd    2 -> /dev/null
+  fd    3 -> socket:[2140801402]
+  fd    4 -> /proc/3310579
+  fd    5 -> /usr/local/google/home/jomof/projects/studio-main/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8
+  fd    6 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/restack/overlays/prebuilts%2Fgcc%2Flinux-x86%2Fhost%2Fx86_64-linux-glibc2.17-4.8/upper
+  fd    7 -> /proc/3310579/smaps
+  fd    8 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/restack/overlays/prebuilts%2Fgcc%2Flinux-x86%2Fhost%2Fx86_64-linux-glibc2.17-4.8/work/work
+  fd    9 -> /dev/fuse
+  fd   10 -> pipe:[2140868796]
+  fd   11 -> pipe:[2140868796]
+  fd   80 -> socket:[2136932491]
+  fd  204 -> socket:[2140812958]
+  fd  259 -> socket:[2140868636]
+  fd  278 -> socket:[2140643921]
+  fd  612 -> socket:[2140765948]
+  fd  619 -> socket:[2140824754]
+  fd  633 -> socket:[2140812959]
+  fd  646 -> socket:[2140752477]
+  fd  729 -> socket:[2140824755]
+  fd  933 -> socket:[2140547767]
+  fd  973 -> socket:[2140765949]
+  fd 1002 -> socket:[2140752478]
+  fd 1242 -> /usr/local/google/tmp/jetski-hub-server.jomof-specialist.c.googlers.com.jomof.log.BINARY_INFO.20261021-134551.3310579
+  fd 1254 -> socket:[2140547768]
+  fd 1282 -> socket:[2140643922]
+  fd 1423 -> pipe:[2138943141]
+  fd 1688 -> socket:[2140868637]
+
+[Active pool maintain process] 1645076    7880 SNl        17:42 00:00:03 hrtimer_nanosleep            /usr/local/google/home/jomof/.local/bin/git-repo-worktree -C /usr/local/google/home/jomof/projects/studio-main -q pool maintain
+Open file descriptors (31 total):
+  fd    0 -> /dev/null
+  fd    1 -> /dev/null
+  fd    2 -> /dev/null
+  fd    3 -> socket:[2145755855]
+  fd    4 -> /proc/3310579
+  fd    5 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/prebuilts%2Fstudio%2Fsdk%2Flinux/.filling-1792596779731523629-1645076-0.log
+  fd    6 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/.maintain.lock
+  fd    7 -> /proc/3310579/smaps
+  fd    8 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/prebuilts%2Fstudio%2Fsdk%2Flinux.lock
+  fd    9 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/tools%2Fidea.lock
+  fd   10 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/tools%2Fadt%2Fidea.lock
+  fd   11 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/external%2Fjetbrains%2Fkotlin.lock
+  fd   12 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/tools%2Fbase.lock
+  fd   13 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/external%2Fintellij-plugins.lock
+  fd   14 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/tools%2Fvendor%2Fintellij%2Fcidr.lock
+  fd   15 -> /usr/local/google/home/jomof/projects/studio-main/.repo/repo-worktrees/.pool/tools%2Fvendor%2Fgoogle.lock
+  fd   62 -> socket:[2145886769]
+  fd   80 -> socket:[2136932491]
+  fd  262 -> socket:[2145766065]
+  fd  397 -> socket:[2145822204]
+  fd  425 -> socket:[2145766066]
+  fd  526 -> socket:[2145752801]
+  fd  629 -> socket:[2145898092]
+  fd  658 -> socket:[2145822205]
+  fd  709 -> socket:[2145752802]
+  fd 1180 -> socket:[2141726742]
+  fd 1242 -> /usr/local/google/tmp/jetski-hub-server.jomof-specialist.c.googlers.com.jomof.log.BINARY_INFO.20261021-134551.3310579
+  fd 1319 -> socket:[2145886770]
+  fd 1412 -> socket:[2141726743]
+  fd 1423 -> pipe:[2138943141]
+  fd 1554 -> socket:[2145898093]
+
+=== Source repo local config & prebuilt status ===
+[tools/idea .git/config]
+core.repositoryformatversion=1
+core.filemode=true
+core.checkstat=minimal
+core.trustctime=false
+core.fsmonitor=true
+filter.lfs.smudge=git-lfs smudge --skip -- %f
+filter.lfs.process=git-lfs filter-process --skip
+remote.goog.url=sso://googleplex-android.git.corp.google.com/platform/tools/idea
+remote.goog.review=sso://googleplex-android/
+remote.goog.projectname=platform/tools/idea
+remote.goog.fetch=+refs/heads/*:refs/remotes/goog/*
+remote.goog.partialclonefilter=blob:limit=10485760
+remote.goog.promisor=true
+branch.b495837557.remote=goog
+branch.b495837557.merge=refs/heads/studio-main
+branch.b495837557.vscode-merge-base=goog/main
+extensions.partialclone=goog
+maintenance.auto=false
+gc.auto=0
+
+[prebuilts/studio/sdk/linux git status --short --branch]
+## HEAD (no branch)
+?? environments/
+
