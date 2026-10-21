@@ -277,7 +277,9 @@ unregistered; its files are deleted in the background. After removing, read
 `lingering_processes`: programs you started in the tree (build servers,
 watchers) keep running until you stop them. If a tree was deleted with
 `rm -rf` instead, run `git repo-worktree prune`, which archives its commits
-and reaps the stale registration.
+and reaps the stale registration. A tree `list` shows in state `removing` was
+interrupted while being removed; run `remove <tree>` again to finish (`repair`
+leaves it alone).
 
 ### If your tree is gone
 

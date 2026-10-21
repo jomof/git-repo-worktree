@@ -450,6 +450,9 @@ class TreeWorld(RuleBasedStateMachine):
         trees = grw_json("list")["result"]["trees"]
         for tree in trees:
             name = tree["name"]
+            if tree["state"] == "removing":
+                grw_json("remove", name)
+                continue
             if tree["state"] in ("creating", "incomplete") and name not in self.live:
                 value = grw_json("add", "--continue", name, check=False)
                 if not value["ok"]:
@@ -539,6 +542,21 @@ class TreeWorld(RuleBasedStateMachine):
         (checkout / f"local{self.count}").write_text("x\n")
         git(checkout, "add", f"local{self.count}")
         git(checkout, "commit", "-qm", f"source {self.count}")
+
+    @rule(path=st.sampled_from(["prebuilts/pre", "a"]), remove=st.booleans())
+    def source_untracked(self, path, remove):
+        step(f"source_untracked({path}, remove={remove})")
+        if self.fault and self.fault[0] == "disk":
+            return
+        directory = CLIENT / path / "environments"
+        if not (CLIENT / path / ".git").exists():
+            return
+        if remove:
+            shutil.rmtree(directory, ignore_errors=True)
+            return
+        directory.mkdir(exist_ok=True)
+        self.count += 1
+        (directory / f"state{self.count}").write_text("runtime\n")
 
     # -- tool operations -------------------------------------------------------
 

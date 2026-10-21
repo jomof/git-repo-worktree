@@ -133,6 +133,16 @@ parallel, so an `add`'s time is set by its slowest missing spare; filling the
 largest first still minimizes the next `add`. With `sdk/linux` overlaid again,
 the head-of-line blocking in the report goes away.
 
+## Also in 2.3.0
+
+Fuzzing these changes found an older bug: a `remove` killed partway left the
+tree in state `removing`, and a later `repair` rebuilt the half-removed tree's
+`.repo` bridge, failed with `internal error parsing repo-hooks`, and relabeled
+it `incomplete`. `repair` now skips such trees (listing them in
+`interrupted_removals`; naming one is `E_REMOVAL_INTERRUPTED`), and running
+`remove` again finishes the removal. A harness that kills tool processes should
+finish `removing` trees with `remove`.
+
 ## Not tool problems
 
 Agreed on all four (`core.checkStat=minimal`, the per-worker `env.bazelrc`

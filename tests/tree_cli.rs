@@ -4141,3 +4141,47 @@ fn add_from_a_manifest_pins_its_revisions_and_refuses_unknown_ones() {
     );
     assert_eq!(listed["result"]["trees"].as_array().unwrap().len(), 3);
 }
+
+#[test]
+fn repair_leaves_an_interrupted_removal_for_remove_to_finish() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let meta_path = fixture.client.join(".repo/repo-worktrees/tree/meta.json");
+    let mut meta: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+    meta["state"] = Value::String("removing".into());
+    fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+
+    let all = output_json(
+        command(&fixture)
+            .args(["repair", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        all["result"]["interrupted_removals"],
+        serde_json::json!(["tree"])
+    );
+    let listed = output_json(
+        command(&fixture)
+            .args(["list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(listed["result"]["trees"][0]["state"], "removing");
+    let named = output_json(
+        command(&fixture)
+            .args(["repair", "--json", "tree"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(named["error"]["code"], "E_REMOVAL_INTERRUPTED");
+    command(&fixture)
+        .args(["remove", "tree"])
+        .assert()
+        .success();
+    assert!(!fixture.destination.exists());
+}

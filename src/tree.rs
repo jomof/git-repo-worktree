@@ -4039,6 +4039,7 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppRes
         let jobs = args.jobs.unwrap_or_else(default_jobs);
         let mut incomplete = INTERRUPTED.load(Ordering::SeqCst);
         let mut held = Vec::new();
+        let mut interrupted_removals = Vec::new();
         for meta in &mut trees {
             if INTERRUPTED.load(Ordering::SeqCst) {
                 incomplete = true;
@@ -4054,6 +4055,25 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppRes
             };
             held.push(lock);
             *meta = fresh;
+            if meta.state == "removing" {
+                if !args.trees.is_empty() {
+                    return Err(AppError::operational(
+                        "E_REMOVAL_INTERRUPTED",
+                        format!(
+                            "removal of {} was interrupted; run `git repo-worktree remove {}` to finish it",
+                            meta.name, meta.name
+                        ),
+                    ));
+                }
+                if !quiet {
+                    eprintln!(
+                        "skipped {}: its removal was interrupted; run `git repo-worktree remove {}` to finish it",
+                        meta.name, meta.name
+                    );
+                }
+                interrupted_removals.push(meta.name.clone());
+                continue;
+            }
             recover_move(meta)?;
             if !meta.root().exists() {
                 if !quiet {
@@ -4102,11 +4122,14 @@ pub fn repair(args: &RepairArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppRes
             }
         }
         trees.retain(|tree| !tree.name.is_empty());
-        let result = if trees.len() == 1 {
+        let mut result = if trees.len() == 1 {
             tree_json(&trees[0], verbose)
         } else {
             json!({"trees": trees.iter().map(|tree| tree_json(tree, verbose)).collect::<Vec<_>>()})
         };
+        if !interrupted_removals.is_empty() {
+            result["interrupted_removals"] = json!(interrupted_removals);
+        }
         if incomplete {
             Err(AppError::partial(result))
         } else {

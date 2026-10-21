@@ -172,6 +172,10 @@ projects `repo sync` added inside the tree. `remove` refuses those with
 was dropped. `--discard` deletes without archiving. A locked tree is protected
 from prune and requires `--force --force` for removal.
 
+An interrupted `remove` leaves the tree in state `removing`; run `remove`
+again to finish it. `repair` skips such trees (listing them in
+`interrupted_removals`) rather than rebuilding a half-removed tree.
+
 `remove --idle <duration>` removes, with archives, every tree that is
 unlocked, not in use by a process (Linux), and idle for at least the duration;
 `--dry-run` lists them. `prune` archives the commits of trees deleted by hand
