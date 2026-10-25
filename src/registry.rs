@@ -270,7 +270,11 @@ pub fn select_tree_or_current(
         return select_tree(registry, selector, cwd);
     }
     containing_tree(registry, cwd)?
-        .ok_or_else(|| AppError::usage("name a tree, or run this command inside one"))
+        .ok_or_else(|| {
+            AppError::usage(
+                "name a tree, or run this command inside one (`git repo-worktree list` shows the trees)",
+            )
+        })
 }
 
 pub fn containing_tree(registry: &Path, cwd: &Path) -> AppResult<Option<TreeMeta>> {
@@ -300,7 +304,13 @@ pub fn select_tree(registry: &Path, selector: &str, cwd: &Path) -> AppResult<Tre
     }
     Err(AppError::operational(
         "E_NO_SUCH_TREE",
-        format!("no registered tree matches {selector}"),
+        match crate::archive::select(registry, selector, cwd) {
+            Ok(record) => format!(
+                "no registered tree matches {selector}; it was removed and archived as {} (`git repo-worktree restore {selector}` brings it back)",
+                record.id
+            ),
+            Err(_) => format!("no registered tree matches {selector}"),
+        },
     ))
 }
 

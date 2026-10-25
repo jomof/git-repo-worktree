@@ -291,3 +291,28 @@ machine interface deterministic:
 - `pinned_digest` is FNV-1a over sorted `path sha` lines: cheap enough to
   compute in `tree_json` for every tree, and collisions only matter
   accidentally, not adversarially.
+
+## Round 8 changes (3.0)
+
+- `add` starts each project at its manifest revision: the `refs/remotes/m/*`
+  ref repo maintains (a symref to the upstream branch, or a pinned commit), so
+  no network is needed and the result matches `repo sync -l`. This reverses
+  the earlier "start from the source's HEADs" principle after a tree inherited
+  a developer's local branch. `--from-source` keeps the old behavior; trees
+  record how they started in `start`. Spares are filled at the manifest
+  revision, and the pool's sharing rule requires the source to be there.
+- Retention exempts the newest archive from the size budget. Before, its
+  bytes were added first, so one large archive expired itself and every older
+  archive in the same `remove`.
+- Archives skip untracked files of 100 MiB or more (via
+  `--pathspec-from-file`, which also carries the nested-project exclusions)
+  and count unique bytes beyond the tree's starting commit.
+- `remove --idle` reads cheap timestamps before running `git status`, skips
+  unchanged overlays, and scans `/proc` once per run.
+- Trash deletion moved out of `pool maintain` (idle I/O, paused by every tree
+  operation) into a separate `pool empty-trash` at normal disk priority, four
+  trees at a time, using the same lock-and-again-marker pattern.
+- Worktree registrations of deleted checkouts are matched after resolving a
+  relative `gitdir` (newer Git can record relative paths), for every project
+  mode; `prune` unlocks overlay registrations so `git worktree prune` can
+  reap them.

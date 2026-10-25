@@ -2812,7 +2812,7 @@ fn hold_lock(path: &Path) -> &'static mut fd_lock::RwLock<fs::File> {
     Box::leak(Box::new(fd_lock::RwLock::new(file)))
 }
 
-fn wait_for_maintenance(fixture: &Fixture, count: usize) -> Value {
+fn wait_for_command(fixture: &Fixture, name: &str, count: usize) -> Value {
     let history = fixture.client.join(".repo/repo-worktrees/history.jsonl");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
@@ -2820,14 +2820,14 @@ fn wait_for_maintenance(fixture: &Fixture, count: usize) -> Value {
             .unwrap_or_default()
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .filter(|event| event["command"] == "pool maintain")
+            .filter(|event| event["command"] == name)
             .collect::<Vec<_>>();
         if events.len() >= count {
             return events[count - 1].clone();
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "background maintenance never finished"
+            "background {name} never finished"
         );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -2861,11 +2861,26 @@ fn remove_deletes_files_in_the_background() {
         "{worktrees}"
     );
     assert!(!worktrees.contains("prunable"), "{worktrees}");
-    let maintained = wait_for_maintenance(&fixture, 1);
-    assert_eq!(maintained["trees_deleted"], 1, "{maintained}");
+    let emptied = wait_for_command(&fixture, "pool empty-trash", 1);
+    assert_eq!(emptied["trees_deleted"], 1, "{emptied}");
     let trash = fixture.client.join(".repo/repo-worktrees/.trash");
     assert_eq!(fs::read_dir(&trash).unwrap().count(), 0);
 
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let waited = output_json(
+        command(&fixture)
+            .env_remove("GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE")
+            .args(["remove", "--wait", "--json", "tree"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(waited["result"]["deleting_in_background"], false);
+    assert!(!fixture.destination.exists());
+    assert_eq!(fs::read_dir(&trash).unwrap().count(), 0);
     command(&fixture)
         .arg("add")
         .arg(&fixture.destination)
@@ -4184,4 +4199,206 @@ fn repair_leaves_an_interrupted_removal_for_remove_to_finish() {
         .assert()
         .success();
     assert!(!fixture.destination.exists());
+}
+
+#[test]
+fn trees_start_at_the_manifest_revision_unless_from_source() {
+    let fixture = fixture();
+    let source = fixture.client.join("p");
+    let upstream = git(&source, &["rev-parse", "HEAD"]);
+    git(&source, &["update-ref", "refs/remotes/m/main", &upstream]);
+    git(&source, &["switch", "-q", "-c", "mother"]);
+    fs::write(source.join("source.txt"), "local work\n").unwrap();
+    git(&source, &["commit", "-qam", "local work"]);
+    let local = git(&source, &["rev-parse", "HEAD"]);
+    write_fixture_snapshot(&fixture, &local);
+
+    let added = output_json(
+        command(&fixture)
+            .args(["add", "--json"])
+            .arg(&fixture.destination)
+            .assert()
+            .success()
+            .stderr(predicates::str::contains("start at the manifest revision")),
+    );
+    let checkout = fixture.destination.join("p");
+    assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), upstream);
+    assert_eq!(
+        git(&checkout, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "HEAD"
+    );
+    assert_eq!(added["result"]["start"], "manifest");
+    let differ = &added["result"]["source_differs"][0];
+    assert_eq!(differ["project"], "p", "{added}");
+    assert_eq!(differ["source_branch"], "mother");
+    assert_eq!(differ["source_ahead"], 1);
+    assert_eq!(differ["start"], upstream.as_str());
+
+    let kept = output_json(
+        command(&fixture)
+            .args(["add", "--from-source", "--json"])
+            .arg(fixture.temp.path().join("kept"))
+            .assert()
+            .success(),
+    );
+    assert_eq!(kept["result"]["start"], "source");
+    assert!(kept["result"].get("source_differs").is_none());
+    assert_eq!(
+        git(&fixture.temp.path().join("kept/p"), &["rev-parse", "HEAD"]),
+        local
+    );
+
+    command(&fixture)
+        .args(["defaults", "pool", "p"])
+        .assert()
+        .success();
+    command(&fixture)
+        .args(["pool", "fill", "--count", "1"])
+        .assert()
+        .success();
+    let spares = pool_slots(&fixture, "p");
+    assert_eq!(spares.len(), 1);
+    assert_eq!(git(&spares[0], &["rev-parse", "HEAD"]), upstream);
+}
+
+#[test]
+fn large_untracked_files_are_left_out_of_archives_and_new_archives_survive_the_budget() {
+    let fixture = fixture();
+    command(&fixture)
+        .args(["archive", "policy", "--budget", "1"])
+        .assert()
+        .success();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let checkout = fixture.destination.join("p");
+    fs::write(checkout.join("notes.txt"), "keep me\n").unwrap();
+    fs::write(checkout.join("source.txt"), "edited\n").unwrap();
+    git(&checkout, &["commit", "-qam", "unbranched"]);
+    fs::File::create(checkout.join("sdk.tar"))
+        .unwrap()
+        .set_len(101 * 1024 * 1024)
+        .unwrap();
+    let removed = command(&fixture)
+        .args(["remove", "--json", "tree"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&removed.stderr);
+    assert!(stderr.contains("brings it back"), "{stderr}");
+    assert!(stderr.contains("sdk.tar"), "{stderr}");
+    let value: Value = serde_json::from_slice(&removed.stdout).unwrap();
+    let dropped = &value["result"]["archive"]["dropped"][0];
+    assert_eq!(dropped["kind"], "large-untracked", "{value}");
+    assert_eq!(value["result"]["archives_expired"], serde_json::json!([]));
+
+    command(&fixture)
+        .args(["restore", "tree"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(checkout.join("notes.txt")).unwrap(),
+        "keep me\n"
+    );
+    assert!(!checkout.join("sdk.tar").exists());
+}
+
+#[test]
+fn idle_removal_defaults_to_a_day_and_accepts_force() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let listed = output_json(
+        command(&fixture)
+            .args(["remove", "--idle", "--dry-run", "--json"])
+            .assert()
+            .success(),
+    );
+    assert!(listed["result"]["removed"].as_array().unwrap().is_empty());
+    assert!(listed["result"]["skipped"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .starts_with("active"));
+    let removed = output_json(
+        command(&fixture)
+            .args(["remove", "--idle", "0s", "--force", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(removed["result"]["removed"][0]["name"], "tree", "{removed}");
+    let missing = output_json(
+        command(&fixture)
+            .args(["status", "tree", "--json"])
+            .assert()
+            .code(1),
+    );
+    assert_eq!(missing["error"]["code"], "E_NO_SUCH_TREE");
+    assert!(missing["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("git repo-worktree restore tree"));
+}
+
+#[test]
+fn prune_finds_registrations_git_recorded_with_relative_paths() {
+    let fixture = fixture();
+    command(&fixture)
+        .arg("add")
+        .arg(&fixture.destination)
+        .assert()
+        .success();
+    let checkout = fixture.destination.join("p");
+    fs::write(checkout.join("source.txt"), "stranded\n").unwrap();
+    git(&checkout, &["commit", "-qam", "stranded"]);
+    let stranded = git(&checkout, &["rev-parse", "HEAD"]);
+    let admin = PathBuf::from(git(
+        &checkout,
+        &["rev-parse", "--path-format=absolute", "--git-dir"],
+    ));
+    let relative = pathdiff(
+        &fs::canonicalize(&checkout).unwrap().join(".git"),
+        &fs::canonicalize(&admin).unwrap(),
+    );
+    fs::write(admin.join("gitdir"), format!("{}\n", relative.display())).unwrap();
+    fs::remove_dir_all(&fixture.destination).unwrap();
+    let pruned = output_json(
+        command(&fixture)
+            .args(["prune", "--json"])
+            .assert()
+            .success(),
+    );
+    let archive = pruned["result"]["pruned"][0]["archive"].as_str().unwrap();
+    command(&fixture)
+        .args(["restore", archive])
+        .assert()
+        .success();
+    assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), stranded);
+}
+
+/// `target` relative to `base` (both absolute).
+fn pathdiff(target: &Path, base: &Path) -> PathBuf {
+    let target = target.components().collect::<Vec<_>>();
+    let base = base.components().collect::<Vec<_>>();
+    let common = target
+        .iter()
+        .zip(base.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut relative = PathBuf::new();
+    for _ in common..base.len() {
+        relative.push("..");
+    }
+    for component in &target[common..] {
+        relative.push(component.as_os_str());
+    }
+    relative
 }

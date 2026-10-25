@@ -284,8 +284,12 @@ def unmount_all():
         subprocess.run(["fusermount3", "-uz", point], capture_output=True)
 
 
+BACKGROUND = ("pool maintain", "pool empty-trash")
+
+
 def stop_background():
-    subprocess.run(["pkill", "-9", "-f", "--", f"{CLIENT} -q pool maintain"], capture_output=True)
+    for command in BACKGROUND:
+        subprocess.run(["pkill", "-9", "-f", "--", f"{CLIENT} -q {command}"], capture_output=True)
 
 
 def fresh_world():
@@ -315,10 +319,13 @@ def source_snapshot():
 
 
 def maintenance_running():
-    result = subprocess.run(["pgrep", "-f", "--", f"{CLIENT} -q pool maintain"], capture_output=True)
-    if result.returncode > 1:
-        raise RuntimeError(f"pgrep failed: {result.stderr!r}")
-    return result.returncode == 0
+    for command in BACKGROUND:
+        result = subprocess.run(["pgrep", "-f", "--", f"{CLIENT} -q {command}"], capture_output=True)
+        if result.returncode > 1:
+            raise RuntimeError(f"pgrep failed: {result.stderr!r}")
+        if result.returncode == 0:
+            return True
+    return False
 
 
 def owned_projects(root):
@@ -564,13 +571,14 @@ class TreeWorld(RuleBasedStateMachine):
     def first_tree(self):
         return self.add(False)
 
-    @rule(target=trees, submodules=st.booleans())
-    def add(self, submodules):
-        step(f"add(submodules={submodules})")
+    @rule(target=trees, submodules=st.booleans(), from_source=st.booleans())
+    def add(self, submodules, from_source=False):
+        step(f"add(submodules={submodules}, from_source={from_source})")
         self.count += 1
         name = f"t{self.count}"
         path = BASE / name
         args = ["add", "--name", name, str(path)] + (["--submodules"] if submodules else [])
+        args += ["--from-source"] if from_source else []
         if self.fault:
             value = self.tool_step(lambda: grw_json(*args, check=False))
             if value["ok"] or value.get("exit_code") == 3:

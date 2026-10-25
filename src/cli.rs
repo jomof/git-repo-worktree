@@ -104,12 +104,14 @@ pub enum Command {
 }
 
 const ADD_LONG_ABOUT: &str = "Create a whole-tree worktree or resume an interrupted creation.\n\n\
-Starting revisions: every project starts on a detached HEAD at the commit that \
-project currently has checked out in the source client (`repo manifest -r`), \
-including local commits and topic branches checked out there. `add` never \
-fetches and never resets to the remote branch. To start a project from upstream \
-instead, run `git checkout --detach <remote>/<branch>` inside it, or run \
-`repo sync` in the tree to move every project to upstream as in any client.\n\n\
+Starting revisions: every project starts on a detached HEAD at the revision the \
+manifest names, as already fetched into the client (the commit `repo sync -l` \
+would check out, `refs/remotes/m/<branch>`), so local commits and branches in \
+the source client never leak into a tree. `add` never fetches. `add` notes the \
+projects whose source checkout is elsewhere; `--from-source` starts every \
+project at the commit the source client has checked out instead, including \
+local commits. A project with no manifest revision recorded starts at the \
+source's commit.\n\n\
 Uncommitted changes in the source client are never copied.\n\n\
 Pinned revisions: `--manifest <FILE>` pins every project the file lists to its \
 revision instead (for example a file written earlier by `repo manifest -r -o`); \
@@ -186,6 +188,11 @@ pub struct AddArgs {
     pub heavy_jobs: Option<usize>,
     #[arg(long)]
     pub fail_fast: bool,
+    /// Start each project at the commit the source client has checked out
+    /// (including local commits and branches there) instead of the manifest's
+    /// revision.
+    #[arg(long, conflicts_with_all = ["resume", "manifest"])]
+    pub from_source: bool,
     /// Pin each project to its revision in FILE, a manifest with pinned
     /// revisions such as `repo manifest -r -o FILE` writes, instead of the
     /// commit the source has checked out. Never fetches.
@@ -270,18 +277,23 @@ pub struct DetachArgs {
 const REMOVE_LONG_ABOUT: &str =
     "Remove a whole-tree worktree, archiving its state so `restore` can bring it back.\n\n\
 Before deleting anything, `remove` archives every worktree project's HEAD, \
-branch, index, and working tree (untracked files included, ignored files not), \
-so removing a tree never loses work. `git repo-worktree restore <name-or-path>` \
-recreates it; `git repo-worktree archive list` shows archives, which expire \
-after 30 days or beyond 2 GiB (see `archive policy`).\n\n\
+branch, index, and working tree (untracked files included, except files of \
+100 MiB or more, which are listed as dropped; ignored files not), so removing \
+a tree never loses work. `git repo-worktree restore <name-or-path>` recreates \
+it; `git repo-worktree archive list` shows archives, which expire after 30 \
+days or beyond 2 GiB (see `archive policy`); the newest is never expired by \
+size.\n\n\
 An in-progress rebase or merge, unresolved conflicts, a submodule's own \
 uncommitted changes, and projects `repo sync` added inside the tree cannot be \
 archived: `remove` refuses (E_ARCHIVE_INCOMPLETE) unless `--force`, which \
 archives the rest and records what was dropped. `--discard` deletes without \
 archiving.\n\n\
-`--idle <DURATION>` removes, with archives, every tree that is unlocked, not \
-used by any process (Linux), and has shown no activity for DURATION; add \
-`--dry-run` to list them first.";
+The tree's files are deleted in the background at normal disk priority; \
+`--wait` deletes them before returning.\n\n\
+`--idle [DURATION]` removes, with archives, every tree that is unlocked, not \
+used by any process (Linux), and has shown no activity for DURATION (default \
+24h); add `--dry-run` to list them first. `--force` and `--discard` apply to \
+each tree.";
 
 const RESTORE_LONG_ABOUT: &str = "Recreate a removed tree from its archive.\n\n\
 Select the archive by id, `<tree>@{n}` (newest first), tree name, or the \
@@ -303,15 +315,24 @@ pub struct RemoveArgs {
     pub force: u8,
     /// Delete without archiving, discarding uncommitted changes and
     /// unbranched commits.
-    #[arg(long, conflicts_with = "idle")]
+    #[arg(long)]
     pub discard: bool,
     /// Remove every unlocked tree not in use and idle for at least DURATION
-    /// (e.g. 24h, 7d).
-    #[arg(long, value_name = "DURATION", conflicts_with = "force")]
+    /// (e.g. 24h, 7d; default 24h).
+    #[arg(
+        long,
+        value_name = "DURATION",
+        num_args = 0..=1,
+        default_missing_value = "24h"
+    )]
     pub idle: Option<String>,
     /// With --idle, list the trees that would be removed.
     #[arg(short = 'n', long, requires = "idle")]
     pub dry_run: bool,
+    /// Delete the tree's files before returning, at normal priority, instead
+    /// of in the background.
+    #[arg(long)]
+    pub wait: bool,
     /// Delete pool-mode projects instead of returning clean ones to the pool.
     #[arg(long)]
     pub no_pool: bool,
@@ -496,6 +517,10 @@ pub enum PoolCommand {
     /// (run in the background after add and remove).
     #[command(hide = true)]
     Maintain,
+    /// Delete removed trees waiting in the trash (run in the background after
+    /// remove).
+    #[command(hide = true)]
+    EmptyTrash,
 }
 
 #[derive(Debug, Args)]

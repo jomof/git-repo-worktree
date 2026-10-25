@@ -34,8 +34,9 @@ $ git repo-worktree remove studio-feature    # archives unsaved work first
 $ git repo-worktree restore studio-feature   # changed your mind? it's back
 ```
 
-Branches you create outlive the tree, and your original client's files are
-never touched. Run one tree per hotfix, per code review, or per coding agent,
+Every project starts at the manifest's revision, so local branches in your
+client never leak into a tree (`--from-source` keeps them). Branches you create
+outlive the tree, and your original client's files are never touched. Run one tree per hotfix, per code review, or per coding agent,
 side by side.
 
 ## Android Studio, by the numbers

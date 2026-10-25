@@ -34,6 +34,9 @@ pub const DEFAULT_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Age after which an archive whose capture never finished (the process was
 /// killed) is deleted with its refs.
 const ABANDONED_SECS: u64 = 3_600;
+/// Untracked files at least this large (build outputs, downloaded SDKs) are
+/// left out of archives and reported as dropped.
+pub const LARGE_UNTRACKED_BYTES: u64 = 100 * 1024 * 1024;
 const IN_PROGRESS: &[(&str, &str)] = &[
     ("rebase-merge", "rebase"),
     ("rebase-apply", "rebase or am"),
@@ -367,12 +370,14 @@ fn delete_ref(git_dir: &str, name: &str) {
         .output();
 }
 
-/// Bytes of objects reachable only from `tip`, not from any branch,
-/// remote-tracking ref, or tag.
-fn unique_bytes(git_dir: &str, tip: &str) -> u64 {
+/// Bytes of objects reachable only from `tip`: not from the commit the tree
+/// started at (which the source's history already holds) and not from any
+/// branch, remote-tracking ref, or tag.
+fn unique_bytes(git_dir: &str, tip: &str, pinned: &str) -> u64 {
     git_dir_command(git_dir)
-        .args(["rev-list", "--objects", "--disk-usage", tip])
-        .args(["--not", "--branches", "--remotes", "--tags"])
+        .args(["rev-list", "--objects", "--disk-usage", tip, "--not"])
+        .args((!pinned.is_empty()).then_some(pinned))
+        .args(["--branches", "--remotes", "--tags"])
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -412,6 +417,35 @@ struct Changes {
     index: String,
     worktree: String,
     items: Vec<Item>,
+    /// Untracked files left out by policy; reported, never a reason to refuse.
+    skipped: Vec<Item>,
+}
+
+/// Untracked, non-ignored files of at least `LARGE_UNTRACKED_BYTES`, with
+/// their sizes, outside the project's nested projects.
+fn large_untracked(checkout: &Path, children: &[String]) -> Vec<(String, u64)> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(checkout)
+        .args(["ls-files", "-z", "-o", "--exclude-standard", "--", "."]);
+    for child in children {
+        command.arg(format!(":(exclude,literal){child}"));
+    }
+    let Ok(output) = command.output() else {
+        return Vec::new();
+    };
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .filter_map(|path| {
+            let path = String::from_utf8_lossy(path).into_owned();
+            let metadata = fs::symlink_metadata(checkout.join(&path)).ok()?;
+            (metadata.is_file() && metadata.len() >= LARGE_UNTRACKED_BYTES)
+                .then_some((path, metadata.len()))
+        })
+        .collect()
 }
 
 /// Writes the index and the working tree (untracked files included, ignored
@@ -453,16 +487,32 @@ fn snapshot_changes(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("copy {}: {error}", index_path.display())),
     }
+    let large = large_untracked(checkout, children);
+    let skipped = large
+        .iter()
+        .map(|(path, bytes)| {
+            item(
+                "large-untracked",
+                format!("{path} ({}) is not archived", human_bytes(*bytes)),
+            )
+        })
+        .collect::<Vec<_>>();
+    let pathspecs = temporary.with_extension("pathspecs");
     let worktree = (|| {
-        let mut add = Command::new("git");
-        add.arg("-C")
+        let mut specs = Vec::new();
+        specs.extend_from_slice(b".\0");
+        for path in children.iter().chain(large.iter().map(|(path, _)| path)) {
+            specs.extend_from_slice(format!(":(exclude,literal){path}").as_bytes());
+            specs.push(0);
+        }
+        fs::write(&pathspecs, specs)
+            .map_err(|error| format!("write {}: {error}", pathspecs.display()))?;
+        let output = Command::new("git")
+            .arg("-C")
             .arg(checkout)
             .env("GIT_INDEX_FILE", &temporary)
-            .args(["add", "-A", "--", "."]);
-        for child in children {
-            add.arg(format!(":(exclude,literal){child}"));
-        }
-        let output = add
+            .args(["add", "-A", "--pathspec-file-nul"])
+            .arg(format!("--pathspec-from-file={}", pathspecs.display()))
             .output()
             .map_err(|error| format!("run git add: {error}"))?;
         if !output.status.success() {
@@ -489,6 +539,7 @@ fn snapshot_changes(
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     })();
     let _ = fs::remove_file(&temporary);
+    let _ = fs::remove_file(&pathspecs);
     let worktree = worktree?;
     let index_commit = commit_tree(checkout, &index, &[head], &format!("index of {project}"))?;
     let commit = commit_tree(
@@ -502,6 +553,7 @@ fn snapshot_changes(
         index,
         worktree,
         items,
+        skipped,
     })
 }
 
@@ -509,7 +561,7 @@ fn capture_project(
     meta: &TreeMeta,
     project: &ProjectMeta,
     id: &str,
-) -> (Option<Project>, Vec<Item>) {
+) -> (Option<Project>, Vec<Item>, Vec<Item>) {
     let root = meta.root();
     let checkout = root.join(&project.path);
     let children = nested_children(meta, project);
@@ -520,12 +572,19 @@ fn capture_project(
         detail,
     };
     let mut items = Vec::new();
+    let mut skipped = Vec::new();
     if let Some(error) = &inspection.error {
-        items.push(item("unverifiable", error.clone()));
-        return (None, items);
+        let detail = match project.reason.as_deref().and_then(|reason| reason.strip_prefix("remount: ")) {
+            Some(reason) if project.mode == MODE_OVERLAY => format!(
+                "the overlay has changes but cannot be mounted ({reason}); pass --force to archive the rest, or --discard"
+            ),
+            _ => error.clone(),
+        };
+        items.push(item("unverifiable", detail));
+        return (None, items, skipped);
     }
     let Some(head) = inspection.head.clone() else {
-        return (None, items);
+        return (None, items, skipped);
     };
     if let Some(git_dir) = checkout_git_dir(&checkout) {
         for (marker, operation) in IN_PROGRESS {
@@ -563,17 +622,18 @@ fn capture_project(
                 archived.index = Some(changes.index);
                 archived.worktree = Some(changes.worktree);
                 items.extend(changes.items);
+                skipped.extend(changes.skipped);
             }
             Err(reason) => {
                 items.push(item("unverifiable", reason));
-                return (None, items);
+                return (None, items, skipped);
             }
         }
     }
     if archived.needs_ref() {
-        archived.bytes = unique_bytes(&project.git_common_dir, archived.tip());
+        archived.bytes = unique_bytes(&project.git_common_dir, archived.tip(), &project.sha);
     }
-    (Some(archived), items)
+    (Some(archived), items, skipped)
 }
 
 /// Projects `repo sync` added inside the tree, whose Git data lives in the
@@ -710,9 +770,11 @@ pub fn capture(
     });
     let mut projects = Vec::new();
     let mut items = Vec::new();
-    for (project, found) in results {
+    let mut skipped = Vec::new();
+    for (project, found, left_out) in results {
         projects.extend(project);
         items.extend(found);
+        skipped.extend(left_out);
     }
     items.extend(unmanaged_projects(meta));
     items.sort_by(|a, b| a.project.cmp(&b.project));
@@ -727,6 +789,7 @@ pub fn capture(
     }
     record.bytes = projects.iter().map(|project| project.bytes).sum();
     record.projects = projects;
+    items.extend(skipped);
     record.dropped = items;
     record.manifests = manifests_of(meta);
     let _ = fs::copy(
@@ -778,21 +841,37 @@ pub fn capture(
 
 /// The HEAD a removed checkout's worktree administrative directory still
 /// records, as `(commit, branch)`.
-fn orphaned_head(meta: &TreeMeta, project: &ProjectMeta) -> Option<(String, Option<String>)> {
-    let checkout = meta.root().join(&project.path);
-    if project.mode == MODE_OVERLAY {
-        let upper = crate::overlay::upper_dir(&meta.registry_entry(), &project.path);
-        return crate::overlay::admin_head(&upper, &checkout).map(|head| (head, None));
-    }
-    let expected = checkout.join(".git");
-    let admin = fs::read_dir(Path::new(&project.git_common_dir).join("worktrees"))
+/// The worktree administrative directory in the project's repository whose
+/// `gitdir` names the tree's checkout of `project`, which may already be
+/// deleted. Git may record the path relative to the administrative directory.
+pub fn registration(meta: &TreeMeta, project: &ProjectMeta) -> Option<PathBuf> {
+    let expected = crate::util::normalize(&meta.root().join(&project.path).join(".git"));
+    fs::read_dir(Path::new(&project.git_common_dir).join("worktrees"))
         .ok()?
         .flatten()
         .map(|entry| entry.path())
         .find(|admin| {
-            fs::read_to_string(admin.join("gitdir"))
-                .is_ok_and(|recorded| Path::new(recorded.trim()) == expected)
-        })?;
+            fs::read_to_string(admin.join("gitdir")).is_ok_and(|recorded| {
+                let recorded = Path::new(recorded.trim());
+                let absolute = if recorded.is_absolute() {
+                    recorded.to_path_buf()
+                } else {
+                    admin.join(recorded)
+                };
+                crate::util::normalize(&absolute) == expected
+            })
+        })
+}
+
+fn orphaned_head(meta: &TreeMeta, project: &ProjectMeta) -> Option<(String, Option<String>)> {
+    let Some(admin) = registration(meta, project) else {
+        if project.mode != MODE_OVERLAY {
+            return None;
+        }
+        let checkout = meta.root().join(&project.path);
+        let upper = crate::overlay::upper_dir(&meta.registry_entry(), &project.path);
+        return crate::overlay::admin_head(&upper, &checkout).map(|head| (head, None));
+    };
     let head = fs::read_to_string(admin.join("HEAD")).ok()?;
     let head = head.trim();
     match head.strip_prefix("ref:") {
@@ -838,7 +917,8 @@ pub fn capture_orphaned(meta: &TreeMeta, registry: &Path) -> Option<Record> {
             };
             archived.referenced = archived.needs_ref();
             if archived.referenced {
-                archived.bytes = unique_bytes(&project.git_common_dir, &archived.head);
+                archived.bytes =
+                    unique_bytes(&project.git_common_dir, &archived.head, &project.sha);
             }
             Some(archived)
         })
@@ -905,12 +985,21 @@ pub fn policy(registry: &Path) -> Policy {
 
 /// Archives the policy expires: kept archives never; others once older than
 /// the expiry, or, newest first, once the bytes kept alive exceed the budget.
+/// The newest archive (the one a `remove` just made) is exempt from the
+/// budget and not counted against it.
 fn expired<'a>(records: &'a [Record], policy: &Policy, now: u64) -> Vec<&'a Record> {
     let mut total = 0u64;
     let mut expired = Vec::new();
-    for record in records.iter().filter(|record| !record.keep) {
+    for (index, record) in records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| !record.keep)
+    {
         if now.saturating_sub(record.archived_unix) > policy.expire_secs {
             expired.push(record);
+            continue;
+        }
+        if index == 0 {
             continue;
         }
         total = total.saturating_add(record.bytes);
@@ -1274,11 +1363,32 @@ mod tests {
             record("older", 4, 10, false),
             record("old", 200, 1, false),
         ];
-        let expired = expired(&records, &policy, 1_000_000)
-            .into_iter()
-            .map(|record| record.id.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(expired, ["middle", "older", "old"]);
+        let ids = |records: &[Record]| {
+            expired(records, &policy, 1_000_000)
+                .into_iter()
+                .map(|record| record.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&records), ["old"]);
+        let crowded = vec![
+            record("new", 1, 30, false),
+            record("middle", 3, 40, false),
+            record("older", 4, 20, false),
+        ];
+        assert_eq!(ids(&crowded), ["older"]);
+    }
+
+    #[test]
+    fn a_huge_newest_archive_neither_expires_itself_nor_pushes_out_older_ones() {
+        let policy = Policy {
+            expire_secs: 100,
+            budget_bytes: 50,
+        };
+        let records = vec![
+            record("huge", 1, 20_000_000_000, false),
+            record("small", 2, 10, false),
+        ];
+        assert!(expired(&records, &policy, 1_000_000).is_empty());
     }
 
     #[test]

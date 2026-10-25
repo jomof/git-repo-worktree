@@ -486,7 +486,7 @@ pub fn protect_registration(
     protect(&admin)
 }
 
-fn unprotect(admin: &Path) {
+pub fn unprotect(admin: &Path) {
     let locked = admin.join("locked");
     if fs::read_to_string(&locked).is_ok_and(|reason| reason.starts_with(OVERLAY_LOCK_REASON)) {
         let _ = fs::remove_file(locked);

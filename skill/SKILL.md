@@ -25,13 +25,15 @@ but for the entire multi-project tree at once.
 Key properties to keep in mind:
 
 - **Starting revisions:** every project starts on a **detached HEAD at the
-  commit currently checked out in the source client** — including local
-  commits or a topic branch checked out there. `add` never fetches and never
-  resets to the remote branch. To start a project from upstream, run
-  `git -C <tree>/<project> checkout --detach <remote>/<branch>` there. To start
-  every project from recorded commits, pass a pinned manifest:
-  `add --manifest <file>` (written by `repo manifest -r -o <file>`); trees
-  with equal `pinned_digest` started from the same commits.
+  revision the manifest names**, as already fetched (what `repo sync -l` would
+  check out), so the source client's local commits and branches never leak
+  into a tree. `add` never fetches. `add` lists projects whose source
+  checkout is elsewhere (`source_differs` in `--json`). Use `--from-source`
+  only when you need the source's local commits, for example to continue work
+  that exists only there. To start every project from recorded commits, pass
+  a pinned manifest: `add --manifest <file>` (written by
+  `repo manifest -r -o <file>`); trees with equal `pinned_digest` started from
+  the same commits.
 - **repo works inside a tree.** The tree has its own `.repo`, so `repo status`,
   `repo start`, `repo branches`, `repo diff`, `repo forall`, `repo upload`, and
   `repo sync` act on the tree, not the source.
@@ -250,9 +252,10 @@ still work and `repair` rebuilds the bridge.
 ### Clean up
 
 ```bash
-git repo-worktree remove --json mywork                  # archives, then removes
-git repo-worktree remove --idle 24h --dry-run --json    # list idle trees
-git repo-worktree remove --idle 24h --json              # remove them, with archives
+git repo-worktree remove --json mywork              # archives, then removes
+git repo-worktree remove --idle --dry-run --json    # list trees idle for 24h (or --idle 4h)
+git repo-worktree remove --idle --json              # remove them, with archives
+git repo-worktree remove --wait --json mywork       # free the disk space before returning
 ```
 
 Removing a tree is safe: `remove` first archives every project's commit,

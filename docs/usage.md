@@ -2,7 +2,7 @@
 
 `git-repo-worktree` creates and manages cheap parallel images of an entire Google
 `repo` client. Projects normally become linked Git worktrees at the revision
-captured by `repo manifest -r`; large fixed-depth projects may be shared from
+the manifest names, as already fetched into the client; large fixed-depth projects may be shared from
 the source checkout for speed (see [How trees are populated](population.md)).
 Manifest `copyfile` and `linkfile` directives are replayed into the new tree,
 and each tree carries a synthesized `.repo` directory so repo commands work
@@ -46,11 +46,22 @@ git repo-worktree add ../aosp-hotfix
 git repo-worktree add --json --name agent-1 ../work/agent-1
 ```
 
-Every project starts on a detached `HEAD` at the commit that project currently has
-checked out in the source client, including local commits and topic branches
-checked out there. `add` never fetches and never resets to the remote branch;
-run `git checkout --detach <remote>/<branch>` in a project to start it from
-upstream instead, or run `repo sync` in the tree.
+Every project starts on a detached `HEAD` at the revision the manifest names,
+as already fetched into the client: the commit `repo sync -l` would check out
+(`refs/remotes/m/<branch>`). Local commits and branches in the source client
+never leak into a tree, and `add` never fetches. `add` lists the projects
+whose source checkout is elsewhere (`source_differs` in `--json`):
+
+```text
+note: 1 project(s) start at the manifest revision, not the source's checkout (pass --from-source to keep the source's commits):
+  tools/vendor/google: source is on branch mother at f0d61ab633 (6 local commit(s)); tree starts at f491491880
+```
+
+`--from-source` starts every project at the commit the source client has
+checked out instead, including local commits and topic branches checked out
+there (the behavior before 3.0). A project with no manifest revision recorded
+starts at the source's commit. Run `repo sync` in a tree to move it to newer
+upstream commits.
 
 To start from recorded commits instead, pass a manifest with pinned
 revisions, such as one written earlier with `repo manifest -r -o FILE`:
@@ -106,7 +117,8 @@ git repo-worktree add --continue <name-or-path>
 
 The original `snapshot.xml` remains authoritative for the lifetime of the tree.
 If `repo manifest -r` omits a checkout listed in `.repo/project.list`—as happens
-with active `notdefault` groups—the tool pins that checkout from its on-disk `HEAD`,
+with active `notdefault` groups—the tool includes that checkout (at its manifest
+revision, or its on-disk `HEAD` with `--from-source`),
 recovers its copy/link directives from the active source manifests, and persists the
 supplement into `snapshot.xml` before creation begins.
 Only actual parent/child project paths constrain scheduling, so unrelated projects
@@ -176,9 +188,22 @@ An interrupted `remove` leaves the tree in state `removing`; run `remove`
 again to finish it. `repair` skips such trees (listing them in
 `interrupted_removals`) rather than rebuilding a half-removed tree.
 
-`remove --idle <duration>` removes, with archives, every tree that is
-unlocked, not in use by a process (Linux), and idle for at least the duration;
-`--dry-run` lists them. `prune` archives the commits of trees deleted by hand
+`remove --idle [duration]` removes, with archives, every tree that is
+unlocked, not in use by a process (Linux), and idle for at least the duration
+(default 24h); `--dry-run` lists them, and `--force` or `--discard` apply to
+each tree as for a single `remove`. A tree counts as active from its metadata
+and its projects' `HEAD`, index, and reflog timestamps first; `git status`
+runs only on trees those leave looking idle.
+
+`remove` moves the tree aside and returns; a background deleter removes its
+files at normal disk priority, several trees at a time. `remove --wait`
+deletes the files before returning instead.
+
+Untracked files of 100 MiB or more (build outputs, downloaded SDKs) are not
+archived; `remove` lists them, and the archive records them under `dropped`.
+The newest archive never counts against the size budget, so a `remove` never
+expires the archive it just made; older archives expire oldest first beyond
+the budget. `prune` archives the commits of trees deleted by hand
 before reaping them.
 
 ```sh
@@ -190,17 +215,18 @@ git repo-worktree archive policy --expire 30d --budget 2G
 ```
 
 Archives expire after 30 days, and the oldest expire first once the objects
-they alone keep alive exceed 2 GiB; kept archives never expire. Expiry runs
+they alone keep alive (beyond what the tree started from) exceed 2 GiB; the
+newest archive and kept archives never expire by size. Expiry runs
 after each `remove` and on `archive prune`. Projects left at their starting
 commit with no changes need no ref, so archiving a clean tree writes nothing
 to its repositories.
 
 `remove` returns once the tree is unregistered and moved aside: its files are
-deleted afterwards by background maintenance (see
-[Keeping the pool full](population.md#keeping-the-pool-full)), so disk space
-comes back shortly after the command finishes. The tree's path is free for a
-new tree immediately. With `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE=1`, `remove`
-deletes the files itself.
+deleted afterwards by a detached `pool empty-trash` at normal disk priority,
+four trees at a time, so disk space comes back shortly after the command
+finishes. The tree's path is free for a new tree immediately. `remove --wait`
+(or `GIT_REPO_WORKTREE_NO_POOL_MAINTENANCE=1`) deletes the files before
+returning.
 
 On Linux, `remove` warns about processes that still use the tree (working
 directory inside it, or arguments naming it), such as a build server started

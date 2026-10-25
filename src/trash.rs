@@ -2,13 +2,15 @@
 //!
 //! `remove` renames a tree into `.repo/repo-worktrees/.trash/` when it is on
 //! the same filesystem as the source, or next to itself under a hidden
-//! marker name with a `.path` note in `.trash/` when it is not. Background
-//! maintenance deletes them, and finishes any deletion a crash interrupted.
+//! marker name with a `.path` note in `.trash/` when it is not. A detached
+//! `pool empty-trash` deletes them at normal priority, several at a time, and
+//! finishes any deletion a crash interrupted.
 
 use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -56,7 +58,7 @@ pub fn pending(registry: &Path) -> bool {
 
 /// The deletion command for `path`, which never crosses into another
 /// filesystem, such as an overlay that failed to unmount.
-fn delete_command(path: &Path) -> Command {
+pub fn delete_command(path: &Path) -> Command {
     let mut command = Command::new("rm");
     if cfg!(target_os = "linux") {
         command.args(["-rf", "--one-file-system"]);
@@ -74,36 +76,115 @@ fn delete_command(path: &Path) -> Command {
 
 /// Deletes every stashed tree with `run`, which executes a deletion command
 /// and reports whether it succeeded. Returns how many were deleted.
-pub fn empty(registry: &Path, mut run: impl FnMut(Command) -> bool) -> usize {
-    let directory = registry.join(DIR_NAME);
-    let Ok(entries) = fs::read_dir(&directory) else {
-        return 0;
+/// Trash entries still to delete: each stashed tree, and for trees stashed
+/// beside themselves, the note recording where.
+fn entries(registry: &Path) -> Vec<(Option<PathBuf>, Option<PathBuf>)> {
+    let Ok(entries) = fs::read_dir(registry.join(DIR_NAME)) else {
+        return Vec::new();
     };
-    let mut deleted = 0;
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path
-            .extension()
-            .is_some_and(|extension| extension == NOTE_EXTENSION)
-        {
-            let Ok(target) = fs::read(&path) else {
-                continue;
-            };
-            let target = PathBuf::from(OsString::from_vec(target));
-            let marked = target
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with(MARKER));
-            if marked && fs::symlink_metadata(&target).is_ok() && !run(delete_command(&target)) {
-                continue;
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == NOTE_EXTENSION)
+            {
+                let target = PathBuf::from(OsString::from_vec(fs::read(&path).ok()?));
+                let marked = target
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(MARKER));
+                let present = marked && fs::symlink_metadata(&target).is_ok();
+                Some((present.then_some(target), Some(path)))
+            } else if path.is_dir() {
+                Some((Some(path), None))
+            } else {
+                None
             }
-            let _ = fs::remove_file(&path);
-            deleted += usize::from(marked);
-        } else if path.is_dir() && run(delete_command(&path)) {
-            deleted += 1;
+        })
+        .collect()
+}
+
+/// Deletes every stashed tree, `workers` at a time, until the trash stays
+/// empty or a pass deletes nothing. Returns the number of trees deleted.
+pub fn empty_parallel(registry: &Path, workers: usize) -> usize {
+    let mut deleted = 0;
+    loop {
+        let pending = entries(registry);
+        if pending.is_empty() {
+            return deleted;
+        }
+        let mut progress = false;
+        for batch in pending.chunks(workers.max(1)) {
+            let children = batch
+                .iter()
+                .map(|(target, note)| {
+                    let child = target.as_ref().map(|target| delete_command(target).spawn());
+                    (child, target, note)
+                })
+                .collect::<Vec<_>>();
+            for (child, target, note) in children {
+                let finished = match child {
+                    Some(Ok(mut child)) => child.wait().is_ok_and(|status| status.success()),
+                    Some(Err(_)) => false,
+                    None => true,
+                };
+                if finished {
+                    if let Some(note) = note {
+                        let _ = fs::remove_file(note);
+                    }
+                    if target.is_some() {
+                        deleted += 1;
+                    }
+                    progress = true;
+                }
+            }
+        }
+        if !progress {
+            return deleted;
         }
     }
-    deleted
 }
+
+/// Starts `pool empty-trash` detached at reduced CPU priority but normal disk
+/// priority, so the space comes back promptly. A deleter that is already
+/// running picks up the new entry instead.
+pub fn spawn_deletion(source: &Path) -> bool {
+    let registry = crate::registry::registry_path(source);
+    let _ = fs::write(registry.join(AGAIN_FILE), "");
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+    let mut command = match find_nice() {
+        Some(nice) => {
+            let mut command = Command::new(nice);
+            command.args(["-n", "10"]).arg(executable);
+            command
+        }
+        None => Command::new(executable),
+    };
+    command
+        .arg("-C")
+        .arg(source)
+        .args(["-q", "pool", "empty-trash"])
+        .current_dir(source)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .is_ok()
+}
+
+fn find_nice() -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|directory| directory.join("nice"))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Lock file a running deleter holds, and the marker asking it to look again.
+pub const LOCK_FILE: &str = ".trash.lock";
+pub const AGAIN_FILE: &str = ".trash.again";
 
 #[cfg(test)]
 mod tests {
@@ -120,9 +201,7 @@ mod tests {
         assert!(!tree.exists());
         assert!(stashed.starts_with(registry.join(DIR_NAME)));
         assert!(pending(&registry));
-        let deleted = empty(&registry, |mut command| {
-            command.status().is_ok_and(|status| status.success())
-        });
+        let deleted = empty_parallel(&registry, 2);
         assert_eq!(deleted, 1);
         assert!(!pending(&registry));
     }
@@ -146,9 +225,7 @@ mod tests {
             marked.as_os_str().as_bytes(),
         )
         .unwrap();
-        let deleted = empty(&registry, |mut command| {
-            command.status().is_ok_and(|status| status.success())
-        });
+        let deleted = empty_parallel(&registry, 2);
         assert_eq!(deleted, 1);
         assert!(unmarked.exists());
         assert!(!marked.exists());

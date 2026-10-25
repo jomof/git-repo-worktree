@@ -691,7 +691,7 @@ fn background_removal_unregisters_bridged_projects_and_spares_the_source() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while !fs::read_to_string(&history)
         .unwrap_or_default()
-        .contains("\"pool maintain\"")
+        .contains("\"pool empty-trash\"")
     {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(100));

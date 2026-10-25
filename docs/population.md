@@ -98,9 +98,10 @@ Two modes keep large projects fast without sharing the source's files:
 After `add` and `remove`, a detached `pool maintain` runs in the background at
 the lowest CPU and I/O priority. It refills every pooled project to `pool size`
 spares, one spare per project at a time, so after the first tree a burst of
-`pool size` adds all take spares. The files of removed trees are deleted once
-every pooled project has a spare, so a slow deletion never leaves the pool
-empty. It also deletes *orphaned* spares: spares of
+`pool size` adds all take spares. Spares are checked out at each project's
+manifest revision, where a default `add` starts. The files of removed trees
+are deleted separately, at normal disk priority, so refills never delay
+freeing disk space. It also deletes *orphaned* spares: spares of
 projects a default `add` would no longer take from the pool, for example
 fixed-depth prebuilts that are now overlaid, projects quick enough to check
 out directly, or projects whose default has changed. Maintenance pauses while

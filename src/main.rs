@@ -89,6 +89,7 @@ fn command_name(command: &Command) -> &'static str {
             PoolCommand::Fill(_) => "pool fill",
             PoolCommand::Clear(_) => "pool clear",
             PoolCommand::Maintain => "pool maintain",
+            PoolCommand::EmptyTrash => "pool empty-trash",
         },
         Command::Version => "version",
         Command::Completions(_) => "completions",

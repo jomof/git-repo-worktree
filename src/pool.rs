@@ -198,6 +198,7 @@ pub struct PoolContext {
     active: Option<HashSet<String>>,
     sharing_disabled: bool,
     overlays: bool,
+    manifest_branch: Option<String>,
 }
 
 impl PoolContext {
@@ -211,13 +212,29 @@ impl PoolContext {
                 .map(|projects| projects.into_iter().collect()),
             sharing_disabled,
             overlays: !overlay_disabled() && crate::overlay::unavailable_reason().is_none(),
+            manifest_branch: crate::tree::manifest_branch(source),
         }
     }
 
     /// Whether a default `add` would share or overlay the fixed-depth project
-    /// at `checkout` rather than check it out: its source must be clean, but an
-    /// overlay hides untracked files, so only tracked files matter there.
+    /// at `checkout` rather than check it out: its source must be at the
+    /// project's manifest revision (where a default `add` starts) and clean,
+    /// but an overlay hides untracked files, so only tracked files matter there.
     pub fn source_shareable(&self, checkout: &Path) -> bool {
+        let repository = [OsString::from("-C"), checkout.as_os_str().to_owned()];
+        if let Some(revision) =
+            crate::tree::manifest_revision(&repository, self.manifest_branch.as_deref())
+        {
+            let head = Command::new("git")
+                .args(&repository)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .ok()
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+            if head.as_deref() != Some(revision.as_str()) {
+                return false;
+            }
+        }
         source_is_clean(checkout, self.overlays)
     }
 }
@@ -735,6 +752,7 @@ pub fn run(command: &PoolCommand, cwd: &Path, json_output: bool, quiet: bool) ->
             Ok(json!({"cleared": cleared}))
         }
         PoolCommand::Maintain => maintain(&source, &registry),
+        PoolCommand::EmptyTrash => empty_trash(&registry),
     }
 }
 
@@ -982,8 +1000,7 @@ fn run_yielding(
 
 /// Deletes orphaned spares, trims pools above the pool size, and refills the
 /// rest one spare at a time, shallowest pool first. Removed trees waiting in
-/// the trash are deleted once every pool has a spare, so a slow deletion does
-/// not leave the pools empty. Exits at once when
+/// the trash are left to `pool empty-trash`, which this starts if needed. Exits at once when
 /// another maintenance run holds the lock, and yields to tree operations.
 fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     let directory = registry.join(DIR_NAME);
@@ -992,6 +1009,9 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     }
     fs::create_dir_all(&directory)
         .map_err(|error| AppError::io(format!("create {}", directory.display()), error))?;
+    if crate::trash::pending(registry) {
+        crate::trash::spawn_deletion(source);
+    }
     let again = directory.join(MAINTAIN_AGAIN);
     let _ = fs::write(&again, "");
     crate::metrics::record("system_start", crate::metrics::system_load());
@@ -1001,7 +1021,6 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     let mut filled = Vec::new();
     let mut failed = Vec::new();
     let mut deferred = BTreeSet::new();
-    let mut trees_deleted = 0;
     let mut fsmonitor_stopped = 0;
     let mut passes = 0;
     loop {
@@ -1019,19 +1038,6 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
                 break;
             }
             let mut worked = false;
-            let empty_trash = |trees_deleted: &mut usize| {
-                let step = Instant::now();
-                crate::metrics::phase("paused", wait_for_quiet_trees(registry));
-                let deleted = crate::trash::empty(registry, |command| {
-                    run_yielding(command, registry).is_ok_and(|(status, stopped_ms)| {
-                        crate::metrics::phase("paused", stopped_ms);
-                        status.success()
-                    })
-                });
-                crate::metrics::phase("trash", crate::metrics::elapsed_ms(step));
-                *trees_deleted += deleted;
-                deleted > 0
-            };
             let step = Instant::now();
             let plan = plan(source, registry)?;
             crate::metrics::phase("plan", crate::metrics::elapsed_ms(step));
@@ -1066,12 +1072,7 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
             crate::metrics::phase("reap", crate::metrics::elapsed_ms(step));
             let step = Instant::now();
             let mut blocked = HashSet::new();
-            let mut trash_emptied = false;
             for level in 1..=capacity {
-                if level == 2 {
-                    worked |= empty_trash(&mut trees_deleted);
-                    trash_emptied = true;
-                }
                 for (project, facts) in &plan.kept {
                     if blocked.contains(project) || slots(registry, project).len() >= level {
                         continue;
@@ -1103,9 +1104,6 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
                 }
             }
             crate::metrics::phase("fill", crate::metrics::elapsed_ms(step));
-            if !trash_emptied {
-                worked |= empty_trash(&mut trees_deleted);
-            }
             if !worked {
                 break;
             }
@@ -1122,7 +1120,6 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
     crate::metrics::record("filled", json!(filled));
     crate::metrics::record("failed", json!(failed));
     crate::metrics::record("deferred", json!(deferred));
-    crate::metrics::record("trees_deleted", json!(trees_deleted));
     crate::metrics::record("fsmonitor_stopped", json!(fsmonitor_stopped));
     crate::metrics::record("system_end", crate::metrics::system_load());
     Ok(json!({
@@ -1131,9 +1128,32 @@ fn maintain(source: &Path, registry: &Path) -> AppResult<Value> {
         "filled": filled,
         "failed": failed,
         "deferred": deferred,
-        "trees_deleted": trees_deleted,
         "fsmonitor_stopped": fsmonitor_stopped,
     }))
+}
+
+/// Deletes removed trees from the trash, four at a time, at the priority it
+/// was started with. Exits at once when another deleter holds the lock; that
+/// deleter sees the request through the `again` marker.
+fn empty_trash(registry: &Path) -> AppResult<Value> {
+    let again = registry.join(crate::trash::AGAIN_FILE);
+    let started = Instant::now();
+    let mut deleted = 0;
+    loop {
+        let Some(held) = try_acquire(&registry.join(crate::trash::LOCK_FILE), "trash deletion")?
+        else {
+            break;
+        };
+        let _ = fs::remove_file(&again);
+        deleted += crate::trash::empty_parallel(registry, 4);
+        drop(held);
+        if !again.exists() || crate::INTERRUPTED.load(Ordering::SeqCst) {
+            break;
+        }
+    }
+    crate::metrics::phase("delete", crate::metrics::elapsed_ms(started));
+    crate::metrics::record("trees_deleted", json!(deleted));
+    Ok(json!({ "trees_deleted": deleted }))
 }
 
 pub fn maintenance_disabled() -> bool {
@@ -1229,6 +1249,11 @@ fn fill_one(
     }
     let name = unique_name();
     let staging = directory.join(format!("{FILLING_PREFIX}{name}"));
+    let target = crate::tree::manifest_revision(
+        &[OsString::from(format!("--git-dir={common}"))],
+        crate::tree::manifest_branch(source).as_deref(),
+    )
+    .unwrap_or_else(|| "HEAD".into());
     let add_command = || {
         let mut command = Command::new("git");
         command
@@ -1248,7 +1273,7 @@ fn fill_one(
                 "--detach",
             ])
             .arg(&staging)
-            .arg("HEAD");
+            .arg(&target);
         command
     };
     if background {
@@ -1324,6 +1349,7 @@ mod tests {
             active: Some(active.iter().map(|project| project.to_string()).collect()),
             sharing_disabled: false,
             overlays: true,
+            manifest_branch: None,
         }
     }
 

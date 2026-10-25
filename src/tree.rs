@@ -154,6 +154,10 @@ fn add_with(
                 meta.projects = parsed.projects;
                 meta.copyfiles = parsed.copyfiles;
                 meta.linkfiles = parsed.linkfiles;
+                if meta.start.as_deref() == Some("manifest") {
+                    let source = meta.source();
+                    start_at_manifest_revisions(&source, &mut meta.projects, jobs);
+                }
                 let source = meta.source();
                 configure_population_modes(
                     &mut meta,
@@ -255,6 +259,18 @@ fn add_with(
             created_at: now(),
             state: "creating".into(),
             branch: args.branch.clone(),
+            start: Some(
+                if restoring.is_some() {
+                    "archive"
+                } else if args.manifest.is_some() {
+                    "pinned"
+                } else if args.from_source {
+                    "source"
+                } else {
+                    "manifest"
+                }
+                .into(),
+            ),
             branch_projects: (args.branch.is_some() && !args.all_projects)
                 .then(|| args.projects.clone()),
             submodules: args.submodules,
@@ -365,6 +381,23 @@ fn add_with(
         let isolated = restoring.map_or_else(HashSet::new, |restoring| {
             pin_archived_commits(&mut meta, restoring)
         });
+        let source_differs = if meta.start.as_deref() == Some("manifest") {
+            start_at_manifest_revisions(&client.root, &mut meta.projects, jobs)
+        } else {
+            Vec::new()
+        };
+        if !quiet && !source_differs.is_empty() {
+            eprintln!(
+                "note: {} project(s) start at the manifest revision, not the source's checkout (pass --from-source to keep the source's commits):",
+                source_differs.len()
+            );
+            for differ in source_differs.iter().take(10) {
+                eprintln!("  {}", differ["summary"].as_str().unwrap_or(""));
+            }
+            if source_differs.len() > 10 {
+                eprintln!("  (+{} more)", source_differs.len() - 10);
+            }
+        }
         let step = Instant::now();
         if let Err(error) = configure_population_modes(
             &mut meta,
@@ -436,7 +469,7 @@ fn add_with(
                 }
             }
         }
-        run_add_phases(
+        let outcome = run_add_phases(
             &mut meta,
             jobs,
             args.fail_fast,
@@ -448,8 +481,162 @@ fn add_with(
                     apply_archived_state(meta, restoring, jobs);
                 }
             },
-        )
+        );
+        let attach = |mut value: Value| {
+            if value.is_object() && !source_differs.is_empty() {
+                value["source_differs"] = json!(source_differs);
+            }
+            value
+        };
+        match outcome {
+            Ok(value) => Ok(attach(value)),
+            Err(mut error) => {
+                error.result = attach(std::mem::take(&mut error.result));
+                Err(error)
+            }
+        }
     }
+}
+
+/// The manifest branch repo tracks, from the manifest checkout's
+/// configuration (`refs/heads/<branch>` becomes `<branch>`).
+pub fn manifest_branch(source_root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(source_root.join(".repo/manifests"))
+        .args(["config", "--get", "branch.default.merge"])
+        .output()
+        .ok()?;
+    let merge = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
+    (output.status.success() && !branch.is_empty()).then(|| branch.to_string())
+}
+
+/// The commit `repo sync -l` would check out in a project: its
+/// `refs/remotes/m/<manifest branch>` ref (the only `m/` ref, when there is
+/// one), peeled to a commit. `repository` selects the repository (`-C
+/// <checkout>` or `--git-dir=<dir>`).
+pub fn manifest_revision(repository: &[OsString], branch: Option<&str>) -> Option<String> {
+    let output = Command::new("git")
+        .args(repository)
+        .args([
+            "for-each-ref",
+            "--format=%(refname)%00%(objectname)%00%(*objectname)",
+            "refs/remotes/m/",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let refs = text
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\0');
+            let name = fields.next()?;
+            let object = fields.next()?;
+            let peeled = fields.next().unwrap_or("");
+            Some((
+                name.to_string(),
+                if peeled.is_empty() { object } else { peeled }.to_string(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let chosen = match refs.as_slice() {
+        [only] => Some(only),
+        _ => branch.and_then(|branch| {
+            let wanted = format!("refs/remotes/m/{branch}");
+            refs.iter().find(|(name, _)| *name == wanted)
+        }),
+    }?;
+    let commit = Command::new("git")
+        .args(repository)
+        .args([
+            "rev-parse",
+            "-q",
+            "--verify",
+            &format!("{}^{{commit}}", chosen.1),
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let commit = String::from_utf8_lossy(&commit.stdout).trim().to_string();
+    (!commit.is_empty()).then_some(commit)
+}
+
+/// Moves each project to its manifest revision and returns, for the projects
+/// whose source checkout is elsewhere, what the source has there.
+fn start_at_manifest_revisions(
+    source_root: &Path,
+    projects: &mut [ProjectMeta],
+    jobs: usize,
+) -> Vec<Value> {
+    let branch = manifest_branch(source_root);
+    let resolve = |project: &ProjectMeta| -> Option<String> {
+        (project.state == "pending" && !project.git_common_dir.is_empty())
+            .then(|| {
+                let repository = [OsString::from(format!(
+                    "--git-dir={}",
+                    project.git_common_dir
+                ))];
+                manifest_revision(&repository, branch.as_deref())
+            })
+            .flatten()
+    };
+    let revisions = match ThreadPoolBuilder::new().num_threads(jobs.max(1)).build() {
+        Ok(workers) => workers.install(|| projects.par_iter().map(resolve).collect::<Vec<_>>()),
+        Err(_) => projects.iter().map(resolve).collect(),
+    };
+    let mut differs = Vec::new();
+    for (project, revision) in projects.iter_mut().zip(revisions) {
+        let Some(revision) = revision else {
+            continue;
+        };
+        if revision == project.sha {
+            continue;
+        }
+        let source = source_root.join(&project.path);
+        let branch = crate::inspect::checkout_branch(&source);
+        let ahead = Command::new("git")
+            .arg(format!("--git-dir={}", project.git_common_dir))
+            .args([
+                "rev-list",
+                "--count",
+                &format!("{revision}..{}", project.sha),
+            ])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            });
+        let place = match &branch {
+            Some(branch) => format!("on branch {branch}"),
+            None => "detached".to_string(),
+        };
+        let short = |sha: &str| sha[..sha.len().min(10)].to_string();
+        differs.push(json!({
+            "project": project.path,
+            "source_head": project.sha,
+            "source_branch": branch,
+            "source_ahead": ahead,
+            "start": revision,
+            "summary": format!(
+                "{}: source is {place} at {}{}; tree starts at {}",
+                project.path,
+                short(&project.sha),
+                ahead
+                    .filter(|ahead| *ahead > 0)
+                    .map(|ahead| format!(" ({ahead} local commit(s))"))
+                    .unwrap_or_default(),
+                short(&revision)
+            ),
+        }));
+        project.sha = revision;
+    }
+    differs
 }
 
 /// Checks that every project of a `--manifest` tree names a commit, and that
@@ -2977,7 +3164,11 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
         let step = Instant::now();
         let stashed = meta.root().exists()
             && background
+            && !args.wait
             && crate::trash::stash(registry, &meta.root()).is_ok();
+        if meta.root().exists() {
+            let _ = crate::trash::delete_command(&meta.root()).status();
+        }
         if meta.root().exists() {
             fs::remove_dir_all(meta.root()).map_err(|error| {
                 AppError::io(format!("remove tree {}", meta.root().display()), error)
@@ -3022,9 +3213,10 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
         let expired = crate::archive::apply_retention(registry, false, true).unwrap_or_default();
         crate::metrics::record("archives_expired", json!(expired.len()));
         crate::metrics::record("system_end", crate::metrics::system_load());
-        if (stashed || (!args.no_pool && pool::needs_refill(&meta)))
-            && pool::spawn_maintenance(&meta.source())
-        {
+        if stashed {
+            crate::trash::spawn_deletion(&meta.source());
+        }
+        if !args.no_pool && pool::needs_refill(&meta) && pool::spawn_maintenance(&meta.source()) {
             crate::metrics::record("pool_maintenance", json!("started"));
         }
         if !quiet {
@@ -3039,7 +3231,15 @@ pub fn remove(args: &RemoveArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             } else {
                 eprintln!("removed {} ({})", meta.name, meta.path);
             }
-            if let Some(record) = &archived {
+            if let Some(record) = archived
+                .as_ref()
+                .filter(|record| expired.contains(&record.id))
+            {
+                eprintln!(
+                    "warning: archive {} expired at once under the retention policy (see `git repo-worktree archive policy`); the tree cannot be restored",
+                    record.id
+                );
+            } else if let Some(record) = &archived {
                 let changes = record.projects_with_changes();
                 eprintln!(
                     "archived as {}{}; `git repo-worktree restore {}` brings it back",
@@ -3106,59 +3306,68 @@ fn remove_idle(args: &RemoveArgs, idle: &str, cwd: &Path, quiet: bool) -> AppRes
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
+    let cutoff = now.saturating_sub(threshold);
+    let processes = crate::inspect::process_table();
     let mut removed = Vec::new();
     let mut skipped = Vec::new();
     for tree in load_all(&registry)? {
         let skip = |reason: String| json!({"name": tree.name, "path": tree.path, "reason": reason});
-        if tree.locked.is_some() {
-            skipped.push(skip("locked".into()));
+        let reason = if tree.locked.is_some() {
+            Some("locked".to_string())
+        } else if tree.state != "complete" && tree.state != "incomplete" {
+            Some(format!("state {}", tree.state))
+        } else if crate::registry::is_locked(&crate::registry::tree_lock_path(
+            &tree.registry_entry(),
+        )) {
+            Some("another command is using it".to_string())
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            skipped.push(skip(reason));
             continue;
         }
-        if tree.state != "complete" && tree.state != "incomplete" {
-            skipped.push(skip(format!("state {}", tree.state)));
-            continue;
-        }
-        if crate::registry::is_locked(&crate::registry::tree_lock_path(&tree.registry_entry())) {
-            skipped.push(skip("another command is using it".into()));
-            continue;
-        }
-        let processes = crate::inspect::processes_referencing(&tree.root());
-        if !processes.is_empty() {
-            let mut entry = skip(format!("{} process(es) use it", processes.len()));
-            entry["processes"] = json!(processes);
-            skipped.push(entry);
-            continue;
-        }
-        let idle_secs = now.saturating_sub(crate::inspect::last_activity(&tree, jobs));
-        if idle_secs < threshold {
+        let last = crate::inspect::last_activity(&tree, jobs, Some(cutoff));
+        let idle_secs = now.saturating_sub(last);
+        if last > cutoff {
             skipped.push(skip(format!(
                 "active {} ago",
                 crate::archive::human_duration(idle_secs)
             )));
             continue;
         }
+        let using = crate::inspect::processes_using(&processes, &tree.root());
+        if !using.is_empty() {
+            let mut entry = skip(format!("{} process(es) use it", using.len()));
+            entry["processes"] = json!(using);
+            skipped.push(entry);
+            continue;
+        }
+        let idle_text = crate::archive::human_duration(idle_secs);
         if args.dry_run {
             if !quiet {
                 eprintln!(
-                    "would remove {} ({}), idle {}",
-                    tree.name,
-                    tree.path,
-                    crate::archive::human_duration(idle_secs)
+                    "would remove {} ({}), idle {idle_text}",
+                    tree.name, tree.path
                 );
             }
             removed.push(json!({"name": tree.name, "path": tree.path, "idle_secs": idle_secs}));
             continue;
         }
+        if !quiet {
+            eprintln!("removing {} ({}), idle {idle_text}", tree.name, tree.path);
+        }
         let single = RemoveArgs {
             tree: Some(tree.name.clone()),
-            force: 0,
-            discard: false,
+            force: args.force,
+            discard: args.discard,
             idle: None,
             dry_run: false,
+            wait: args.wait,
             no_pool: args.no_pool,
             jobs: args.jobs,
         };
-        match remove(&single, cwd, quiet) {
+        match remove(&single, cwd, true) {
             Ok(mut result) => {
                 result["idle_secs"] = json!(idle_secs);
                 removed.push(result);
@@ -3216,6 +3425,7 @@ pub fn restore(args: &RestoreArgs, cwd: &Path, quiet: bool, verbose: u8) -> AppR
         heavy_jobs: Some(options.heavy_jobs),
         fail_fast: false,
         manifest: None,
+        from_source: false,
     };
     let restoring = Restoring {
         record: &record,
@@ -3971,6 +4181,15 @@ pub fn prune(args: &PruneArgs, cwd: &Path, quiet: bool) -> AppResult<Value> {
             } else {
                 archive_id =
                     crate::archive::capture_orphaned(&tree, registry).map(|record| record.id);
+                for project in tree
+                    .projects
+                    .iter()
+                    .filter(|project| project.mode == MODE_OVERLAY)
+                {
+                    if let Some(admin) = crate::archive::registration(&tree, project) {
+                        overlay::unprotect(&admin);
+                    }
+                }
                 gitdirs.extend(
                     tree.projects
                         .iter()
@@ -4581,6 +4800,7 @@ mod tests {
             created_at: "2026-07-23T18:04:05Z".into(),
             state: "complete".into(),
             branch: None,
+            start: None,
             branch_projects: None,
             submodules: false,
             full: false,

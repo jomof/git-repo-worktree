@@ -289,9 +289,12 @@ fn note_submodule_changes(text: &str, fields: usize, inspection: &mut ProjectIns
 /// Seconds since the epoch of the newest sign of work in a tree: its metadata,
 /// each project's HEAD, index, and HEAD reflog, and files Git reports as
 /// modified or untracked. Never refreshes an index, so inspecting a tree does
-/// not make it look active.
-pub fn last_activity(meta: &TreeMeta, jobs: usize) -> u64 {
+/// not make it look active. With `cutoff`, answers as soon as any sign is
+/// newer than it: the cheap timestamps are read first, and `git status`
+/// runs only if they all look older, skipping overlays with nothing written.
+pub fn last_activity(meta: &TreeMeta, jobs: usize, cutoff: Option<u64>) -> u64 {
     let root = meta.root();
+    let entry = meta.registry_entry();
     let modified = |path: &Path| {
         fs::symlink_metadata(path)
             .and_then(|metadata| metadata.modified())
@@ -299,18 +302,45 @@ pub fn last_activity(meta: &TreeMeta, jobs: usize) -> u64 {
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |elapsed| elapsed.as_secs())
     };
+    let recent = |time: u64| cutoff.is_some_and(|cutoff| time > cutoff);
     let projects = meta
         .projects
         .iter()
         .filter(|project| project.has_worktree() && project.state != "skipped")
         .filter(|project| root.join(&project.path).exists())
         .collect::<Vec<_>>();
-    let newest_in = |project: &&ProjectMeta| -> u64 {
+    let mut newest = modified(&entry.join("meta.json"));
+    if recent(newest) {
+        return newest;
+    }
+    for project in &projects {
         let checkout = root.join(&project.path);
-        let mut newest = 0;
-        if let Some(git_dir) = checkout_git_dir(&checkout) {
+        let git_dir = if project.mode == MODE_OVERLAY && !overlay::is_live(&checkout) {
+            overlay::admin_dir(&overlay::upper_dir(&entry, &project.path), &checkout)
+        } else {
+            checkout_git_dir(&checkout)
+        };
+        if let Some(git_dir) = git_dir {
             for name in ["HEAD", "index", "logs/HEAD"] {
                 newest = newest.max(modified(&git_dir.join(name)));
+            }
+        }
+        if recent(newest) {
+            return newest;
+        }
+    }
+    let found = std::sync::atomic::AtomicBool::new(false);
+    let newest_change = |project: &&ProjectMeta| -> u64 {
+        if found.load(std::sync::atomic::Ordering::Relaxed) {
+            return 0;
+        }
+        let checkout = root.join(&project.path);
+        if project.mode == MODE_OVERLAY {
+            let upper = overlay::upper_dir(&entry, &project.path);
+            if !overlay::is_live(&checkout)
+                || matches!(overlay::upper_has_changes(&upper), Ok(false))
+            {
+                return 0;
             }
         }
         let Ok(output) = Command::new("git")
@@ -320,8 +350,9 @@ pub fn last_activity(meta: &TreeMeta, jobs: usize) -> u64 {
             .args(["status", "--porcelain=v1", "-z", "--untracked-files=normal"])
             .output()
         else {
-            return newest;
+            return 0;
         };
+        let mut newest = 0;
         let mut records = output.stdout.split(|byte| *byte == 0);
         let mut seen = 0;
         while let Some(record) = records.next() {
@@ -335,13 +366,16 @@ pub fn last_activity(meta: &TreeMeta, jobs: usize) -> u64 {
             let path = String::from_utf8_lossy(&record[3..]);
             newest = newest.max(modified(&checkout.join(path.trim_end_matches('/'))));
         }
+        if recent(newest) {
+            found.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         newest
     };
-    let from_projects = match ThreadPoolBuilder::new().num_threads(jobs.max(1)).build() {
-        Ok(pool) => pool.install(|| projects.par_iter().map(newest_in).max()),
-        Err(_) => projects.iter().map(newest_in).max(),
+    let from_changes = match ThreadPoolBuilder::new().num_threads(jobs.max(1)).build() {
+        Ok(pool) => pool.install(|| projects.par_iter().map(newest_change).max()),
+        Err(_) => projects.iter().map(newest_change).max(),
     };
-    modified(&meta.registry_entry().join("meta.json")).max(from_projects.unwrap_or(0))
+    newest.max(from_changes.unwrap_or(0))
 }
 
 /// Counts commits reachable from HEAD but not from the pinned revision or any
@@ -401,66 +435,86 @@ fn ancestors(pid: u32) -> Vec<u32> {
     chain
 }
 
-/// Processes whose working directory is inside `root` or whose arguments name
-/// it, such as build servers started from a tree. Linux only; elsewhere empty.
-pub fn processes_referencing(root: &Path) -> Vec<serde_json::Value> {
+/// A process as `processes_using` sees it.
+pub struct ProcessInfo {
+    pid: u32,
+    cwd: Option<PathBuf>,
+    arguments: Vec<String>,
+}
+
+/// Every process except this one, its ancestors, and fuse-overlayfs daemons
+/// (which serve trees rather than use them). Linux only; elsewhere empty.
+pub fn process_table() -> Vec<ProcessInfo> {
     if !cfg!(target_os = "linux") {
         return Vec::new();
     }
     let excluded = ancestors(std::process::id());
+    fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
+            if excluded.contains(&pid) {
+                return None;
+            }
+            let arguments = fs::read(entry.path().join("cmdline"))
+                .unwrap_or_default()
+                .split(|byte| *byte == 0)
+                .filter(|argument| !argument.is_empty())
+                .map(|argument| String::from_utf8_lossy(argument).into_owned())
+                .collect::<Vec<_>>();
+            let overlay_daemon = arguments
+                .first()
+                .and_then(|program| Path::new(program).file_name())
+                .is_some_and(|program| program == "fuse-overlayfs");
+            (!overlay_daemon).then(|| ProcessInfo {
+                pid,
+                cwd: fs::read_link(entry.path().join("cwd")).ok(),
+                arguments,
+            })
+        })
+        .collect()
+}
+
+/// Processes in `table` whose working directory is inside `root` or whose
+/// arguments name it, such as build servers started from a tree.
+pub fn processes_using(table: &[ProcessInfo], root: &Path) -> Vec<serde_json::Value> {
     let root_text = root.to_string_lossy().into_owned();
     let nested = format!("{root_text}/");
     let mentions = |argument: &str| argument.ends_with(&root_text) || argument.contains(&nested);
-    let mut found = Vec::new();
-    for entry in fs::read_dir("/proc").into_iter().flatten().flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if excluded.contains(&pid) {
-            continue;
-        }
-        let cwd_inside = fs::read_link(entry.path().join("cwd"))
-            .map(|cwd| cwd.starts_with(root))
-            .unwrap_or(false);
-        let arguments = fs::read(entry.path().join("cmdline"))
-            .unwrap_or_default()
-            .split(|byte| *byte == 0)
-            .filter(|argument| !argument.is_empty())
-            .map(|argument| String::from_utf8_lossy(argument).into_owned())
-            .collect::<Vec<_>>();
-        let named = arguments.iter().any(|argument| mentions(argument));
-        if !cwd_inside && !named {
-            continue;
-        }
-        let overlay_daemon = arguments
-            .first()
-            .and_then(|program| Path::new(program).file_name())
-            .is_some_and(|program| program == "fuse-overlayfs");
-        if overlay_daemon {
-            continue;
-        }
-        let mut command = arguments.join(" ");
-        if command.len() > 120 {
-            let mut end = 120;
-            while !command.is_char_boundary(end) {
-                end -= 1;
+    table
+        .iter()
+        .filter_map(|process| {
+            let cwd_inside = process
+                .cwd
+                .as_ref()
+                .is_some_and(|cwd| cwd.starts_with(root));
+            if !cwd_inside && !process.arguments.iter().any(|argument| mentions(argument)) {
+                return None;
             }
-            command.truncate(end);
-        }
-        found.push(serde_json::json!({
-            "pid": pid,
-            "command": command,
-            "reason": if cwd_inside { "cwd" } else { "arguments" },
-        }));
-        if found.len() == 20 {
-            break;
-        }
-    }
-    found
+            let mut command = process.arguments.join(" ");
+            if command.len() > 120 {
+                let mut end = 120;
+                while !command.is_char_boundary(end) {
+                    end -= 1;
+                }
+                command.truncate(end);
+            }
+            Some(serde_json::json!({
+                "pid": process.pid,
+                "command": command,
+                "reason": if cwd_inside { "cwd" } else { "arguments" },
+            }))
+        })
+        .take(20)
+        .collect()
+}
+
+/// Processes whose working directory is inside `root` or whose arguments name
+/// it, such as build servers started from a tree. Linux only; elsewhere empty.
+pub fn processes_referencing(root: &Path) -> Vec<serde_json::Value> {
+    processes_using(&process_table(), root)
 }
 
 #[cfg(test)]

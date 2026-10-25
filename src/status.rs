@@ -60,7 +60,7 @@ pub fn status(args: &StatusArgs, cwd: &Path, json_output: bool, verbose: u8) -> 
             );
         }
         let jobs = args.jobs.unwrap_or_else(default_jobs);
-        let last_activity = crate::inspect::last_activity(&meta, jobs);
+        let last_activity = crate::inspect::last_activity(&meta, jobs, None);
         let idle_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs())

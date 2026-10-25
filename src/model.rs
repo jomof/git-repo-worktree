@@ -129,6 +129,12 @@ pub struct TreeMeta {
     pub created_at: String,
     pub state: String,
     pub branch: Option<String>,
+    /// Where projects started: `manifest` (the manifest's revisions), `source`
+    /// (the source checkout's commits), `pinned` (`--manifest`), or `archive`
+    /// (`restore`). `None` for trees created before 3.0, which started from
+    /// the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
     /// Projects that receive `branch`; `None` with a branch means every project
     /// (trees created before branch scoping).
     #[serde(default)]

@@ -98,10 +98,12 @@ to archives by id or as `<tree>@{n}`, newest first, like `stash@{n}`.
 }
 ```
 
-`bytes` per project is `git rev-list --objects --disk-usage A --not --branches
---remotes --tags` (objects only this archive keeps alive); the tree's `bytes`
-is their sum. `dropped` lists state that `--force` let the archive omit
-(§2.2).
+`bytes` per project is `git rev-list --objects --disk-usage A --not <pinned>
+--branches --remotes --tags` (objects only this archive keeps alive beyond the
+commit the tree started at); the tree's `bytes` is their sum. `dropped` lists
+state that `--force` let the archive omit (§2.2) and untracked files of 100
+MiB or more, which are never archived (kind `large-untracked`) and never cause
+a refusal.
 
 The manifest repository gets a ref `refs/repo-worktree/archive/<id>` to the
 tree's manifest checkout commit, when the tree has one.
@@ -248,6 +250,9 @@ Defaults, stored in `defaults.json` as `archive_expire` and `archive_budget`:
 * If the sum of unexpired archives' `bytes` exceeds **2 GB**, the oldest
   expire until it does not.
 * Kept archives never expire and do not count against the budget.
+* The newest archive never expires by size and does not count against the
+  budget, so a `remove` never expires the archive it just made (3.0; before,
+  one archive over the budget expired itself and every older one).
 
 Expiry deletes the archive's refs and record. Git's normal `gc` (with its own
 two-week grace period for unreachable objects) later frees the space.
