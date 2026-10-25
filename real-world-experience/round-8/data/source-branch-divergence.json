@@ -1,0 +1,58 @@
+[
+  {
+    "project": "tools/adt/idea",
+    "symbolic_ref": null,
+    "head_sha": "bb1feac8dec25494b75bcbcf1d6ecb12028453eb",
+    "goog_studio_main_sha": "bb1feac8dec25494b75bcbcf1d6ecb12028453eb",
+    "behind_upstream": 0,
+    "ahead_of_upstream": 0
+  },
+  {
+    "project": "tools/base",
+    "symbolic_ref": null,
+    "head_sha": "dd9e4445688382bc0573cf07f883d588ae005aed",
+    "goog_studio_main_sha": "dd9e4445688382bc0573cf07f883d588ae005aed",
+    "behind_upstream": 0,
+    "ahead_of_upstream": 0
+  },
+  {
+    "project": "tools/vendor/google",
+    "symbolic_ref": null,
+    "head_sha": "f491491880fe66cb0589a9eff2c2637e99b9b9d7",
+    "goog_studio_main_sha": "f491491880fe66cb0589a9eff2c2637e99b9b9d7",
+    "behind_upstream": 0,
+    "ahead_of_upstream": 0
+  },
+  {
+    "project": "tools/vendor/intellij/cidr",
+    "symbolic_ref": null,
+    "head_sha": "cd5d0c8d6f4907d8cd2cafe4896298d2a0100e5a",
+    "goog_studio_main_sha": "cd5d0c8d6f4907d8cd2cafe4896298d2a0100e5a",
+    "behind_upstream": 0,
+    "ahead_of_upstream": 0
+  },
+  {
+    "project": "tools/data-binding",
+    "symbolic_ref": null,
+    "head_sha": "81c9cd74892ea6a407238ac2a3c12efe6c77da3e",
+    "goog_studio_main_sha": "81c9cd74892ea6a407238ac2a3c12efe6c77da3e",
+    "behind_upstream": 0,
+    "ahead_of_upstream": 0
+  },
+  {
+    "project": "tools/gradle-recipes",
+    "symbolic_ref": null,
+    "head_sha": "030a43fd66ce8115856fd7fd96218fe6cd3aba41",
+    "goog_studio_main_sha": "030a43fd66ce8115856fd7fd96218fe6cd3aba41",
+    "behind_upstream": 0,
+    "ahead_of_upstream": 0
+  },
+  {
+    "project": "prebuilts/studio/sdk/linux",
+    "symbolic_ref": null,
+    "head_sha": "5eba96e6c64ae9c7a5d92fd75fa7b694474ff606",
+    "goog_studio_main_sha": "5eba96e6c64ae9c7a5d92fd75fa7b694474ff606",
+    "behind_upstream": 0,
+    "ahead_of_upstream": 0
+  }
+]
