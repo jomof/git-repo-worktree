@@ -361,8 +361,14 @@ mod tests {
         assert!(is_locked(&path));
         assert_eq!(descriptors_on(&path), 1);
         drop(held);
-        assert!(!is_locked(&path));
-        let again = acquire_within(&path, "test", true, Duration::ZERO).unwrap();
+        // A child another test forks at this moment holds the descriptor
+        // until it execs, keeping the lock a moment longer.
+        let released = (0..100).any(|_| {
+            std::thread::sleep(Duration::from_millis(10));
+            !is_locked(&path)
+        });
+        assert!(released);
+        let again = acquire_within(&path, "test", true, Duration::from_secs(1)).unwrap();
         drop(again);
         let _ = fs::remove_dir_all(&directory);
     }
