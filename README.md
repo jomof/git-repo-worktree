@@ -1,5 +1,10 @@
 # git-repo-worktree
 
+> [!IMPORTANT]
+> **This repository is archived.** Development of git-repo-worktree has moved
+> to Google's internal monorepo, and this copy will not receive further
+> updates. Version 3.0.0 is the final release here.
+
 **Fresh isolated Google `repo` clients at agent speed.**
 
 ```console
